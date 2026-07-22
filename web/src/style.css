@@ -1,0 +1,143 @@
+* { box-sizing: border-box; }
+
+:root {
+  --bg: #0e1116;
+  --bg-panel: #161b22;
+  --bg-input: #0d1117;
+  --border: #2d333b;
+  --text: #e6edf3;
+  --text-dim: #8b949e;
+  --accent: #4493f8;
+  --green: #3fb950;
+  --red: #f85149;
+  --yellow: #d29922;
+  --mono: ui-monospace, 'Cascadia Code', 'JetBrains Mono', Menlo, monospace;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+h1 { font-size: 22px; margin: 0 0 16px; }
+h2 { font-size: 17px; margin: 24px 0 12px; }
+
+.container { max-width: 1100px; margin: 0 auto; padding: 24px 20px; }
+
+.topnav {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 12px 20px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+}
+.topnav .brand { font-weight: 700; font-size: 17px; color: var(--text); }
+.topnav a.nav-link { color: var(--text-dim); }
+.topnav a.nav-link.router-link-active { color: var(--text); }
+.topnav .spacer { flex: 1; }
+
+.conn-dot {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--red);
+  display: inline-block;
+}
+.conn-dot.on { background: var(--green); }
+
+.panel {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+
+.card { display: block; color: var(--text); }
+.card:hover { text-decoration: none; border-color: var(--text-dim); }
+
+label { display: block; font-size: 13px; color: var(--text-dim); margin: 12px 0 4px; }
+
+input, textarea, select {
+  width: 100%;
+  background: var(--bg-input);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 14px;
+  font-family: inherit;
+}
+textarea.code, input.code { font-family: var(--mono); font-size: 13px; }
+input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); }
+
+button {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 14px;
+  font-size: 14px;
+  cursor: pointer;
+}
+button:hover { filter: brightness(1.1); }
+button:disabled { opacity: 0.5; cursor: default; }
+button.secondary { background: var(--bg-input); color: var(--text); border: 1px solid var(--border); }
+button.danger { background: var(--red); }
+button.small { padding: 4px 10px; font-size: 13px; }
+
+.badge {
+  display: inline-block;
+  padding: 1px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+.badge.green { color: var(--green); border-color: var(--green); }
+.badge.red { color: var(--red); border-color: var(--red); }
+.badge.yellow { color: var(--yellow); border-color: var(--yellow); }
+.badge.blue { color: var(--accent); border-color: var(--accent); }
+
+.error { color: var(--red); font-size: 14px; margin: 8px 0; }
+.hint { color: var(--text-dim); font-size: 13px; }
+.mono { font-family: var(--mono); font-size: 13px; }
+
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+th { color: var(--text-dim); font-weight: 600; font-size: 13px; }
+
+.logview {
+  background: #05070a;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  height: 420px;
+  overflow-y: auto;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin: 16px 0; }
+.tabs button {
+  background: none; color: var(--text-dim); border: none;
+  border-bottom: 2px solid transparent; border-radius: 0; padding: 8px 14px;
+}
+.tabs button.active { color: var(--text); border-bottom-color: var(--accent); }
+
+.row { display: flex; gap: 10px; align-items: center; }
+.row > * { margin: 0; }
+.deploy-row { cursor: pointer; }
+.deploy-row:hover td { background: rgba(255, 255, 255, 0.03); }
+.deploy-row.selected td { background: rgba(68, 147, 248, 0.08); }
+
+.login-wrap { display: grid; place-items: center; min-height: 100vh; }
+.login-box { width: 340px; }

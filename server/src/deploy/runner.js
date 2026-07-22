@@ -1,0 +1,274 @@
+import { join } from 'node:path'
+import { mkdirSync, writeFileSync, copyFileSync } from 'node:fs'
+import { decrypt } from '../lib/crypto.js'
+import { syncRepo } from './git.js'
+import { startOrReload, startOrReloadDetached } from './pm2.js'
+
+export class DeployError extends Error {
+  constructor(message, exitCode = null) {
+    super(message)
+    this.exitCode = exitCode
+  }
+}
+
+// Collects log lines for one deployment: pushes each line to WS subscribers
+// immediately, batches DB writes (one UPDATE per second, not per line).
+class LogCollector {
+  constructor(db, hub, deploymentId) {
+    this.db = db
+    this.hub = hub
+    this.deploymentId = deploymentId
+    this.text = ''
+    this.pending = ''
+    this.timer = null
+    this.line = this.line.bind(this)
+  }
+
+  line(line) {
+    const l = String(line)
+    this.text += l + '\n'
+    this.pending += l + '\n'
+    this.hub.sendLog(this.deploymentId, l)
+    if (!this.timer) this.timer = setTimeout(() => this.flush(), 1000)
+  }
+
+  flush() {
+    if (this.timer) clearTimeout(this.timer)
+    this.timer = null
+    if (!this.pending) return
+    this.db.query('UPDATE deployments SET log = log || ? WHERE id = ?').run(this.pending, this.deploymentId)
+    this.pending = ''
+  }
+}
+
+export async function readLines(stream, onLine) {
+  const decoder = new TextDecoder()
+  let buf = ''
+  for await (const chunk of stream) {
+    buf += decoder.decode(chunk, { stream: true })
+    let i
+    while ((i = buf.indexOf('\n')) >= 0) {
+      onLine(buf.slice(0, i).replace(/\r$/, ''))
+      buf = buf.slice(i + 1)
+    }
+  }
+  buf += decoder.decode()
+  if (buf) onLine(buf)
+}
+
+// On server start, deployments interrupted by a crash/restart can never finish.
+export function recoverInterrupted(db) {
+  const { changes } = db.query(
+    `UPDATE deployments SET status = 'failed', finished_at = ?,
+       log = log || 'deploy interrupted by panel restart' || char(10)
+     WHERE status IN ('queued', 'running')`
+  ).run(new Date().toISOString())
+  return changes
+}
+
+// Sequential queue per project, parallel across projects. While one deploy
+// runs, at most one more waits; a newer enqueue replaces the waiting one
+// (which is marked cancelled).
+export class DeployRunner {
+  constructor({ db, config, liveState, hub, github, execute }) {
+    this.db = db
+    this.config = config
+    this.liveState = liveState
+    this.hub = hub
+    this.github = github
+    this.queues = new Map() // projectId -> { runningId, queuedId }
+    this.activeLogs = new Map() // deploymentId -> LogCollector
+    this._execute = execute || ((project, deploymentId, log) => this._deploy(project, deploymentId, log))
+  }
+
+  getActiveLog(deploymentId) {
+    return this.activeLogs.get(deploymentId)?.text ?? null
+  }
+
+  enqueue(projectId, { trigger, commitSha = null, commitMessage = null }) {
+    const project = this.db.query('SELECT * FROM projects WHERE id = ?').get(projectId)
+    if (!project) throw new Error(`project ${projectId} not found`)
+
+    const { lastInsertRowid } = this.db.query(
+      `INSERT INTO deployments (project_id, status, "trigger", commit_sha, commit_message)
+       VALUES (?, 'queued', ?, ?, ?)`
+    ).run(project.id, trigger, commitSha, commitMessage)
+    const deploymentId = Number(lastInsertRowid)
+
+    let q = this.queues.get(project.id)
+    if (!q) this.queues.set(project.id, (q = { runningId: null, queuedId: null }))
+
+    if (q.runningId != null) {
+      if (q.queuedId != null) this._cancel(q.queuedId)
+      q.queuedId = deploymentId
+    } else {
+      q.runningId = deploymentId
+      queueMicrotask(() => this._run(project.id, deploymentId))
+    }
+    return deploymentId
+  }
+
+  _cancel(deploymentId) {
+    this.db.query(
+      `UPDATE deployments SET status = 'cancelled', finished_at = ? WHERE id = ?`
+    ).run(new Date().toISOString(), deploymentId)
+  }
+
+  _live(projectId) {
+    let live = this.liveState.projects[projectId]
+    if (!live) {
+      this.liveState.projects[projectId] = {
+        pm2: { status: 'unknown', uptime: null, memory: null, cpu: null },
+        currentDeployment: null,
+        lastDeployment: null,
+      }
+      live = this.liveState.projects[projectId]
+    }
+    return live
+  }
+
+  async _run(projectId, deploymentId) {
+    const log = new LogCollector(this.db, this.hub, deploymentId)
+    this.activeLogs.set(deploymentId, log)
+    const startedAt = new Date().toISOString()
+    this.db.query(`UPDATE deployments SET status = 'running', started_at = ? WHERE id = ?`)
+      .run(startedAt, deploymentId)
+    this._live(projectId).currentDeployment = { id: deploymentId, status: 'running', startedAt }
+
+    let status = 'success'
+    let exitCode = 0
+    try {
+      const project = this.db.query('SELECT * FROM projects WHERE id = ?').get(projectId)
+      if (!project) throw new DeployError('project was deleted')
+      await this._execute(project, deploymentId, log)
+      log.line('✔ deploy finished')
+    } catch (err) {
+      status = 'failed'
+      exitCode = err instanceof DeployError && err.exitCode != null ? err.exitCode : 1
+      log.line(`✖ ${err.message}`)
+    }
+
+    const finishedAt = new Date().toISOString()
+    log.flush()
+    this.activeLogs.delete(deploymentId)
+    this.db.query(
+      `UPDATE deployments SET status = ?, exit_code = ?, finished_at = ? WHERE id = ?`
+    ).run(status, exitCode, finishedAt, deploymentId)
+
+    const row = this.db.query('SELECT commit_sha FROM deployments WHERE id = ?').get(deploymentId)
+    const live = this._live(projectId)
+    live.currentDeployment = null
+    live.lastDeployment = { id: deploymentId, status, finishedAt, commitSha: row?.commit_sha ?? null }
+
+    const q = this.queues.get(projectId)
+    if (q) {
+      q.runningId = null
+      if (q.queuedId != null) {
+        const next = q.queuedId
+        q.queuedId = null
+        q.runningId = next
+        queueMicrotask(() => this._run(projectId, next))
+      }
+    }
+  }
+
+  // The real pipeline: token -> git -> .env -> deploy script -> pm2.
+  async _deploy(project, deploymentId, log) {
+    const rootDirForApp = join(this.config.appsDir, project.slug)
+    const sourceDir = join(rootDirForApp, 'source')
+    const sharedDir = join(rootDirForApp, 'shared')
+    const workDir = project.cwd ? join(sourceDir, project.cwd) : sourceDir
+    mkdirSync(sharedDir, { recursive: true })
+
+    log.line('▸ fetching GitHub installation token')
+    const token = await this.github.getInstallationToken()
+
+    log.line(`▸ syncing ${project.repo_full_name} @ ${project.branch}`)
+    const { sha, message } = await syncRepo({
+      dir: sourceDir,
+      repoFullName: project.repo_full_name,
+      branch: project.branch,
+      token,
+      onLine: log.line,
+    })
+    log.line(`▸ checked out ${sha.slice(0, 7)} — ${message}`)
+    this.db.query('UPDATE deployments SET commit_sha = ?, commit_message = COALESCE(commit_message, ?) WHERE id = ?')
+      .run(sha, message, deploymentId)
+
+    const envVars = this._decryptedEnv(project.id)
+    const envFile = Object.entries(envVars).map(([k, v]) => `${k}=${v}`).join('\n') + '\n'
+    writeFileSync(join(sharedDir, '.env'), envFile, { mode: 0o600 })
+    copyFileSync(join(sharedDir, '.env'), join(workDir, '.env'))
+    log.line(`▸ wrote .env (${Object.keys(envVars).length} vars)`)
+
+    if (project.deploy_script?.trim()) {
+      log.line(`▸ running deploy script`)
+      await this._runScript(project.deploy_script, workDir, envVars, log)
+    } else {
+      log.line('▸ no deploy script configured, skipping')
+    }
+
+    if (project.start_command?.trim()) {
+      const ecosystemPath = join(rootDirForApp, 'ecosystem.config.cjs')
+      this._writeEcosystem(ecosystemPath, project, workDir, envVars)
+      if (project.pm2_name === this.config.selfPm2Name) {
+        log.line('▸ self-deploy detected: pm2 reload will run detached after this deploy finalizes')
+        setTimeout(() => startOrReloadDetached(ecosystemPath), 1500)
+      } else {
+        log.line(`▸ pm2 startOrReload ${project.pm2_name}`)
+        await startOrReload(ecosystemPath)
+      }
+    } else {
+      log.line('▸ no start command configured, skipping pm2')
+    }
+  }
+
+  _decryptedEnv(projectId) {
+    const rows = this.db.query('SELECT key, value_encrypted, iv FROM env_vars WHERE project_id = ? ORDER BY key').all(projectId)
+    const env = {}
+    for (const row of rows) env[row.key] = decrypt(row.value_encrypted, row.iv, this.config.masterKey)
+    return env
+  }
+
+  async _runScript(script, cwd, envVars, log) {
+    // Minimal environment: the project's vars plus what a shell needs.
+    // The panel's own environment (MASTER_KEY!) must not leak into deploys.
+    const env = {
+      PATH: process.env.PATH ?? '',
+      HOME: process.env.HOME ?? '',
+      SHELL: '/bin/sh',
+      CI: 'true',
+      GIT_TERMINAL_PROMPT: '0',
+      ...envVars,
+    }
+    const proc = Bun.spawn(['sh', '-c', script], { cwd, env, stdout: 'pipe', stderr: 'pipe' })
+    let timedOut = false
+    const timer = setTimeout(() => {
+      timedOut = true
+      proc.kill(9)
+    }, this.config.deployTimeoutMs)
+    try {
+      await Promise.all([readLines(proc.stdout, log.line), readLines(proc.stderr, log.line)])
+      const exitCode = await proc.exited
+      if (timedOut) throw new DeployError(`deploy script timed out after ${this.config.deployTimeoutMs} ms`, exitCode)
+      if (exitCode !== 0) throw new DeployError(`deploy script exited with code ${exitCode}`, exitCode)
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  _writeEcosystem(path, project, workDir, envVars) {
+    const [cmd, ...args] = project.start_command.trim().split(/\s+/)
+    const app = {
+      name: project.pm2_name,
+      cwd: workDir,
+      script: cmd,
+      args: args.join(' '),
+      interpreter: 'none',
+      autorestart: true,
+      max_restarts: 10,
+      env: envVars,
+    }
+    writeFileSync(path, `module.exports = ${JSON.stringify({ apps: [app] }, null, 2)}\n`, { mode: 0o600 })
+  }
+}

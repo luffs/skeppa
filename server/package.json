@@ -1,0 +1,14 @@
+{
+  "name": "@skeppa/server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --watch src/index.js",
+    "start": "bun src/index.js",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "hono": "^4.6.0",
+    "lazy-watch": "^4.1.0"
+  }
+}

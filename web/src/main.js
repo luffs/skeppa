@@ -1,0 +1,15 @@
+import { createApp } from 'vue'
+import App from './App.vue'
+import { router } from './router.js'
+import { api } from './api.js'
+import { store } from './store.js'
+import { disconnectWs } from './ws.js'
+import './style.css'
+
+api.onUnauthorized = () => {
+  store.user = null
+  disconnectWs()
+  router.push('/login')
+}
+
+createApp(App).use(router).mount('#app')

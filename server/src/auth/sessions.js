@@ -1,0 +1,41 @@
+import { randomBytes } from 'node:crypto'
+import { getCookie } from 'hono/cookie'
+
+export const COOKIE_NAME = 'skeppa_session'
+export const SESSION_TTL_S = 60 * 60 * 24 * 7 // 7 days
+
+export function createSession(db, userId) {
+  const id = randomBytes(32).toString('hex')
+  const expiresAt = new Date(Date.now() + SESSION_TTL_S * 1000).toISOString()
+  db.query('INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)').run(id, userId, expiresAt)
+  return id
+}
+
+export function getSession(db, id) {
+  if (!id) return null
+  const row = db.query('SELECT * FROM sessions WHERE id = ?').get(id)
+  if (!row) return null
+  if (row.expires_at <= new Date().toISOString()) {
+    deleteSession(db, id)
+    return null
+  }
+  return row
+}
+
+export function deleteSession(db, id) {
+  if (id) db.query('DELETE FROM sessions WHERE id = ?').run(id)
+}
+
+export function pruneSessions(db) {
+  db.query('DELETE FROM sessions WHERE expires_at <= ?').run(new Date().toISOString())
+}
+
+// Hono middleware protecting /api/* (login + webhooks are mounted before it).
+export function requireSession(db) {
+  return async (c, next) => {
+    const session = getSession(db, getCookie(c, COOKIE_NAME))
+    if (!session) return c.json({ error: 'unauthorized' }, 401)
+    c.set('session', session)
+    await next()
+  }
+}
