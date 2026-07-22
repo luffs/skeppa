@@ -1,6 +1,7 @@
 import { join } from 'node:path'
 import { mkdirSync, writeFileSync, copyFileSync } from 'node:fs'
 import { decrypt } from '../lib/crypto.js'
+import { resolveShell, scriptEnvBase } from '../lib/shell.js'
 import { syncRepo } from './git.js'
 import { startOrReload, startOrReloadDetached } from './pm2.js'
 
@@ -233,15 +234,8 @@ export class DeployRunner {
   async _runScript(script, cwd, envVars, log) {
     // Minimal environment: the project's vars plus what a shell needs.
     // The panel's own environment (MASTER_KEY!) must not leak into deploys.
-    const env = {
-      PATH: process.env.PATH ?? '',
-      HOME: process.env.HOME ?? '',
-      SHELL: '/bin/sh',
-      CI: 'true',
-      GIT_TERMINAL_PROMPT: '0',
-      ...envVars,
-    }
-    const proc = Bun.spawn(['sh', '-c', script], { cwd, env, stdout: 'pipe', stderr: 'pipe' })
+    const env = { ...scriptEnvBase(), ...envVars }
+    const proc = Bun.spawn([...resolveShell(), script], { cwd, env, stdout: 'pipe', stderr: 'pipe' })
     let timedOut = false
     const timer = setTimeout(() => {
       timedOut = true

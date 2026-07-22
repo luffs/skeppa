@@ -1,7 +1,9 @@
 // Thin wrapper around the pm2 CLI via Bun.spawn (no shell, args as array).
+// `spawnable` resolves .cmd shims through cmd.exe on Windows.
+import { spawnable } from '../lib/shell.js'
 
 async function pm2(args) {
-  const proc = Bun.spawn(['pm2', ...args], { stdout: 'pipe', stderr: 'pipe' })
+  const proc = Bun.spawn(spawnable('pm2', args), { stdout: 'pipe', stderr: 'pipe' })
   const [out, err] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),
@@ -26,7 +28,7 @@ export async function startOrReload(ecosystemFile) {
 // Detached variant for self-deploys: the reload may kill this very process,
 // so it must not be awaited and must survive our exit.
 export function startOrReloadDetached(ecosystemFile) {
-  Bun.spawn(['pm2', 'startOrReload', ecosystemFile, '--update-env'], {
+  Bun.spawn(spawnable('pm2', ['startOrReload', ecosystemFile, '--update-env']), {
     stdout: 'ignore',
     stderr: 'ignore',
     stdin: 'ignore',
