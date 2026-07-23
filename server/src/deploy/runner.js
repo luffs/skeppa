@@ -1,5 +1,5 @@
 import { resolveShell, scriptEnvBase } from '../lib/shell.js'
-import { projectDefaults } from '../live/state.js'
+import { projectDefaults, getProjectInfo } from '../live/state.js'
 import { projectDirs, writeEnvFiles, writeEcosystem } from './envfiles.js'
 import { syncRepo } from './git.js'
 import { startOrReload, startOrReloadDetached } from './pm2.js'
@@ -117,7 +117,7 @@ export class DeployRunner {
   _live(projectId) {
     let live = this.liveState.projects[projectId]
     if (!live) {
-      this.liveState.projects[projectId] = projectDefaults()
+      this.liveState.projects[projectId] = projectDefaults(null, getProjectInfo(this.db, projectId))
       live = this.liveState.projects[projectId]
     }
     return live

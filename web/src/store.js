@@ -7,11 +7,13 @@ import { LazyWatch } from 'lazy-watch'
 export const store = reactive({
   user: null,
   connected: false,
-  live: { projects: {} },
+  ready: false, // true once the first full snapshot has arrived
+  live: { projects: {}, system: {} },
 })
 
 export function applyFullState(state) {
   store.live = state
+  store.ready = true
 }
 
 export function applyStateDiff(diff) {

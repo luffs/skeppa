@@ -33,7 +33,7 @@ const liveState = createLiveState()
 initLiveState(liveState, db)
 
 const github = new GitHubApp({ db, config })
-const poller = createPoller({ db, liveState })
+const poller = createPoller({ db, config, liveState })
 const hub = new Hub({
   liveState,
   onClientsChange: n => (n > 0 ? poller.start() : poller.stop()),

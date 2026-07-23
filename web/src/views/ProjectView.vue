@@ -126,8 +126,8 @@ export default {
   props: { id: { type: String, required: true } },
   data() {
     return {
-      project: null,
       deployments: [],
+      editLoaded: false,
       tab: 'deploys',
       selectedId: null,
       edit: {},
@@ -143,6 +143,11 @@ export default {
   computed: {
     live() {
       return liveProject(Number(this.id))
+    },
+    // The project row comes from LiveState, so the view renders instantly on
+    // navigation and follows edits made in any session.
+    project() {
+      return this.live?.info ?? null
     },
     undeployed() {
       const live = this.live
@@ -161,10 +166,19 @@ export default {
       if (now) this.selectedId = now
       else if (before && this.selectedId === before) this.selectedId = before // keep showing the finished log
     },
+    // Seed the settings form once the project info is available (immediately
+    // when the snapshot is already in the store, or as soon as it arrives).
+    project: {
+      immediate: true,
+      handler(p) {
+        if (p && !this.editLoaded) {
+          this.edit = { ...p, cwd: p.cwd ?? '', auto_deploy: !!p.auto_deploy }
+          this.editLoaded = true
+        }
+      },
+    },
   },
   async created() {
-    this.project = await api.get(`/api/projects/${this.id}`)
-    this.edit = { ...this.project, cwd: this.project.cwd ?? '', auto_deploy: !!this.project.auto_deploy }
     await this.loadDeployments()
     this.selectedId = this.currentDeploymentId ?? this.deployments[0]?.id ?? null
   },
@@ -223,10 +237,13 @@ export default {
       this.saveError = ''
       this.saved = false
       try {
-        this.project = await api.patch(`/api/projects/${this.id}`, {
+        const updated = await api.patch(`/api/projects/${this.id}`, {
           ...this.edit,
           cwd: this.edit.cwd || null,
         })
+        // LiveState carries the update to `project`; re-seed the form with the
+        // server-normalized values.
+        this.edit = { ...updated, cwd: updated.cwd ?? '', auto_deploy: !!updated.auto_deploy }
         this.saved = true
       } catch (err) {
         const fields = err.fields ? ' — ' + Object.entries(err.fields).map(([k, v]) => `${k}: ${v}`).join(', ') : ''

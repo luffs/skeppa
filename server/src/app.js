@@ -8,7 +8,6 @@ import { projectRoutes } from './routes/projects.js'
 import { deploymentRoutes } from './routes/deployments.js'
 import { githubRoutes, settingsRoutes } from './routes/github.js'
 import { webhookRoutes } from './routes/webhooks.js'
-import { systemRoutes } from './routes/system.js'
 
 export function createApp({ db, config, liveState, hub, runner, github, poller, upgradeWebSocket }) {
   const app = new Hono()
@@ -28,7 +27,6 @@ export function createApp({ db, config, liveState, hub, runner, github, poller, 
   app.route('/api/deployments', deploymentRoutes({ db, runner }))
   app.route('/api/github', githubRoutes({ db, config, github }))
   app.route('/api/settings', settingsRoutes({ db, config, github }))
-  app.route('/api/system', systemRoutes({ config }))
 
   // WebSocket: session is validated before the upgrade happens.
   app.get(

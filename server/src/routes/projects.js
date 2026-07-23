@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { existsSync } from 'node:fs'
 import { encrypt, decrypt } from '../lib/crypto.js'
 import { slugify, validateProject, SLUG_RE, ENV_KEY_RE, PM2_ACTIONS } from '../lib/validate.js'
-import { projectDefaults } from '../live/state.js'
+import { projectDefaults, getProjectInfo } from '../live/state.js'
 import { action as pm2Action, deleteProcess, startOrReload } from '../deploy/pm2.js'
 import { projectDirs, writeEnvFiles, writeEcosystem } from '../deploy/envfiles.js'
 
@@ -51,7 +51,7 @@ export function projectRoutes({ db, config, liveState, runner, poller, github })
     ).run(slug, project.name, project.repo_full_name, project.branch, project.deploy_script,
           project.pm2_name, project.start_command, project.cwd, project.auto_deploy)
     const id = Number(lastInsertRowid)
-    liveState.projects[id] = projectDefaults()
+    liveState.projects[id] = projectDefaults(null, getProjectInfo(db, id))
     return c.json(getProject(id), 201)
   })
 
@@ -88,6 +88,9 @@ export function projectRoutes({ db, config, liveState, runner, poller, github })
          start_command = ?, pm2_name = ?, cwd = ?, auto_deploy = ? WHERE id = ?`
     ).run(merged.name, merged.repo_full_name, merged.branch, merged.deploy_script,
           merged.start_command, merged.pm2_name, merged.cwd, merged.auto_deploy, project.id)
+    if (liveState.projects[project.id]) {
+      liveState.projects[project.id].info = getProjectInfo(db, project.id)
+    }
     return c.json(getProject(project.id))
   })
 
