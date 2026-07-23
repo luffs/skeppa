@@ -1,4 +1,5 @@
 import { Hono } from 'hono'
+import {cors} from 'hono/cors'
 import { getCookie } from 'hono/cookie'
 import { join, resolve } from 'node:path'
 import { existsSync } from 'node:fs'
@@ -17,6 +18,20 @@ export function createApp({ db, config, liveState, hub, runner, github, poller, 
     return c.json({ error: 'internal error' }, 500)
   })
 
+  app.use('*', cors({
+    origin: (origin, c) => {
+      if (!origin) return null
+      try {
+        const url = new URL(origin)
+        if (url.hostname === 'localhost' || url.hostname === '127.0.0.1') return origin
+        if (config.isProd && origin === config.skeppaApi) return origin
+      } catch {
+      }
+      return null
+    },
+    credentials: true,
+  }))
+
   // Public routes first: webhook (HMAC-authenticated) and login.
   app.route('/api/webhooks', webhookRoutes({ db, config, runner, liveState }))
   app.route('/api/auth', authRoutes({ db, config }))
@@ -32,14 +47,24 @@ export function createApp({ db, config, liveState, hub, runner, github, poller, 
   app.get(
     '/ws',
     async (c, next) => {
-      const session = getSession(db, getCookie(c, COOKIE_NAME))
-      if (!session) return c.text('unauthorized', 401)
+      const cookie = getCookie(c, COOKIE_NAME)
+      const session = getSession(db, cookie)
+      if (!session) {
+        console.log(`[ws] unauthorized connection attempt (cookie: ${cookie ? 'present' : 'missing'})`)
+        return c.text('unauthorized', 401)
+      }
       await next()
     },
     upgradeWebSocket(() => ({
-      onOpen: (_evt, ws) => hub.add(ws.raw),
+      onOpen: (_evt, ws) => {
+        console.log('[ws] connection opened')
+        hub.add(ws.raw)
+      },
       onMessage: (evt, ws) => hub.handleMessage(ws.raw, evt.data),
-      onClose: (_evt, ws) => hub.remove(ws.raw),
+      onClose: (_evt, ws) => {
+        console.log('[ws] connection closed')
+        hub.remove(ws.raw)
+      },
     }))
   )
 

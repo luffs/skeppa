@@ -84,7 +84,7 @@ Add the panel's own repo as a project with pm2 name `skeppa` (must match `SKEPPA
 ```bash
 bun install
 bun run dev:server        # Hono on :3000
-bun run dev:web           # Vite on :5173, proxies /api and /ws
+bun run dev:web           # Vite on :5173, proxies /api and /ws to VITE_SKEPPA_API (web/.env)
 bun test                  # unit tests
 ```
 

@@ -19,7 +19,7 @@ export function authRoutes({ db, config }) {
     setCookie(c, COOKIE_NAME, sessionId, {
       httpOnly: true,
       sameSite: 'Lax',
-      secure: config.isProd,
+      secure: config.isProd && config.isSecureCookie !== false,
       path: '/',
       maxAge: SESSION_TTL_S,
     })

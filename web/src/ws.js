@@ -18,8 +18,11 @@ function sendMsg(msg) {
 export function connectWs() {
   wanted = true
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return
+
   const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-  ws = new WebSocket(`${proto}://${location.host}/ws`)
+  const url = `${proto}://${location.host}/ws`
+  console.log(`Connecting to WebSocket: ${url}`)
+  ws = new WebSocket(url)
 
   ws.onopen = () => {
     store.connected = true
@@ -50,7 +53,10 @@ export function connectWs() {
     backoff = Math.min(backoff * 2, 15000)
   }
 
-  ws.onerror = () => ws?.close()
+  ws.onerror = e => {
+    console.error('WebSocket error:', e)
+    ws?.close()
+  }
 }
 
 export function disconnectWs() {

@@ -28,5 +28,7 @@ export function loadConfig({ requireMasterKey = true } = {}) {
     webDist: join(rootDir, 'web', 'dist'),
     deployTimeoutMs: Number(env.DEPLOY_TIMEOUT_MS || 10 * 60 * 1000),
     selfPm2Name: env.SKEPPA_PM2_NAME || 'skeppa',
+    isSecureCookie: env.SKEPPA_SECURE_COOKIE !== 'false',
+    skeppaApi: env.SKEPPA_API,
   }
 }
