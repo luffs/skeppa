@@ -1,5 +1,4 @@
 import { Hono } from 'hono'
-import {cors} from 'hono/cors'
 import { getCookie } from 'hono/cookie'
 import { serveStatic } from 'hono/bun'
 import { existsSync } from 'node:fs'
@@ -17,20 +16,6 @@ export function createApp({ db, config, liveState, hub, runner, github, poller, 
     console.error('unhandled error:', err)
     return c.json({ error: 'internal error' }, 500)
   })
-
-  app.use('*', cors({
-    origin: (origin, c) => {
-      if (!origin) return null
-      try {
-        const url = new URL(origin)
-        if (url.hostname === 'localhost' || url.hostname === '127.0.0.1') return origin
-        if (config.isProd && origin === config.skeppaApi) return origin
-      } catch {
-      }
-      return null
-    },
-    credentials: true,
-  }))
 
   // Public routes first: webhook (HMAC-authenticated) and login.
   app.route('/api/webhooks', webhookRoutes({ db, config, runner, liveState }))
