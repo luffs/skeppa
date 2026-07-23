@@ -10,7 +10,7 @@ import { githubRoutes, settingsRoutes } from './routes/github.js'
 import { webhookRoutes } from './routes/webhooks.js'
 import { systemRoutes } from './routes/system.js'
 
-export function createApp({ db, config, liveState, hub, runner, github, upgradeWebSocket }) {
+export function createApp({ db, config, liveState, hub, runner, github, poller, upgradeWebSocket }) {
   const app = new Hono()
 
   app.onError((err, c) => {
@@ -24,7 +24,7 @@ export function createApp({ db, config, liveState, hub, runner, github, upgradeW
 
   // Everything else under /api requires a valid session.
   app.use('/api/*', requireSession(db))
-  app.route('/api/projects', projectRoutes({ db, config, liveState, runner }))
+  app.route('/api/projects', projectRoutes({ db, config, liveState, runner, poller }))
   app.route('/api/deployments', deploymentRoutes({ db, runner }))
   app.route('/api/github', githubRoutes({ db, config, github }))
   app.route('/api/settings', settingsRoutes({ db, config, github }))

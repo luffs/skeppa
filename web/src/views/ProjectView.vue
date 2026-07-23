@@ -4,6 +4,11 @@
       <div>
         <h1 style="margin-bottom: 4px">{{ project.name }}</h1>
         <span class="hint mono">{{ project.repo_full_name }} @ {{ project.branch }}</span>
+        <div class="hint" v-if="live?.pm2?.status === 'online'" style="margin-top: 4px">
+          pid {{ live.pm2.pid ?? '—' }} · up {{ uptimeSince(live.pm2.uptime) }} ·
+          {{ live.pm2.cpu ?? 0 }}% cpu · {{ bytes(live.pm2.memory) }} ·
+          {{ live.pm2.restarts ?? 0 }} restart{{ live.pm2.restarts === 1 ? '' : 's' }}
+        </div>
       </div>
       <div class="row">
         <StatusBadge :status="live?.pm2?.status" />
@@ -89,7 +94,7 @@ import DeployLog from '../components/DeployLog.vue'
 import EnvEditor from '../components/EnvEditor.vue'
 import { api } from '../api.js'
 import { liveProject } from '../store.js'
-import { timeAgo, duration } from '../lib/format.js'
+import { timeAgo, duration, uptimeSince, bytes } from '../lib/format.js'
 
 export default {
   name: 'ProjectView',
@@ -133,6 +138,8 @@ export default {
   methods: {
     timeAgo,
     duration,
+    uptimeSince,
+    bytes,
     async loadDeployments() {
       this.deployments = await api.get(`/api/projects/${this.id}/deployments`)
     },

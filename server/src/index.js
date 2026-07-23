@@ -42,7 +42,7 @@ const runner = new DeployRunner({ db, config, liveState, hub, github })
 hub.getLogBacklog = id => runner.getActiveLog(id)
 
 const { upgradeWebSocket, websocket } = createBunWebSocket()
-const app = createApp({ db, config, liveState, hub, runner, github, upgradeWebSocket })
+const app = createApp({ db, config, liveState, hub, runner, github, poller, upgradeWebSocket })
 
 const server = Bun.serve({ port: config.port, fetch: app.fetch, websocket })
 console.log(`Skeppa listening on http://localhost:${server.port} (${config.isProd ? 'production' : 'development'})`)

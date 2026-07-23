@@ -29,8 +29,10 @@ export function createPoller({ db, liveState, intervalMs = 5000 }) {
               uptime: proc.pm2_env?.pm_uptime ?? null,
               memory: proc.monit?.memory ?? null,
               cpu: proc.monit?.cpu ?? null,
+              restarts: proc.pm2_env?.restart_time ?? null,
+              pid: proc.pid ?? null,
             }
-          : { status: 'not started', uptime: null, memory: null, cpu: null }
+          : { status: 'not started', uptime: null, memory: null, cpu: null, restarts: null, pid: null }
       }
     } finally {
       ticking = false

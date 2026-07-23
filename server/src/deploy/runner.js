@@ -1,7 +1,5 @@
-import { join } from 'node:path'
-import { mkdirSync, writeFileSync, copyFileSync } from 'node:fs'
-import { decrypt } from '../lib/crypto.js'
 import { resolveShell, scriptEnvBase } from '../lib/shell.js'
+import { projectDirs, writeEnvFiles, writeEcosystem } from './envfiles.js'
 import { syncRepo } from './git.js'
 import { startOrReload, startOrReloadDetached } from './pm2.js'
 
@@ -175,18 +173,14 @@ export class DeployRunner {
 
   // The real pipeline: token -> git -> .env -> deploy script -> pm2.
   async _deploy(project, deploymentId, log) {
-    const rootDirForApp = join(this.config.appsDir, project.slug)
-    const sourceDir = join(rootDirForApp, 'source')
-    const sharedDir = join(rootDirForApp, 'shared')
-    const workDir = project.cwd ? join(sourceDir, project.cwd) : sourceDir
-    mkdirSync(sharedDir, { recursive: true })
+    const dirs = projectDirs(this.config, project)
 
     log.line('▸ fetching GitHub installation token')
     const token = await this.github.getInstallationToken()
 
     log.line(`▸ syncing ${project.repo_full_name} @ ${project.branch}`)
     const { sha, message } = await syncRepo({
-      dir: sourceDir,
+      dir: dirs.source,
       repoFullName: project.repo_full_name,
       branch: project.branch,
       token,
@@ -196,22 +190,18 @@ export class DeployRunner {
     this.db.query('UPDATE deployments SET commit_sha = ?, commit_message = COALESCE(commit_message, ?) WHERE id = ?')
       .run(sha, message, deploymentId)
 
-    const envVars = this._decryptedEnv(project.id)
-    const envFile = Object.entries(envVars).map(([k, v]) => `${k}=${v}`).join('\n') + '\n'
-    writeFileSync(join(sharedDir, '.env'), envFile, { mode: 0o600 })
-    copyFileSync(join(sharedDir, '.env'), join(workDir, '.env'))
+    const envVars = writeEnvFiles(this.db, this.config, project)
     log.line(`▸ wrote .env (${Object.keys(envVars).length} vars)`)
 
     if (project.deploy_script?.trim()) {
       log.line(`▸ running deploy script`)
-      await this._runScript(project.deploy_script, workDir, envVars, log)
+      await this._runScript(project.deploy_script, dirs.work, envVars, log)
     } else {
       log.line('▸ no deploy script configured, skipping')
     }
 
     if (project.start_command?.trim()) {
-      const ecosystemPath = join(rootDirForApp, 'ecosystem.config.cjs')
-      this._writeEcosystem(ecosystemPath, project, workDir, envVars)
+      const ecosystemPath = writeEcosystem(this.db, this.config, project, envVars)
       if (project.pm2_name === this.config.selfPm2Name) {
         log.line('▸ self-deploy detected: pm2 reload will run detached after this deploy finalizes')
         setTimeout(() => startOrReloadDetached(ecosystemPath), 1500)
@@ -222,13 +212,6 @@ export class DeployRunner {
     } else {
       log.line('▸ no start command configured, skipping pm2')
     }
-  }
-
-  _decryptedEnv(projectId) {
-    const rows = this.db.query('SELECT key, value_encrypted, iv FROM env_vars WHERE project_id = ? ORDER BY key').all(projectId)
-    const env = {}
-    for (const row of rows) env[row.key] = decrypt(row.value_encrypted, row.iv, this.config.masterKey)
-    return env
   }
 
   async _runScript(script, cwd, envVars, log) {
@@ -249,20 +232,5 @@ export class DeployRunner {
     } finally {
       clearTimeout(timer)
     }
-  }
-
-  _writeEcosystem(path, project, workDir, envVars) {
-    const [cmd, ...args] = project.start_command.trim().split(/\s+/)
-    const app = {
-      name: project.pm2_name,
-      cwd: workDir,
-      script: cmd,
-      args: args.join(' '),
-      interpreter: 'none',
-      autorestart: true,
-      max_restarts: 10,
-      env: envVars,
-    }
-    writeFileSync(path, `module.exports = ${JSON.stringify({ apps: [app] }, null, 2)}\n`, { mode: 0o600 })
   }
 }

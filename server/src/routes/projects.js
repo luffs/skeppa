@@ -1,13 +1,15 @@
 import { Hono } from 'hono'
+import { existsSync } from 'node:fs'
 import { encrypt, decrypt } from '../lib/crypto.js'
 import { slugify, validateProject, SLUG_RE, ENV_KEY_RE, PM2_ACTIONS } from '../lib/validate.js'
 import { projectDefaults } from '../live/state.js'
-import { action as pm2Action, deleteProcess } from '../deploy/pm2.js'
+import { action as pm2Action, deleteProcess, startOrReload } from '../deploy/pm2.js'
+import { projectDirs, writeEnvFiles, writeEcosystem } from '../deploy/envfiles.js'
 
 const PROJECT_COLUMNS =
   'id, slug, name, repo_full_name, branch, deploy_script, pm2_name, start_command, cwd, created_at'
 
-export function projectRoutes({ db, config, liveState, runner }) {
+export function projectRoutes({ db, config, liveState, runner, poller }) {
   const app = new Hono()
 
   const getProject = id => db.query(`SELECT ${PROJECT_COLUMNS} FROM projects WHERE id = ?`).get(Number(id))
@@ -134,7 +136,17 @@ export function projectRoutes({ db, config, liveState, runner }) {
       }
     })
     replaceAll()
-    return c.json({ ok: true, count: body.length })
+
+    // If the app is already deployed, rewrite .env and the ecosystem file now
+    // so a pm2 restart (or the app itself re-reading .env) picks the changes
+    // up without waiting for the next deploy.
+    let applied = false
+    if (existsSync(projectDirs(config, project).source)) {
+      const envVars = writeEnvFiles(db, config, project)
+      writeEcosystem(db, config, project, envVars)
+      applied = true
+    }
+    return c.json({ ok: true, count: body.length, applied })
   })
 
   // --- Deployments ----------------------------------------------------------
@@ -165,7 +177,16 @@ export function projectRoutes({ db, config, liveState, runner }) {
     const act = c.req.param('action')
     if (!PM2_ACTIONS.includes(act)) return c.json({ error: `action must be one of ${PM2_ACTIONS.join(', ')}` }, 400)
     try {
-      await pm2Action(act, project.pm2_name)
+      // start/restart go through the ecosystem file when it exists so the
+      // current ENV set is applied; a plain `pm2 restart` would keep the
+      // environment from when the process was first started.
+      const { ecosystem } = projectDirs(config, project)
+      if (act !== 'stop' && existsSync(ecosystem)) {
+        await startOrReload(ecosystem)
+      } else {
+        await pm2Action(act, project.pm2_name)
+      }
+      poller?.tick()
       return c.json({ ok: true })
     } catch (err) {
       return c.json({ error: err.message }, 500)

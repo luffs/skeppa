@@ -2,7 +2,8 @@
   <div>
     <p class="hint">
       Values are AES-256-GCM encrypted at rest and masked here until revealed.
-      Saving replaces the whole set and takes effect on the next deploy.
+      Saving replaces the whole set and rewrites the app's <span class="mono">.env</span>
+      immediately — press <em>Restart</em> to apply them to the running process.
     </p>
     <table v-if="rows.length">
       <thead>
