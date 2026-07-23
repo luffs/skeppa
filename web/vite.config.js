@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
-const API_TARGET = process.env.SKEPPA_API || 'http://localhost:3000'
+const API_TARGET = process.env.SKEPPA_API || 'http://localhost:3112'
 
 export default defineConfig({
   plugins: [vue()],

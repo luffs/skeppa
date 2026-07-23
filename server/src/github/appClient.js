@@ -93,6 +93,16 @@ export class GitHubApp {
     return data.token
   }
 
+  async getBranchHead(repoFullName, branch) {
+    const token = await this.getInstallationToken()
+    const data = await this._fetch(`/repos/${repoFullName}/branches/${encodeURIComponent(branch)}`, { token })
+    return {
+      sha: data.commit?.sha ?? null,
+      message: data.commit?.commit?.message?.split('\n')[0] ?? null,
+      pushedAt: data.commit?.commit?.committer?.date ?? null,
+    }
+  }
+
   async listRepos() {
     const token = await this.getInstallationToken()
     const repos = []

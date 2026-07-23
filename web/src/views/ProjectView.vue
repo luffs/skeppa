@@ -12,6 +12,14 @@
       </div>
       <div class="row">
         <StatusBadge :status="live?.pm2?.status" />
+        <button
+          class="secondary"
+          :disabled="checking"
+          title="Ask GitHub for the latest commit on the branch"
+          @click="checkHead"
+        >
+          {{ checking ? 'Checking…' : '↻ Check GitHub' }}
+        </button>
         <button class="secondary" :disabled="pm2Busy" @click="pm2('start')">Start</button>
         <button class="secondary" :disabled="pm2Busy" @click="confirmPm2('stop')">Stop</button>
         <button class="secondary" :disabled="pm2Busy" @click="confirmPm2('restart')">Restart</button>
@@ -20,6 +28,17 @@
         </button>
       </div>
     </div>
+
+    <div class="row" style="margin-top: 12px" v-if="undeployed">
+      <span class="badge yellow">undeployed commits</span>
+      <span class="hint">
+        <span class="mono">{{ live.headCommit.sha.slice(0, 7) }}</span>
+        {{ live.headCommit.message }} — pushed {{ timeAgo(live.headCommit.pushedAt) }}<template
+          v-if="!project.auto_deploy"> · auto deploy is off</template>
+      </span>
+    </div>
+    <p class="hint" v-else-if="checkResult" style="margin-top: 12px">{{ checkResult }}</p>
+    <p class="error" v-if="checkError" style="margin-top: 12px">{{ checkError }}</p>
 
     <div class="tabs">
       <button :class="{ active: tab === 'deploys' }" @click="tab = 'deploys'">Deployments</button>
@@ -69,6 +88,11 @@
       <input v-model="edit.repo_full_name" class="code" />
       <label>Branch</label>
       <input v-model="edit.branch" class="code" />
+      <label class="check-label">
+        <input type="checkbox" v-model="edit.auto_deploy" />
+        Auto deploy on push to {{ edit.branch || project.branch }}
+      </label>
+      <p class="hint">When off, pushes only show up as "undeployed commits" — deploy manually.</p>
       <label>Deploy script</label>
       <textarea v-model="edit.deploy_script" class="code" rows="4"></textarea>
       <p class="hint">⚠ Runs as a shell script on the server — only trusted commands.</p>
@@ -111,11 +135,20 @@ export default {
       saveError: '',
       saved: false,
       pm2Busy: false,
+      checking: false,
+      checkResult: '',
+      checkError: '',
     }
   },
   computed: {
     live() {
       return liveProject(Number(this.id))
+    },
+    undeployed() {
+      const live = this.live
+      return !!live?.headCommit?.sha &&
+        !live.currentDeployment &&
+        live.headCommit.sha !== live.deployedSha
     },
     currentDeploymentId() {
       return this.live?.currentDeployment?.id ?? null
@@ -131,7 +164,7 @@ export default {
   },
   async created() {
     this.project = await api.get(`/api/projects/${this.id}`)
-    this.edit = { ...this.project, cwd: this.project.cwd ?? '' }
+    this.edit = { ...this.project, cwd: this.project.cwd ?? '', auto_deploy: !!this.project.auto_deploy }
     await this.loadDeployments()
     this.selectedId = this.currentDeploymentId ?? this.deployments[0]?.id ?? null
   },
@@ -147,6 +180,25 @@ export default {
       if (d.id === this.currentDeploymentId) return this.live.currentDeployment.status
       if (d.id === this.live?.lastDeployment?.id) return this.live.lastDeployment.status
       return d.status
+    },
+    async checkHead() {
+      this.checking = true
+      this.checkResult = ''
+      this.checkError = ''
+      try {
+        const head = await api.post(`/api/projects/${this.id}/refresh-head`)
+        // If there are new commits, the badge appears via the LiveState diff;
+        // only "nothing new" needs saying out loud.
+        if (head.sha && head.sha === this.live?.deployedSha) {
+          this.checkResult = `Up to date — ${head.sha.slice(0, 7)} is deployed ✔`
+        } else if (!head.sha) {
+          this.checkError = 'GitHub returned no commit for this branch'
+        }
+      } catch (err) {
+        this.checkError = `GitHub check failed: ${err.message}`
+      } finally {
+        this.checking = false
+      }
     },
     async deployNow() {
       const { id } = await api.post(`/api/projects/${this.id}/deploy`)

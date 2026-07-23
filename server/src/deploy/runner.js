@@ -1,4 +1,5 @@
 import { resolveShell, scriptEnvBase } from '../lib/shell.js'
+import { projectDefaults } from '../live/state.js'
 import { projectDirs, writeEnvFiles, writeEcosystem } from './envfiles.js'
 import { syncRepo } from './git.js'
 import { startOrReload, startOrReloadDetached } from './pm2.js'
@@ -116,11 +117,7 @@ export class DeployRunner {
   _live(projectId) {
     let live = this.liveState.projects[projectId]
     if (!live) {
-      this.liveState.projects[projectId] = {
-        pm2: { status: 'unknown', uptime: null, memory: null, cpu: null },
-        currentDeployment: null,
-        lastDeployment: null,
-      }
+      this.liveState.projects[projectId] = projectDefaults()
       live = this.liveState.projects[projectId]
     }
     return live
@@ -158,6 +155,7 @@ export class DeployRunner {
     const live = this._live(projectId)
     live.currentDeployment = null
     live.lastDeployment = { id: deploymentId, status, finishedAt, commitSha: row?.commit_sha ?? null }
+    if (status === 'success' && row?.commit_sha) live.deployedSha = row.commit_sha
 
     const q = this.queues.get(projectId)
     if (q) {

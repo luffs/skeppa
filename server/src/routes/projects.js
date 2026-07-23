@@ -7,9 +7,10 @@ import { action as pm2Action, deleteProcess, startOrReload } from '../deploy/pm2
 import { projectDirs, writeEnvFiles, writeEcosystem } from '../deploy/envfiles.js'
 
 const PROJECT_COLUMNS =
-  'id, slug, name, repo_full_name, branch, deploy_script, pm2_name, start_command, cwd, created_at'
+  'id, slug, name, repo_full_name, branch, deploy_script, pm2_name, start_command, cwd, ' +
+  'auto_deploy, head_sha, head_message, head_pushed_at, created_at'
 
-export function projectRoutes({ db, config, liveState, runner, poller }) {
+export function projectRoutes({ db, config, liveState, runner, poller, github }) {
   const app = new Hono()
 
   const getProject = id => db.query(`SELECT ${PROJECT_COLUMNS} FROM projects WHERE id = ?`).get(Number(id))
@@ -28,6 +29,7 @@ export function projectRoutes({ db, config, liveState, runner, poller }) {
       start_command: body.start_command ?? '',
       pm2_name: body.pm2_name?.trim() || slugify(body.name ?? ''),
       cwd: body.cwd?.trim() || null,
+      auto_deploy: body.auto_deploy === false ? 0 : 1,
     }
     const errors = validateProject(project)
     if (Object.keys(errors).length) return c.json({ error: 'validation failed', fields: errors }, 400)
@@ -44,10 +46,10 @@ export function projectRoutes({ db, config, liveState, runner, poller }) {
     }
 
     const { lastInsertRowid } = db.query(
-      `INSERT INTO projects (slug, name, repo_full_name, branch, deploy_script, pm2_name, start_command, cwd)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO projects (slug, name, repo_full_name, branch, deploy_script, pm2_name, start_command, cwd, auto_deploy)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(slug, project.name, project.repo_full_name, project.branch, project.deploy_script,
-          project.pm2_name, project.start_command, project.cwd)
+          project.pm2_name, project.start_command, project.cwd, project.auto_deploy)
     const id = Number(lastInsertRowid)
     liveState.projects[id] = projectDefaults()
     return c.json(getProject(id), 201)
@@ -72,6 +74,7 @@ export function projectRoutes({ db, config, liveState, runner, poller }) {
       start_command: body.start_command ?? project.start_command,
       pm2_name: body.pm2_name?.trim() ?? project.pm2_name,
       cwd: 'cwd' in body ? (body.cwd?.trim() || null) : project.cwd,
+      auto_deploy: 'auto_deploy' in body ? (body.auto_deploy ? 1 : 0) : project.auto_deploy,
     }
     const errors = validateProject(merged)
     if (Object.keys(errors).length) return c.json({ error: 'validation failed', fields: errors }, 400)
@@ -82,9 +85,9 @@ export function projectRoutes({ db, config, liveState, runner, poller }) {
 
     db.query(
       `UPDATE projects SET name = ?, repo_full_name = ?, branch = ?, deploy_script = ?,
-         start_command = ?, pm2_name = ?, cwd = ? WHERE id = ?`
+         start_command = ?, pm2_name = ?, cwd = ?, auto_deploy = ? WHERE id = ?`
     ).run(merged.name, merged.repo_full_name, merged.branch, merged.deploy_script,
-          merged.start_command, merged.pm2_name, merged.cwd, project.id)
+          merged.start_command, merged.pm2_name, merged.cwd, merged.auto_deploy, project.id)
     return c.json(getProject(project.id))
   })
 
@@ -156,6 +159,26 @@ export function projectRoutes({ db, config, liveState, runner, poller }) {
     if (!project) return c.json({ error: 'not found' }, 404)
     const deploymentId = runner.enqueue(project.id, { trigger: 'manual' })
     return c.json({ id: deploymentId }, 202)
+  })
+
+  // Ask GitHub for the current branch head. The webhook keeps this fresh on
+  // its own; this covers pushes made while the panel was down or before the
+  // webhook was configured.
+  app.post('/:id/refresh-head', async c => {
+    const project = getProject(c.req.param('id'))
+    if (!project) return c.json({ error: 'not found' }, 404)
+    try {
+      const head = await github.getBranchHead(project.repo_full_name, project.branch)
+      if (head.sha) {
+        db.query('UPDATE projects SET head_sha = ?, head_message = ?, head_pushed_at = ? WHERE id = ?')
+          .run(head.sha, head.message, head.pushedAt, project.id)
+        const live = liveState.projects[project.id]
+        if (live) live.headCommit = { sha: head.sha, message: head.message, pushedAt: head.pushedAt }
+      }
+      return c.json(head)
+    } catch (err) {
+      return c.json({ error: err.message }, 502)
+    }
   })
 
   app.get('/:id/deployments', c => {

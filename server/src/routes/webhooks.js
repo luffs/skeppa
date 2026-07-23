@@ -4,7 +4,7 @@ import { verifySignature } from '../github/webhook.js'
 
 // No session on this route — authentication is the HMAC signature.
 // Respond quickly; the actual deploy work happens asynchronously.
-export function webhookRoutes({ db, config, runner }) {
+export function webhookRoutes({ db, config, runner, liveState }) {
   const app = new Hono()
 
   app.post('/github', async c => {
@@ -30,13 +30,27 @@ export function webhookRoutes({ db, config, runner }) {
 
     const repo = payload.repository?.full_name
     const ref = payload.ref
-    const matches = db.query('SELECT id, branch FROM projects WHERE repo_full_name = ?').all(repo ?? '')
+    const matches = db.query('SELECT id, branch, auto_deploy FROM projects WHERE repo_full_name = ?').all(repo ?? '')
       .filter(p => ref === `refs/heads/${p.branch}`)
 
     const commitSha = payload.after ?? null
     const commitMessage = payload.head_commit?.message?.split('\n')[0] ?? null
-    queueMicrotask(() => {
+    const pushedAt = payload.head_commit?.timestamp ?? new Date().toISOString()
+
+    // Every push updates the recorded head commit, so the UI can show
+    // pushed-but-undeployed commits; a deploy only runs with auto_deploy on.
+    if (commitSha) {
       for (const p of matches) {
+        db.query('UPDATE projects SET head_sha = ?, head_message = ?, head_pushed_at = ? WHERE id = ?')
+          .run(commitSha, commitMessage, pushedAt, p.id)
+        const live = liveState?.projects[p.id]
+        if (live) live.headCommit = { sha: commitSha, message: commitMessage, pushedAt }
+      }
+    }
+
+    const toDeploy = matches.filter(p => p.auto_deploy)
+    queueMicrotask(() => {
+      for (const p of toDeploy) {
         try {
           runner.enqueue(p.id, { trigger: 'webhook', commitSha, commitMessage })
         } catch (err) {
@@ -44,7 +58,7 @@ export function webhookRoutes({ db, config, runner }) {
         }
       }
     })
-    return c.json({ queued: matches.length }, 202)
+    return c.json({ matched: matches.length, queued: toDeploy.length }, 202)
   })
 
   return app

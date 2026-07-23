@@ -17,6 +17,12 @@
       <label>Branch</label>
       <input v-model="form.branch" class="code" placeholder="main" />
 
+      <label class="check-label" style="margin-top: 12px">
+        <input type="checkbox" v-model="form.auto_deploy" />
+        Auto deploy on push
+      </label>
+      <p class="hint">When off, pushes only show up as "undeployed commits" — deploy manually.</p>
+
       <label>Name</label>
       <input v-model="form.name" placeholder="My app" @input="syncPm2Name" />
 
@@ -67,6 +73,7 @@ export default {
         deploy_script: '',
         start_command: '',
         cwd: '',
+        auto_deploy: true,
       },
     }
   },

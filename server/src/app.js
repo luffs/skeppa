@@ -19,12 +19,12 @@ export function createApp({ db, config, liveState, hub, runner, github, poller, 
   })
 
   // Public routes first: webhook (HMAC-authenticated) and login.
-  app.route('/api/webhooks', webhookRoutes({ db, config, runner }))
+  app.route('/api/webhooks', webhookRoutes({ db, config, runner, liveState }))
   app.route('/api/auth', authRoutes({ db, config }))
 
   // Everything else under /api requires a valid session.
   app.use('/api/*', requireSession(db))
-  app.route('/api/projects', projectRoutes({ db, config, liveState, runner, poller }))
+  app.route('/api/projects', projectRoutes({ db, config, liveState, runner, poller, github }))
   app.route('/api/deployments', deploymentRoutes({ db, runner }))
   app.route('/api/github', githubRoutes({ db, config, github }))
   app.route('/api/settings', settingsRoutes({ db, config, github }))

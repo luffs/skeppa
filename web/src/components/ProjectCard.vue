@@ -18,6 +18,11 @@
       <span class="hint" v-else>never deployed</span>
       <span class="hint" v-if="pm2Status === 'online'">up {{ uptimeSince(live?.pm2?.uptime) }}</span>
     </div>
+    <div class="row" style="margin-top: 8px" v-if="undeployed">
+      <span class="badge yellow">undeployed commits</span>
+      <span class="hint mono">{{ live.headCommit.sha.slice(0, 7) }}</span>
+      <span class="hint">{{ timeAgo(live.headCommit.pushedAt) }}</span>
+    </div>
   </router-link>
 </template>
 
@@ -36,6 +41,12 @@ export default {
     },
     pm2Status() {
       return this.live?.pm2?.status ?? 'unknown'
+    },
+    undeployed() {
+      const live = this.live
+      return !!live?.headCommit?.sha &&
+        !live.currentDeployment &&
+        live.headCommit.sha !== live.deployedSha
     },
   },
   methods: { timeAgo, uptimeSince },
