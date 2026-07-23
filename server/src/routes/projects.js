@@ -184,6 +184,24 @@ export function projectRoutes({ db, config, liveState, runner, poller, github })
     }
   })
 
+  // A short-lived installation token wrapped in a ready-to-paste clone
+  // command, for manually pulling the repo on another machine. The token is
+  // returned to the (session-authenticated) user on purpose — it is never
+  // logged or persisted here.
+  app.post('/:id/clone-command', async c => {
+    const project = getProject(c.req.param('id'))
+    if (!project) return c.json({ error: 'not found' }, 404)
+    try {
+      const { token, expiresAt } = await github.getInstallationTokenInfo()
+      const command =
+        `git clone --branch ${project.branch} ` +
+        `https://x-access-token:${token}@github.com/${project.repo_full_name}.git`
+      return c.json({ command, expiresAt })
+    } catch (err) {
+      return c.json({ error: err.message }, 502)
+    }
+  })
+
   app.get('/:id/deployments', c => {
     const project = getProject(c.req.param('id'))
     if (!project) return c.json({ error: 'not found' }, 404)

@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import {cors} from 'hono/cors'
 import { getCookie } from 'hono/cookie'
-import { join, resolve } from 'node:path'
+import { serveStatic } from 'hono/bun'
 import { existsSync } from 'node:fs'
 import { requireSession, getSession, COOKIE_NAME } from './auth/sessions.js'
 import { authRoutes } from './routes/auth.js'
@@ -69,18 +69,13 @@ export function createApp({ db, config, liveState, hub, runner, github, poller, 
   )
 
   // Static SPA (prod build). In dev, Vite serves the frontend and proxies here.
+  // serveStatic handles Content-Type and rejects traversal ('..', '\', '//').
   if (existsSync(config.webDist)) {
-    const indexHtml = join(config.webDist, 'index.html')
-    app.get('*', async c => {
-      const reqPath = decodeURIComponent(new URL(c.req.url).pathname)
-      if (reqPath.startsWith('/api') || reqPath === '/ws') return c.json({ error: 'not found' }, 404)
-      const target = resolve(join(config.webDist, '.' + reqPath))
-      if (target.startsWith(config.webDist)) {
-        const file = Bun.file(target)
-        if (await file.exists()) return new Response(file)
-      }
-      return new Response(Bun.file(indexHtml), { headers: { 'content-type': 'text/html' } })
-    })
+    // Unknown API/WS paths must 404 as JSON, not fall through to the SPA page.
+    app.all('/api/*', c => c.json({ error: 'not found' }, 404))
+    app.all('/ws', c => c.json({ error: 'not found' }, 404))
+    app.use('*', serveStatic({ root: config.webDist }))
+    app.get('*', serveStatic({ root: config.webDist, path: 'index.html' }))
   }
 
   return app

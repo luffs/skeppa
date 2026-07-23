@@ -93,6 +93,13 @@ export class GitHubApp {
     return data.token
   }
 
+  // Token plus its expiry, for callers that show the token to the user
+  // (e.g. the copy-paste clone command) rather than using it internally.
+  async getInstallationTokenInfo() {
+    const token = await this.getInstallationToken()
+    return { token, expiresAt: this._tokenCache?.expiresAt ?? null }
+  }
+
   async getBranchHead(repoFullName, branch) {
     const token = await this.getInstallationToken()
     const data = await this._fetch(`/repos/${repoFullName}/branches/${encodeURIComponent(branch)}`, { token })

@@ -108,6 +108,37 @@
         <button :disabled="saving" @click="save">{{ saving ? 'Saving…' : 'Save settings' }}</button>
         <button class="danger" @click="remove">Delete project</button>
       </div>
+
+      <div style="margin-top: 24px; border-top: 1px solid var(--border); padding-top: 16px">
+        <h2 style="margin: 0 0 8px">Clone manually</h2>
+        <p class="hint">
+          Generates a git clone command with a short-lived GitHub App installation token, to run on
+          another server. The token expires after about an hour, grants access to every repo the app
+          is installed on, and ends up in the clone's <span class="mono">.git/config</span> — after
+          cloning, reset the remote with
+          <span class="mono">git remote set-url origin https://github.com/{{ project.repo_full_name }}.git</span>.
+        </p>
+        <button class="secondary" :disabled="tokenBusy" @click="getCloneCommand">
+          {{ tokenBusy ? 'Fetching token…' : 'Get clone command' }}
+        </button>
+        <p v-if="tokenError" class="error">{{ tokenError }}</p>
+        <template v-if="cloneCommand">
+          <textarea
+            class="code"
+            readonly
+            rows="3"
+            style="margin-top: 12px"
+            :value="cloneCommand"
+            @focus="$event.target.select()"
+          ></textarea>
+          <div class="row" style="margin-top: 8px; justify-content: space-between">
+            <button class="secondary small" @click="copyCloneCommand">
+              {{ copiedCommand ? 'Copied ✔' : 'Copy' }}
+            </button>
+            <span class="hint" v-if="cloneExpiresIn">token expires {{ cloneExpiresIn }}</span>
+          </div>
+        </template>
+      </div>
     </div>
   </div>
 </template>
@@ -138,6 +169,11 @@ export default {
       checking: false,
       checkResult: '',
       checkError: '',
+      tokenBusy: false,
+      tokenError: '',
+      cloneCommand: '',
+      cloneExpiresAt: null,
+      copiedCommand: false,
     }
   },
   computed: {
@@ -157,6 +193,11 @@ export default {
     },
     currentDeploymentId() {
       return this.live?.currentDeployment?.id ?? null
+    },
+    cloneExpiresIn() {
+      if (!this.cloneExpiresAt) return ''
+      const min = Math.round((this.cloneExpiresAt - Date.now()) / 60000)
+      return min > 0 ? `in ~${min} min` : 'soon — fetch a fresh one'
     },
   },
   watch: {
@@ -212,6 +253,31 @@ export default {
         this.checkError = `GitHub check failed: ${err.message}`
       } finally {
         this.checking = false
+      }
+    },
+    async getCloneCommand() {
+      this.tokenBusy = true
+      this.tokenError = ''
+      this.copiedCommand = false
+      try {
+        const { command, expiresAt } = await api.post(`/api/projects/${this.id}/clone-command`)
+        this.cloneCommand = command
+        this.cloneExpiresAt = expiresAt
+      } catch (err) {
+        this.tokenError = `Could not get a token: ${err.message}`
+      } finally {
+        this.tokenBusy = false
+      }
+    },
+    async copyCloneCommand() {
+      try {
+        await navigator.clipboard.writeText(this.cloneCommand)
+        this.copiedCommand = true
+        setTimeout(() => (this.copiedCommand = false), 2000)
+      } catch {
+        // Clipboard API unavailable (http, permissions) — the textarea
+        // selects itself on focus, so manual copy still works.
+        this.tokenError = 'Clipboard unavailable — select the command and copy it manually'
       }
     },
     async deployNow() {
