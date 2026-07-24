@@ -8,16 +8,19 @@ export const store = reactive({
   user: null,
   connected: false,
   ready: false, // true once the first full snapshot has arrived
+  liveUpdatedAt: null, // ms timestamp of the last snapshot/diff received
   live: { projects: {}, system: {} },
 })
 
 export function applyFullState(state) {
   store.live = state
   store.ready = true
+  store.liveUpdatedAt = Date.now()
 }
 
 export function applyStateDiff(diff) {
   LazyWatch.patch(store.live, diff)
+  store.liveUpdatedAt = Date.now()
 }
 
 export function liveProject(projectId) {

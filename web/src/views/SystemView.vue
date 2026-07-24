@@ -2,7 +2,7 @@
   <div class="container">
     <div class="row" style="justify-content: space-between; margin-bottom: 16px">
       <h1 style="margin: 0">System</h1>
-      <span class="hint" v-if="status">live · updated {{ timeAgo(status.updatedAt) }}</span>
+      <span class="hint" v-if="status">live · updated {{ timeAgo(liveUpdatedAt) }}</span>
     </div>
 
     <p v-if="!status" class="hint">Waiting for live data…</p>
@@ -10,11 +10,11 @@
     <div v-if="status" class="grid" style="margin-bottom: 16px">
       <div class="panel">
         <div class="hint">Panel uptime</div>
-        <strong>{{ secondsToHuman(status.panelUptime) }}</strong>
+        <strong>{{ uptimeSince(status.panelStartedAt) }}</strong>
       </div>
       <div class="panel">
         <div class="hint">Host uptime</div>
-        <strong>{{ secondsToHuman(status.hostUptime) }}</strong>
+        <strong>{{ uptimeSince(status.hostBootAt) }}</strong>
       </div>
       <div class="panel">
         <div class="hint">Apps dir ({{ status.appsDir }})</div>
@@ -31,12 +31,12 @@
     <div class="panel" v-if="status">
       <h2 style="margin-top: 0">pm2 processes</h2>
       <p v-if="status.pm2Error" class="error">pm2 unavailable: {{ status.pm2Error }}</p>
-      <table v-else-if="status.pm2?.length">
+      <table v-else-if="pm2List.length">
         <thead>
           <tr><th>Name</th><th>Status</th><th>PID</th><th>Uptime</th><th>CPU</th><th>Memory</th><th>Restarts</th></tr>
         </thead>
         <tbody>
-          <tr v-for="p in status.pm2" :key="p.name">
+          <tr v-for="p in pm2List" :key="p.name">
             <td class="mono">{{ p.name }}</td>
             <td><StatusBadge :status="p.status" /></td>
             <td class="hint">{{ p.pid || '—' }}</td>
@@ -55,19 +55,26 @@
 <script>
 import StatusBadge from '../components/StatusBadge.vue'
 import { store } from '../store.js'
-import { bytes, uptimeSince, secondsToHuman, timeAgo } from '../lib/format.js'
+import { bytes, uptimeSince, timeAgo } from '../lib/format.js'
 
 export default {
   name: 'SystemView',
   components: { StatusBadge },
   computed: {
     // Fed by the server-side poller through LiveState — renders instantly on
-    // navigation and refreshes itself every poll tick.
+    // navigation and refreshes itself as diffs arrive.
     status() {
       const s = store.live.system
-      return s?.updatedAt ? s : null
+      return s?.appsDir ? s : null
+    },
+    liveUpdatedAt() {
+      return store.liveUpdatedAt
+    },
+    // system.pm2 is keyed by process name (diff-friendly); flatten for the table.
+    pm2List() {
+      return Object.entries(this.status?.pm2 ?? {}).map(([name, p]) => ({ name, ...p }))
     },
   },
-  methods: { bytes, uptimeSince, secondsToHuman, timeAgo },
+  methods: { bytes, uptimeSince, timeAgo },
 }
 </script>
