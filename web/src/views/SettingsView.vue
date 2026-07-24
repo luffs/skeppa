@@ -1,22 +1,22 @@
 <template>
-  <div class="container" style="max-width: 640px">
-    <h1>Settings</h1>
+  <div class="container narrow">
+    <h1 style="margin-bottom: 22px">Rigging</h1>
     <div class="panel">
       <h2 style="margin-top: 0">GitHub App</h2>
-      <p class="hint">
+      <p class="hint" style="font-size: 13.5px">
         Create a GitHub App (Settings → Developer settings → GitHub Apps) with
         <strong>Contents: read</strong> and <strong>Metadata: read</strong> permissions and the
         <strong>push</strong> event subscribed, install it on your account, then paste its
         credentials here. Set the webhook URL to
-        <span class="mono">{{ webhookUrl }}</span>
+        <span class="mono" style="font-size: 12.5px">{{ webhookUrl }}</span>
       </p>
 
       <label>App ID</label>
       <input v-model="form.github_app_id" class="code" placeholder="123456" />
 
-      <label>
+      <label style="display: flex; align-items: center; gap: 8px">
         Private key (PEM)
-        <span v-if="status.has_private_key" class="badge green" style="margin-left: 6px">configured</span>
+        <span v-if="status.has_private_key" class="chip green" style="font-size: 10px; padding: 2px 9px">configured</span>
       </label>
       <textarea
         v-model="form.github_private_key"
@@ -25,9 +25,9 @@
         :placeholder="status.has_private_key ? '(unchanged — paste to replace)' : '-----BEGIN RSA PRIVATE KEY-----'"
       ></textarea>
 
-      <label>
+      <label style="display: flex; align-items: center; gap: 8px">
         Webhook secret
-        <span v-if="status.has_webhook_secret" class="badge green" style="margin-left: 6px">configured</span>
+        <span v-if="status.has_webhook_secret" class="chip green" style="font-size: 10px; padding: 2px 9px">configured</span>
       </label>
       <input
         v-model="form.github_webhook_secret"
@@ -38,7 +38,7 @@
 
       <p v-if="error" class="error">{{ error }}</p>
       <p v-if="message" class="hint">{{ message }}</p>
-      <div class="row" style="margin-top: 12px">
+      <div class="row" style="margin-top: 20px">
         <button :disabled="busy" @click="save">{{ busy ? 'Saving…' : 'Save' }}</button>
         <button class="secondary" :disabled="busy" @click="test">Test connection</button>
       </div>

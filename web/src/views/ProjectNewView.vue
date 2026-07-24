@@ -1,6 +1,9 @@
 <template>
-  <div class="container" style="max-width: 640px">
-    <h1>New project</h1>
+  <div class="container narrow">
+    <h1 style="margin-bottom: 0">Moor a new project</h1>
+    <p class="hint" style="font-size: 14px; margin: 6px 0 22px">
+      Pick a repository, tell Skeppa how to build and start it.
+    </p>
     <div class="panel">
       <p v-if="repoError" class="error">
         {{ repoError }} — check the <router-link to="/settings">GitHub App settings</router-link>.
@@ -21,7 +24,7 @@
         <input type="checkbox" v-model="form.auto_deploy" />
         Auto deploy on push
       </label>
-      <p class="hint">When off, pushes only show up as "undeployed commits" — deploy manually.</p>
+      <p class="hint">When off, pushes only show up as "commits ahead" — deploy manually.</p>
 
       <label>Name</label>
       <input v-model="form.name" placeholder="My app" @input="syncPm2Name" />
@@ -36,16 +39,16 @@
         deploy panel, so only put trusted commands here.
       </p>
 
-      <label>Start command (optional — leave empty for build-only projects)</label>
+      <label>Start command <span class="soft">(optional — empty for build-only)</span></label>
       <input v-model="form.start_command" class="code" placeholder="bun run start" />
 
-      <label>Working subdirectory (optional, relative to repo root)</label>
+      <label>Working subdirectory <span class="soft">(optional, relative to repo root)</span></label>
       <input v-model="form.cwd" class="code" placeholder="apps/api" />
 
       <p v-if="error" class="error">{{ error }}</p>
-      <p style="margin-bottom: 0">
+      <p style="margin: 22px 0 0">
         <button :disabled="busy || !form.repo_full_name || !form.name" @click="submit">
-          {{ busy ? 'Creating…' : 'Create project' }}
+          {{ busy ? 'Mooring…' : 'Moor project' }}
         </button>
       </p>
     </div>

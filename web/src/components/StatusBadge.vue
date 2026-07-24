@@ -1,5 +1,5 @@
 <template>
-  <span class="badge" :class="color">{{ status || 'unknown' }}</span>
+  <span class="chip" :class="color">{{ status || 'unknown' }}</span>
 </template>
 
 <script>
@@ -7,9 +7,9 @@ const COLORS = {
   success: 'green',
   online: 'green',
   running: 'blue',
-  queued: 'yellow',
-  stopping: 'yellow',
-  launching: 'yellow',
+  queued: 'amber',
+  stopping: 'amber',
+  launching: 'amber',
   failed: 'red',
   errored: 'red',
   stopped: 'red',

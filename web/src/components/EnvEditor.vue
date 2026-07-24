@@ -1,33 +1,26 @@
 <template>
   <div>
-    <p class="hint">
-      Values are AES-256-GCM encrypted at rest and masked here until revealed.
+    <p class="hint" style="font-size: 13.5px; margin: 0 0 16px; max-width: 640px">
+      Values are AES-256-GCM encrypted at rest and masked until revealed.
       Saving replaces the whole set and rewrites the app's <span class="mono">.env</span>
       immediately — press <em>Restart</em> to apply them to the running process.
     </p>
-    <table v-if="rows.length">
-      <thead>
-        <tr><th style="width: 35%">Key</th><th>Value</th><th style="width: 40px"></th></tr>
-      </thead>
-      <tbody>
-        <tr v-for="(row, i) in rows" :key="i">
-          <td><input v-model="row.key" class="code" placeholder="KEY" /></td>
-          <td>
-            <input
-              v-model="row.value"
-              class="code"
-              :type="revealed ? 'text' : 'password'"
-              :placeholder="row.masked ? '(unchanged)' : 'value'"
-              @input="row.masked = false"
-            />
-          </td>
-          <td><button class="secondary small" @click="rows.splice(i, 1)">✕</button></td>
-        </tr>
-      </tbody>
-    </table>
-    <p v-else class="hint">No ENV variables.</p>
+    <div v-if="rows.length" class="env-rows">
+      <div v-for="(row, i) in rows" :key="i" class="env-row">
+        <input v-model="row.key" class="code key" placeholder="KEY" />
+        <input
+          v-model="row.value"
+          class="code value"
+          :type="revealed ? 'text' : 'password'"
+          :placeholder="row.masked ? '(unchanged)' : 'value'"
+          @input="row.masked = false"
+        />
+        <button class="secondary small" style="padding: 8px 12px" @click="rows.splice(i, 1)">✕</button>
+      </div>
+    </div>
+    <p v-else class="hint">No cargo aboard — no ENV variables yet.</p>
     <p v-if="error" class="error">{{ error }}</p>
-    <div class="row" style="margin-top: 12px">
+    <div class="row" style="margin-top: 18px">
       <button class="secondary" @click="rows.push({ key: '', value: '', masked: false })">+ Add variable</button>
       <button class="secondary" @click="toggleReveal">{{ revealed ? 'Hide values' : 'Reveal values' }}</button>
       <button :disabled="busy" @click="save">{{ busy ? 'Saving…' : 'Save all' }}</button>

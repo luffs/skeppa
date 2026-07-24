@@ -1,53 +1,58 @@
 <template>
   <div class="container">
-    <div class="row" style="justify-content: space-between; margin-bottom: 16px">
-      <h1 style="margin: 0">System</h1>
-      <span class="hint" v-if="status">live · updated {{ timeAgo(liveUpdatedAt) }}</span>
+    <div class="page-head">
+      <h1 style="margin: 0">Engine room</h1>
+      <span class="mono" style="font-size: 12px; color: var(--dim)" v-if="status">
+        live · updated {{ timeAgo(liveUpdatedAt) }}
+      </span>
     </div>
 
     <p v-if="!status" class="hint">Waiting for live data…</p>
 
-    <div v-if="status" class="grid" style="margin-bottom: 16px">
-      <div class="panel">
-        <div class="hint">Panel uptime</div>
-        <strong>{{ uptimeSince(status.panelStartedAt) }}</strong>
+    <div v-if="status" class="stat-grid">
+      <div class="stat-card">
+        <div class="stat-label">Panel uptime</div>
+        <div class="stat-value">{{ uptimeSince(status.panelStartedAt) }}</div>
       </div>
-      <div class="panel">
-        <div class="hint">Host uptime</div>
-        <strong>{{ uptimeSince(status.hostBootAt) }}</strong>
+      <div class="stat-card">
+        <div class="stat-label">Host uptime</div>
+        <div class="stat-value">{{ uptimeSince(status.hostBootAt) }}</div>
       </div>
-      <div class="panel">
-        <div class="hint">Apps dir ({{ status.appsDir }})</div>
-        <strong>{{ bytes(status.disk?.appsDirBytes) }}</strong>
-        <span class="hint" v-if="status.disk?.free != null">
-          — {{ bytes(status.disk.free) }} free of {{ bytes(status.disk.total) }}</span>
+      <div class="stat-card">
+        <div class="stat-label">Apps dir · {{ status.appsDir }}</div>
+        <div class="stat-value">{{ bytes(status.disk?.appsDirBytes) }}</div>
+        <div class="stat-sub" v-if="status.disk?.free != null">
+          {{ bytes(status.disk.free) }} free of {{ bytes(status.disk.total) }}
+        </div>
       </div>
-      <div class="panel">
-        <div class="hint">Memory</div>
-        <strong>{{ bytes(status.memory.total - status.memory.free) }} / {{ bytes(status.memory.total) }}</strong>
+      <div class="stat-card">
+        <div class="stat-label">Memory</div>
+        <div class="stat-value">{{ bytes(status.memory.total - status.memory.free) }} / {{ bytes(status.memory.total) }}</div>
       </div>
     </div>
 
-    <div class="panel" v-if="status">
-      <h2 style="margin-top: 0">pm2 processes</h2>
-      <p v-if="status.pm2Error" class="error">pm2 unavailable: {{ status.pm2Error }}</p>
-      <table v-else-if="pm2List.length">
-        <thead>
-          <tr><th>Name</th><th>Status</th><th>PID</th><th>Uptime</th><th>CPU</th><th>Memory</th><th>Restarts</th></tr>
-        </thead>
-        <tbody>
-          <tr v-for="p in pm2List" :key="p.name">
-            <td class="mono">{{ p.name }}</td>
-            <td><StatusBadge :status="p.status" /></td>
-            <td class="hint">{{ p.pid || '—' }}</td>
-            <td class="hint">{{ uptimeSince(p.uptime) }}</td>
-            <td class="hint">{{ p.cpu ?? '—' }}%</td>
-            <td class="hint">{{ bytes(p.memory) }}</td>
-            <td class="hint">{{ p.restarts ?? '—' }}</td>
-          </tr>
-        </tbody>
-      </table>
-      <p v-else class="hint">No pm2 processes.</p>
+    <div class="panel flush" v-if="status">
+      <div class="section-label" style="padding: 16px 20px 0">pm2 processes</div>
+      <p v-if="status.pm2Error" class="error" style="padding: 0 20px 16px">pm2 unavailable: {{ status.pm2Error }}</p>
+      <div v-else-if="pm2List.length" class="table-scroll">
+        <table style="min-width: 640px">
+          <thead>
+            <tr><th>Name</th><th>Status</th><th>PID</th><th>Uptime</th><th>CPU</th><th>Memory</th><th>Restarts</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="p in pm2List" :key="p.name">
+              <td class="mono">{{ p.name }}</td>
+              <td><StatusBadge :status="p.status" /></td>
+              <td class="mono" style="color: var(--dim)">{{ p.pid || '—' }}</td>
+              <td class="mono" style="color: var(--dim)">{{ uptimeSince(p.uptime) }}</td>
+              <td class="mono" style="color: var(--dim)">{{ p.cpu ?? '—' }}%</td>
+              <td class="mono" style="color: var(--dim)">{{ bytes(p.memory) }}</td>
+              <td class="mono" style="color: var(--dim)">{{ p.restarts ?? '—' }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p v-else class="hint" style="padding: 12px 20px 16px">No pm2 processes.</p>
     </div>
   </div>
 </template>

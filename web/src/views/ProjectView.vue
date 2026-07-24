@@ -1,17 +1,22 @@
 <template>
   <div class="container" v-if="project">
-    <div class="row" style="justify-content: space-between">
+    <router-link to="/" class="mono" style="font-size: 12px; color: var(--dim)">← back to harbor</router-link>
+    <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; flex-wrap: wrap; margin-top: 12px">
       <div>
-        <h1 style="margin-bottom: 4px">{{ project.name }}</h1>
-        <span class="hint mono">{{ project.repo_full_name }} @ {{ project.branch }}</span>
-        <div class="hint" v-if="live?.pm2?.status === 'online'" style="margin-top: 4px">
+        <div style="display: flex; align-items: center; gap: 14px; flex-wrap: wrap">
+          <h1 style="margin: 0">{{ project.name }}</h1>
+          <StatusBadge :status="live?.pm2?.status" />
+        </div>
+        <div class="mono" style="color: var(--dim); margin-top: 6px">
+          {{ project.repo_full_name }} @ {{ project.branch }}
+        </div>
+        <div class="mono" v-if="live?.pm2?.status === 'online'" style="font-size: 12px; color: var(--dim); margin-top: 6px">
           pid {{ live.pm2.pid ?? '—' }} · up {{ uptimeSince(live.pm2.uptime) }} ·
           {{ live.pm2.cpu ?? 0 }}% cpu · {{ bytes(live.pm2.memory) }} ·
           {{ live.pm2.restarts ?? 0 }} restart{{ live.pm2.restarts === 1 ? '' : 's' }}
         </div>
       </div>
       <div class="row">
-        <StatusBadge :status="live?.pm2?.status" />
         <button
           class="secondary"
           :disabled="checking"
@@ -24,15 +29,15 @@
         <button class="secondary" :disabled="pm2Busy" @click="confirmPm2('stop')">Stop</button>
         <button class="secondary" :disabled="pm2Busy" @click="confirmPm2('restart')">Restart</button>
         <button :disabled="!!live?.currentDeployment" @click="deployNow">
-          {{ live?.currentDeployment ? 'Deploying…' : '🚀 Deploy' }}
+          {{ live?.currentDeployment ? 'Under way…' : 'Set sail — deploy' }}
         </button>
       </div>
     </div>
 
-    <div class="row" style="margin-top: 12px" v-if="undeployed">
-      <span class="badge yellow">undeployed commits</span>
-      <span class="hint">
-        <span class="mono">{{ live.headCommit.sha.slice(0, 7) }}</span>
+    <div class="ahead-banner" v-if="undeployed">
+      <span class="chip amber">commits ahead</span>
+      <span class="commit">
+        <span class="sha">{{ live.headCommit.sha.slice(0, 7) }}</span>
         {{ live.headCommit.message }} — pushed {{ timeAgo(live.headCommit.pushedAt) }}<template
           v-if="!project.auto_deploy"> · auto deploy is off</template>
       </span>
@@ -41,38 +46,44 @@
     <p class="error" v-if="checkError" style="margin-top: 12px">{{ checkError }}</p>
 
     <div class="tabs">
-      <button :class="{ active: tab === 'deploys' }" @click="tab = 'deploys'">Deployments</button>
-      <button :class="{ active: tab === 'env' }" @click="tab = 'env'">Environment</button>
-      <button :class="{ active: tab === 'settings' }" @click="tab = 'settings'">Settings</button>
+      <button :class="{ active: tab === 'deploys' }" @click="tab = 'deploys'">Voyages</button>
+      <button :class="{ active: tab === 'env' }" @click="tab = 'env'">Cargo (env)</button>
+      <button :class="{ active: tab === 'settings' }" @click="tab = 'settings'">Rigging</button>
     </div>
 
     <div v-if="tab === 'deploys'">
-      <p v-if="!deployments.length" class="hint">No deployments yet — press Deploy or push to {{ project.branch }}.</p>
-      <table v-else>
-        <thead>
-          <tr><th>#</th><th>Status</th><th>Trigger</th><th>Commit</th><th>Started</th><th>Duration</th></tr>
-        </thead>
-        <tbody>
-          <tr
-            v-for="d in deployments"
-            :key="d.id"
-            class="deploy-row"
-            :class="{ selected: d.id === selectedId }"
-            @click="selectedId = d.id"
-          >
-            <td>{{ d.id }}</td>
-            <td><StatusBadge :status="liveStatusFor(d)" /></td>
-            <td>{{ d.trigger }}</td>
-            <td class="mono">
-              {{ d.commit_sha ? d.commit_sha.slice(0, 7) : '—' }}
-              <span class="hint">{{ d.commit_message }}</span>
-            </td>
-            <td class="hint">{{ timeAgo(d.started_at || d.created_at) }}</td>
-            <td class="hint">{{ duration(d.started_at, d.finished_at) }}</td>
-          </tr>
-        </tbody>
-      </table>
-      <div style="margin-top: 16px" v-if="selectedId">
+      <p v-if="!deployments.length" class="hint">
+        No voyages yet — press <em>Set sail</em> or push to {{ project.branch }}.
+      </p>
+      <div v-else class="panel flush">
+        <div class="table-scroll">
+          <table style="min-width: 640px">
+            <thead>
+              <tr><th>Voyage</th><th>Status</th><th>Trigger</th><th>Commit</th><th>Departed</th><th>Passage</th></tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="d in deployments"
+                :key="d.id"
+                class="deploy-row"
+                :class="{ selected: d.id === selectedId }"
+                @click="selectedId = d.id"
+              >
+                <td class="mono">#{{ d.id }}</td>
+                <td><StatusBadge :status="liveStatusFor(d)" /></td>
+                <td class="hint" style="font-size: 14px">{{ d.trigger }}</td>
+                <td>
+                  <span class="mono">{{ d.commit_sha ? d.commit_sha.slice(0, 7) : '—' }}</span>
+                  <span class="hint" style="margin-left: 6px">{{ d.commit_message }}</span>
+                </td>
+                <td class="hint" style="font-size: 14px">{{ timeAgo(d.started_at || d.created_at) }}</td>
+                <td class="mono" style="color: var(--dim)">{{ duration(d.started_at, d.finished_at) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div style="margin-top: 20px" v-if="selectedId">
         <DeployLog :deployment-id="selectedId" :active="selectedId === live?.currentDeployment?.id" />
       </div>
     </div>
@@ -81,7 +92,7 @@
       <EnvEditor :project-id="project.id" />
     </div>
 
-    <div v-else-if="tab === 'settings'" class="panel">
+    <div v-else-if="tab === 'settings'" class="panel" style="max-width: 680px">
       <label>Name</label>
       <input v-model="edit.name" />
       <label>Repository (owner/repo)</label>
@@ -92,7 +103,7 @@
         <input type="checkbox" v-model="edit.auto_deploy" />
         Auto deploy on push to {{ edit.branch || project.branch }}
       </label>
-      <p class="hint">When off, pushes only show up as "undeployed commits" — deploy manually.</p>
+      <p class="hint">When off, pushes only show up as "commits ahead" — deploy manually.</p>
       <label>Deploy script</label>
       <textarea v-model="edit.deploy_script" class="code" rows="4"></textarea>
       <p class="hint">⚠ Runs as a shell script on the server — only trusted commands.</p>
@@ -104,12 +115,12 @@
       <input v-model="edit.cwd" class="code" />
       <p v-if="saveError" class="error">{{ saveError }}</p>
       <p v-if="saved" class="hint">Saved ✔</p>
-      <div class="row" style="margin-top: 12px; justify-content: space-between">
+      <div class="row" style="margin-top: 22px; justify-content: space-between">
         <button :disabled="saving" @click="save">{{ saving ? 'Saving…' : 'Save settings' }}</button>
-        <button class="danger" @click="remove">Delete project</button>
+        <button class="danger" @click="remove">Scuttle project</button>
       </div>
 
-      <div style="margin-top: 24px; border-top: 1px solid var(--border); padding-top: 16px">
+      <div style="margin-top: 24px; border-top: 1px solid var(--line); padding-top: 16px">
         <h2 style="margin: 0 0 8px">Clone manually</h2>
         <p class="hint">
           Generates a git clone command with a short-lived GitHub App installation token, to run on

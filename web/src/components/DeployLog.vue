@@ -1,7 +1,10 @@
 <template>
   <div>
-    <div class="row" style="justify-content: space-between; margin-bottom: 6px">
-      <span class="hint">Deploy #{{ deploymentId }} log</span>
+    <div class="row" style="justify-content: space-between; margin-bottom: 8px">
+      <span class="row" style="gap: 10px">
+        <span class="section-label">Below deck</span>
+        <span class="mono" style="font-size: 12px; color: var(--dim)">voyage #{{ deploymentId }} log</span>
+      </span>
       <button v-if="paused" class="secondary small" @click="resume">▼ Resume auto-scroll</button>
     </div>
     <div ref="box" class="logview" @scroll="onScroll">{{ text }}</div>

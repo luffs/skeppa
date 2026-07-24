@@ -1,15 +1,20 @@
 <template>
   <div class="login-wrap">
-    <form class="panel login-box" @submit.prevent="submit">
-      <h1>⛵ Skeppa</h1>
+    <form class="login-box" @submit.prevent="submit">
+      <div class="sail">⛵</div>
+      <h1>Skeppa</h1>
+      <div class="tagline">deploy panel · come aboard</div>
+      <div class="waves">
+        <div>～～～～～～～～～～～～～～～～～～～～～～～～～～～～～～～～～～～～～～～～</div>
+      </div>
       <label>Username</label>
       <input v-model="username" autocomplete="username" autofocus />
-      <label>Password</label>
+      <label style="margin-top: 14px">Password</label>
       <input v-model="password" type="password" autocomplete="current-password" />
       <p v-if="error" class="error">{{ error }}</p>
-      <p style="margin-bottom: 0">
-        <button :disabled="busy || !username || !password" style="width: 100%">
-          {{ busy ? 'Logging in…' : 'Log in' }}
+      <p style="margin: 20px 0 0">
+        <button :disabled="busy || !username || !password" style="width: 100%; padding: 12px; font-size: 14px; letter-spacing: 0.04em">
+          {{ busy ? 'Boarding…' : 'Come aboard' }}
         </button>
       </p>
     </form>
