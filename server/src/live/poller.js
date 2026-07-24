@@ -1,6 +1,7 @@
 import os from 'node:os'
 import { statfsSync } from 'node:fs'
 import { jlist } from '../deploy/pm2.js'
+import {LazyWatch} from "lazy-watch";
 
 // `du` over the whole apps dir is the expensive part — refresh it far less
 // often than the cheap pm2/memory/uptime stats.
@@ -63,7 +64,7 @@ export function createPoller({ db, config, liveState, intervalMs = 5000 }) {
         disk = await diskUsage(config.appsDir)
       }
 
-      liveState.system = {
+      LazyWatch.overwrite(liveState.system, {
         updatedAt: new Date().toISOString(),
         appsDir: config.appsDir,
         hostUptime: os.uptime(),
@@ -83,7 +84,7 @@ export function createPoller({ db, config, liveState, intervalMs = 5000 }) {
               restarts: p.pm2_env?.restart_time ?? null,
             }))
           : null,
-      }
+      })
     } finally {
       ticking = false
     }
