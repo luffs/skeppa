@@ -15,6 +15,11 @@
         <span class="conn-dot" :class="{ on: store.connected }"></span>
         {{ store.connected ? 'live' : 'offline' }} · {{ store.user.username }}
       </span>
+      <button
+        class="secondary small"
+        :title="theme === 'dark' ? 'Switch to day watch' : 'Switch to night watch'"
+        @click="flipTheme"
+      >{{ theme === 'dark' ? '☀' : '☾' }}</button>
       <button class="secondary small" @click="logout">Log out</button>
     </nav>
     <router-view />
@@ -25,11 +30,12 @@
 import { store } from './store.js'
 import { api } from './api.js'
 import { disconnectWs } from './ws.js'
+import { currentTheme, toggleTheme } from './lib/theme.js'
 
 export default {
   name: 'App',
   data() {
-    return { store }
+    return { store, theme: currentTheme() }
   },
   computed: {
     // Harbor covers the dashboard and everything project-related.
@@ -38,6 +44,9 @@ export default {
     },
   },
   methods: {
+    flipTheme() {
+      this.theme = toggleTheme()
+    },
     async logout() {
       await api.post('/api/auth/logout').catch(() => {})
       store.user = null

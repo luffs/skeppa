@@ -1,5 +1,11 @@
 <template>
   <div class="login-wrap">
+    <button
+      type="button"
+      class="secondary small theme-toggle"
+      :title="theme === 'dark' ? 'Switch to day watch' : 'Switch to night watch'"
+      @click="flipTheme"
+    >{{ theme === 'dark' ? '☀' : '☾' }}</button>
     <form class="login-box" @submit.prevent="submit">
       <div class="sail">⛵</div>
       <h1>Skeppa</h1>
@@ -25,13 +31,17 @@
 import { api } from '../api.js'
 import { store } from '../store.js'
 import { connectWs } from '../ws.js'
+import { currentTheme, toggleTheme } from '../lib/theme.js'
 
 export default {
   name: 'LoginView',
   data() {
-    return { username: '', password: '', error: '', busy: false }
+    return { username: '', password: '', error: '', busy: false, theme: currentTheme() }
   },
   methods: {
+    flipTheme() {
+      this.theme = toggleTheme()
+    },
     async submit() {
       this.busy = true
       this.error = ''
