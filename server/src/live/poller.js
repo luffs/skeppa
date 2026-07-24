@@ -50,6 +50,9 @@ export function createPoller({ db, config, liveState, intervalMs = 5000 }) {
   // derive a live uptime from.
   const hostBootAt = Date.now() - Math.round(os.uptime() * 1000)
   const panelStartedAt = Date.now() - Math.round(process.uptime() * 1000)
+  // When the panel itself runs under pm2 it sets pm_id/name in our env. The UI
+  // uses this to warn before stopping the process it is talking to.
+  const selfPm2Name = process.env.pm_id != null ? (process.env.name ?? null) : null
 
   async function tick() {
     if (ticking) return
@@ -84,6 +87,7 @@ export function createPoller({ db, config, liveState, intervalMs = 5000 }) {
         appsDir: config.appsDir,
         hostBootAt,
         panelStartedAt,
+        selfPm2Name,
         loadavg: os.loadavg().map(n => Math.round(n * 100) / 100),
         memory: { total: os.totalmem(), free: roundMem(os.freemem()) },
         disk,

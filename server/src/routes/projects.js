@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs'
 import { encrypt, decrypt } from '../lib/crypto.js'
 import { slugify, validateProject, SLUG_RE, ENV_KEY_RE, PM2_ACTIONS } from '../lib/validate.js'
 import { projectDefaults, getProjectInfo } from '../live/state.js'
-import { action as pm2Action, deleteProcess, startOrReload } from '../deploy/pm2.js'
+import { applyAction, deleteProcess } from '../deploy/pm2.js'
 import { projectDirs, writeEnvFiles, writeEcosystem } from '../deploy/envfiles.js'
 
 const PROJECT_COLUMNS =
@@ -221,15 +221,7 @@ export function projectRoutes({ db, config, liveState, runner, poller, github })
     const act = c.req.param('action')
     if (!PM2_ACTIONS.includes(act)) return c.json({ error: `action must be one of ${PM2_ACTIONS.join(', ')}` }, 400)
     try {
-      // start/restart go through the ecosystem file when it exists so the
-      // current ENV set is applied; a plain `pm2 restart` would keep the
-      // environment from when the process was first started.
-      const { ecosystem } = projectDirs(config, project)
-      if (act !== 'stop' && existsSync(ecosystem)) {
-        await startOrReload(ecosystem)
-      } else {
-        await pm2Action(act, project.pm2_name)
-      }
+      await applyAction(act, project.pm2_name, projectDirs(config, project).ecosystem)
       poller?.tick()
       return c.json({ ok: true })
     } catch (err) {

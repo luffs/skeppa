@@ -11,9 +11,9 @@
         <router-link to="/settings" class="nav-link" :class="{ active: $route.path === '/settings' }">Rigging</router-link>
       </div>
       <span class="spacer"></span>
-      <span class="conn" :title="store.connected ? 'live' : 'disconnected'">
+      <span class="conn" :title="`${store.connected ? 'live' : 'disconnected'} · ${store.user.username}`">
         <span class="conn-dot" :class="{ on: store.connected }"></span>
-        {{ store.connected ? 'live' : 'offline' }} · {{ store.user.username }}
+        <span class="conn-text">{{ store.connected ? 'live' : 'offline' }} · {{ store.user.username }}</span>
       </span>
       <button
         class="secondary small"

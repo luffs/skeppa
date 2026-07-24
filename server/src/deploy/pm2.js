@@ -1,6 +1,8 @@
 // Thin wrapper around the pm2 CLI via Bun.spawn (no shell, args as array).
 // `spawnable` resolves .cmd shims through cmd.exe on Windows.
+import { existsSync } from 'node:fs'
 import { spawnable } from '../lib/shell.js'
+import { PM2_ACTIONS } from '../lib/validate.js'
 
 async function pm2(args) {
   const proc = Bun.spawn(spawnable('pm2', args), { stdout: 'pipe', stderr: 'pipe' })
@@ -36,8 +38,21 @@ export function startOrReloadDetached(ecosystemFile) {
 }
 
 export async function action(act, name) {
-  if (!['start', 'stop', 'restart'].includes(act)) throw new Error(`invalid pm2 action: ${act}`)
+  if (!PM2_ACTIONS.includes(act)) throw new Error(`invalid pm2 action: ${act}`)
   return pm2([act, name])
+}
+
+// start/restart go through the project's ecosystem file when there is one, so
+// the current ENV set is applied; a plain `pm2 restart` would keep the
+// environment the process was originally started with.
+export async function applyAction(act, name, ecosystemFile = null) {
+  if (!PM2_ACTIONS.includes(act)) throw new Error(`invalid pm2 action: ${act}`)
+  if (act !== 'stop' && ecosystemFile && existsSync(ecosystemFile)) return startOrReload(ecosystemFile)
+  return action(act, name)
+}
+
+export async function describe(name) {
+  return (await jlist()).find(p => p.name === name) ?? null
 }
 
 export async function deleteProcess(name) {
