@@ -9,6 +9,6 @@
   },
   "dependencies": {
     "hono": "^4.6.0",
-    "lazy-watch": "^4.1.0"
+    "lazy-watch": "^5.0.0"
   }
 }

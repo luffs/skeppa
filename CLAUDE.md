@@ -11,7 +11,7 @@ Deploys private GitHub repos onto this server via webhooks, manages encrypted EN
 - **Real-time:** one WebSocket at `/ws`. State sync uses **`lazy-watch` diffs**: the server keeps a LiveState proxy (`server/src/live/state.js`); the Hub broadcasts batched diffs; the client mirrors them with `LazyWatch.patch` into a Vue-reactive object (`web/src/store.js`). Deploy log lines are NOT in LiveState — they use per-deployment `logs:subscribe`/`logs:line` pub/sub.
 - **Process management:** pm2 CLI (spawned, never a shell string).
 - **GitHub:** GitHub App (JWT → installation token, cached). Not OAuth, not a PAT.
-- **Auth:** single user, bcrypt password hash (`Bun.password`), session cookie.
+- **Auth:** username/password users (managed under Rigging → Crew; all have full access — no roles), bcrypt password hash (`Bun.password`), session cookie.
 - **Secrets:** AES-256-GCM with `MASTER_KEY` (32-byte hex) from the panel's `.env`; unique IV per value.
 
 ## Commands

@@ -9,13 +9,13 @@
       "name": "@skeppa/server",
       "dependencies": {
         "hono": "^4.6.0",
-        "lazy-watch": "^4.1.0",
+        "lazy-watch": "^5.0.0",
       },
     },
     "web": {
       "name": "@skeppa/web",
       "dependencies": {
-        "lazy-watch": "^4.1.0",
+        "lazy-watch": "^5.0.0",
         "vue": "^3.5.13",
         "vue-router": "^4.5.0",
       },
@@ -180,7 +180,7 @@
 
     "hono": ["hono@4.12.31", "", {}, "sha512-zJIHFrl6bq3RDd2YusFNCDlM8qUprxKswyi/OPzPyzKDdyBXDqWx8bZlZ7R+saTdSTatUmb3O7K4SspGPaEOQg=="],
 
-    "lazy-watch": ["lazy-watch@4.1.0", "", {}, "sha512-cyRXOvZC6v1uw4A7h9QTCc2fr39X/qfPXw1db6y21aGkT2FOrOWV75b6qaBwJHVWtdWB6ztZCXzhgg3FLn4rFg=="],
+    "lazy-watch": ["lazy-watch@5.0.0", "", {}, "sha512-fEF0qgl5/fVqQ8H68dpAzaZWhWV7SfYfwwiDk0mWOm6jbMbY2+aekxTWe8ZeosemIavVIHHsvzDmEqnVvqCxqg=="],
 
     "magic-string": ["magic-string@0.30.21", "", { "dependencies": { "@jridgewell/sourcemap-codec": "^1.5.5" } }, "sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ=="],
 

@@ -8,6 +8,8 @@ export const BRANCH_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/
 export const PM2_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
 export const REPO_RE = /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/
 export const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/
+export const USERNAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/
+export const MIN_PASSWORD_LENGTH = 8
 export const PM2_ACTIONS = ['start', 'stop', 'restart']
 
 export function isValidBranch(branch) {

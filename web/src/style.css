@@ -514,6 +514,47 @@ tr:last-child td { border-bottom: none; }
 .env-row .key { flex: 1 1 180px; width: auto; }
 .env-row .value { flex: 2 1 260px; width: auto; }
 
+/* ---- collapsible sections (rigging) ---- */
+
+.collapse-section { padding: 0; overflow: hidden; }
+.collapse-section + .collapse-section { margin-top: 16px; }
+.collapse-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  background: transparent;
+  color: var(--ink);
+  border: none;
+  border-radius: 0;
+  padding: 17px 24px;
+  text-align: left;
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+.collapse-head:hover { background: var(--hover-tint); }
+.collapse-chevron {
+  color: var(--dim);
+  font-size: 13px;
+  transition: transform 0.15s ease;
+}
+.collapse-section.open .collapse-chevron { transform: rotate(90deg); }
+.collapse-meta { margin-left: auto; display: flex; align-items: center; gap: 8px; cursor: default; }
+.collapse-body { padding: 14px 24px 24px; border-top: 1px solid var(--line-soft); }
+.collapse-body > :first-child { margin-top: 0; }
+
+/* ---- crew (users) ---- */
+
+.crew-rows { margin-top: 14px; }
+.crew-member { border-bottom: 1px solid var(--line-soft); }
+.crew-member:last-child { border-bottom: none; }
+.crew-row { display: flex; align-items: center; gap: 10px; padding: 11px 0; flex-wrap: wrap; }
+.crew-row .spacer { flex: 1; }
+.crew-name { font-weight: 700; }
+.crew-since { font-family: var(--mono); font-size: 12px; color: var(--dim); }
+.crew-pass { padding-bottom: 12px; }
+
 /* ---- misc ---- */
 
 .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }

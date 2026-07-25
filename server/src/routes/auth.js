@@ -23,7 +23,7 @@ export function authRoutes({ db, config }) {
       path: '/',
       maxAge: SESSION_TTL_S,
     })
-    return c.json({ username: user.username })
+    return c.json({ id: user.id, username: user.username })
   })
 
   app.post('/logout', c => {
@@ -35,8 +35,8 @@ export function authRoutes({ db, config }) {
   app.get('/me', c => {
     const session = getSession(db, getCookie(c, COOKIE_NAME))
     if (!session) return c.json({ error: 'unauthorized' }, 401)
-    const user = db.query('SELECT username FROM users WHERE id = ?').get(session.user_id)
-    return c.json({ username: user?.username ?? null })
+    const user = db.query('SELECT id, username FROM users WHERE id = ?').get(session.user_id)
+    return c.json({ id: user?.id ?? null, username: user?.username ?? null })
   })
 
   return app
