@@ -18,7 +18,7 @@ export function userRoutes({ db, liveState }) {
     const password = typeof body.password === 'string' ? body.password : ''
 
     const fields = {}
-    if (!USERNAME_RE.test(username)) fields.username = 'letters, digits, dot, dash, underscore; 1–32 characters'
+    if (!USERNAME_RE.test(username)) fields.username = 'letters, digits, . _ @ + -; 1–64 characters'
     if (password.length < MIN_PASSWORD_LENGTH) fields.password = `must be at least ${MIN_PASSWORD_LENGTH} characters`
     if (!fields.username && db.query('SELECT 1 FROM users WHERE username = ?').get(username)) {
       fields.username = 'already taken'

@@ -107,6 +107,40 @@
         <button class="secondary" :disabled="busy" @click="test">Test connection</button>
       </div>
     </CollapseSection>
+
+    <CollapseSection title="Google sign-in">
+      <template #meta>
+        <span v-if="status.firebase_config" class="chip green">configured</span>
+      </template>
+
+      <p class="hint" style="font-size: 13.5px">
+        Lets crew members board with their Google account via Firebase. Create a Firebase project
+        with the <strong>Google</strong> sign-in provider enabled, add a web app, and paste its
+        <span class="mono" style="font-size: 12.5px">firebaseConfig</span> snippet below. A signed-in
+        Google account is matched by email: the crew member's <strong>username must be their Google
+        email address</strong>. The config is public by design — it contains no secrets.
+      </p>
+
+      <label>Firebase web config</label>
+      <textarea
+        v-model="fbText"
+        class="code"
+        rows="8"
+        placeholder='{
+  "apiKey": "AIza…",
+  "authDomain": "my-project.firebaseapp.com",
+  "projectId": "my-project",
+  "appId": "1:1234567890:web:abc123"
+}'
+      ></textarea>
+
+      <p v-if="fbError" class="error">{{ fbError }}</p>
+      <p v-if="fbMessage" class="hint">{{ fbMessage }}</p>
+      <div class="row" style="margin-top: 20px">
+        <button :disabled="fbBusy" @click="saveFirebase">{{ fbBusy ? 'Saving…' : 'Save' }}</button>
+        <button v-if="status.firebase_config" class="danger" :disabled="fbBusy" @click="removeFirebase">Disable</button>
+      </div>
+    </CollapseSection>
   </div>
 </template>
 
@@ -131,6 +165,10 @@ export default {
       crewBusy: false,
       crewError: '',
       crewMessage: '',
+      fbText: '',
+      fbBusy: false,
+      fbError: '',
+      fbMessage: '',
     }
   },
   computed: {
@@ -150,6 +188,7 @@ export default {
     async load() {
       this.status = await api.get('/api/settings')
       this.form.github_app_id = this.status.github_app_id ?? ''
+      this.fbText = this.status.firebase_config ? JSON.stringify(this.status.firebase_config, null, 2) : ''
     },
     async save() {
       this.busy = true
@@ -181,6 +220,56 @@ export default {
         this.error = err.message
       } finally {
         this.busy = false
+      }
+    },
+
+    // The Firebase console hands out a JS object literal, not JSON — accept
+    // both by quoting bare keys and dropping trailing commas before parsing.
+    parseFirebaseConfig(text) {
+      const start = text.indexOf('{')
+      const end = text.lastIndexOf('}')
+      if (start === -1 || end <= start) throw new Error('paste the firebaseConfig object from the Firebase console')
+      const objText = text.slice(start, end + 1)
+      try {
+        return JSON.parse(objText)
+      } catch {
+        const jsonish = objText
+          .replace(/([,{]\s*)([A-Za-z_][A-Za-z0-9_]*)\s*:/g, '$1"$2":')
+          .replace(/,\s*}/g, '}')
+        try {
+          return JSON.parse(jsonish)
+        } catch {
+          throw new Error('could not parse the config — paste the firebaseConfig object as shown in the Firebase console')
+        }
+      }
+    },
+    async saveFirebase() {
+      this.fbBusy = true
+      this.fbError = ''
+      this.fbMessage = ''
+      try {
+        const firebase_config = this.parseFirebaseConfig(this.fbText)
+        await api.put('/api/settings', { firebase_config })
+        await this.load()
+        this.fbMessage = 'Saved ✔ — Google sign-in is available on the login page.'
+      } catch (err) {
+        this.fbError = err.message
+      } finally {
+        this.fbBusy = false
+      }
+    },
+    async removeFirebase() {
+      this.fbBusy = true
+      this.fbError = ''
+      this.fbMessage = ''
+      try {
+        await api.put('/api/settings', { firebase_config: null })
+        await this.load()
+        this.fbMessage = 'Google sign-in disabled.'
+      } catch (err) {
+        this.fbError = err.message
+      } finally {
+        this.fbBusy = false
       }
     },
 

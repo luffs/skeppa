@@ -10,6 +10,26 @@ export function setSetting(db, key, value) {
   ).run(key, value)
 }
 
+export function deleteSetting(db, key) {
+  db.query('DELETE FROM settings WHERE key = ?').run(key)
+}
+
+// The standard Firebase web-app config snippet. Anything else pasted along
+// with it is dropped on save.
+export const FIREBASE_CONFIG_KEYS = [
+  'apiKey', 'authDomain', 'projectId', 'storageBucket', 'messagingSenderId', 'appId', 'measurementId',
+]
+
+export function getFirebaseConfig(db) {
+  const raw = getSetting(db, 'firebase_config')
+  if (!raw) return null
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return null
+  }
+}
+
 // Secrets (GitHub App private key, webhook secret) are stored encrypted with
 // the MASTER_KEY, same as project ENV values.
 export function setSecretSetting(db, masterKey, key, plaintext) {
