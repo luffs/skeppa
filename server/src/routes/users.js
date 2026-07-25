@@ -1,9 +1,10 @@
 import { Hono } from 'hono'
 import { USERNAME_RE, MIN_PASSWORD_LENGTH } from '../lib/validate.js'
+import { getUserInfo } from '../live/state.js'
 
 const hashPassword = password => Bun.password.hash(password, { algorithm: 'bcrypt', cost: 12 })
 
-export function userRoutes({ db }) {
+export function userRoutes({ db, liveState }) {
   const app = new Hono()
 
   app.get('/', c => {
@@ -26,7 +27,8 @@ export function userRoutes({ db }) {
 
     const hash = await hashPassword(password)
     const { lastInsertRowid } = db.query('INSERT INTO users (username, password_hash) VALUES (?, ?)').run(username, hash)
-    const user = db.query('SELECT id, username, created_at FROM users WHERE id = ?').get(Number(lastInsertRowid))
+    const user = getUserInfo(db, Number(lastInsertRowid))
+    liveState.users[user.id] = user
     return c.json(user, 201)
   })
 
@@ -57,6 +59,7 @@ export function userRoutes({ db }) {
     if (id === c.get('session').user_id) return c.json({ error: 'you cannot remove your own account' }, 400)
     const { changes } = db.query('DELETE FROM users WHERE id = ?').run(id)
     if (!changes) return c.json({ error: 'user not found' }, 404)
+    delete liveState.users[id]
     return c.json({ ok: true })
   })
 

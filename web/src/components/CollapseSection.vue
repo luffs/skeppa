@@ -17,7 +17,7 @@ export default {
   name: 'CollapseSection',
   props: {
     title: { type: String, required: true },
-    startOpen: { type: Boolean, default: true },
+    startOpen: { type: Boolean, default: false },
   },
   data() {
     return { open: this.startOpen }

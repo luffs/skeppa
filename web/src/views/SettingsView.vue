@@ -2,52 +2,6 @@
   <div class="container narrow">
     <h1 style="margin-bottom: 22px">Rigging</h1>
 
-    <CollapseSection title="GitHub App">
-      <template #meta>
-        <span v-if="status.has_private_key && status.has_webhook_secret" class="chip green">configured</span>
-      </template>
-
-      <p class="hint" style="font-size: 13.5px">
-        Create a GitHub App (Settings → Developer settings → GitHub Apps) with
-        <strong>Contents: read</strong> and <strong>Metadata: read</strong> permissions and the
-        <strong>push</strong> event subscribed, install it on your account, then paste its
-        credentials here. Set the webhook URL to
-        <span class="mono" style="font-size: 12.5px">{{ webhookUrl }}</span>
-      </p>
-
-      <label>App ID</label>
-      <input v-model="form.github_app_id" class="code" placeholder="123456" />
-
-      <label style="display: flex; align-items: center; gap: 8px">
-        Private key (PEM)
-        <span v-if="status.has_private_key" class="chip green" style="font-size: 10px; padding: 2px 9px">configured</span>
-      </label>
-      <textarea
-        v-model="form.github_private_key"
-        class="code"
-        rows="5"
-        :placeholder="status.has_private_key ? '(unchanged — paste to replace)' : '-----BEGIN RSA PRIVATE KEY-----'"
-      ></textarea>
-
-      <label style="display: flex; align-items: center; gap: 8px">
-        Webhook secret
-        <span v-if="status.has_webhook_secret" class="chip green" style="font-size: 10px; padding: 2px 9px">configured</span>
-      </label>
-      <input
-        v-model="form.github_webhook_secret"
-        class="code"
-        type="password"
-        :placeholder="status.has_webhook_secret ? '(unchanged — enter to replace)' : 'a long random string'"
-      />
-
-      <p v-if="error" class="error">{{ error }}</p>
-      <p v-if="message" class="hint">{{ message }}</p>
-      <div class="row" style="margin-top: 20px">
-        <button :disabled="busy" @click="save">{{ busy ? 'Saving…' : 'Save' }}</button>
-        <button class="secondary" :disabled="busy" @click="test">Test connection</button>
-      </div>
-    </CollapseSection>
-
     <CollapseSection title="Crew">
       <template #meta>
         <span class="chip">{{ users.length }} aboard</span>
@@ -107,6 +61,52 @@
       <p v-if="crewError" class="error">{{ crewError }}</p>
       <p v-if="crewMessage" class="hint">{{ crewMessage }}</p>
     </CollapseSection>
+
+    <CollapseSection title="GitHub App">
+      <template #meta>
+        <span v-if="status.has_private_key && status.has_webhook_secret" class="chip green">configured</span>
+      </template>
+
+      <p class="hint" style="font-size: 13.5px">
+        Create a GitHub App (Settings → Developer settings → GitHub Apps) with
+        <strong>Contents: read</strong> and <strong>Metadata: read</strong> permissions and the
+        <strong>push</strong> event subscribed, install it on your account, then paste its
+        credentials here. Set the webhook URL to
+        <span class="mono" style="font-size: 12.5px">{{ webhookUrl }}</span>
+      </p>
+
+      <label>App ID</label>
+      <input v-model="form.github_app_id" class="code" placeholder="123456" />
+
+      <label style="display: flex; align-items: center; gap: 8px">
+        Private key (PEM)
+        <span v-if="status.has_private_key" class="chip green" style="font-size: 10px; padding: 2px 9px">configured</span>
+      </label>
+      <textarea
+          v-model="form.github_private_key"
+          class="code"
+          rows="5"
+          :placeholder="status.has_private_key ? '(unchanged — paste to replace)' : '-----BEGIN RSA PRIVATE KEY-----'"
+      ></textarea>
+
+      <label style="display: flex; align-items: center; gap: 8px">
+        Webhook secret
+        <span v-if="status.has_webhook_secret" class="chip green" style="font-size: 10px; padding: 2px 9px">configured</span>
+      </label>
+      <input
+          v-model="form.github_webhook_secret"
+          class="code"
+          type="password"
+          :placeholder="status.has_webhook_secret ? '(unchanged — enter to replace)' : 'a long random string'"
+      />
+
+      <p v-if="error" class="error">{{ error }}</p>
+      <p v-if="message" class="hint">{{ message }}</p>
+      <div class="row" style="margin-top: 20px">
+        <button :disabled="busy" @click="save">{{ busy ? 'Saving…' : 'Save' }}</button>
+        <button class="secondary" :disabled="busy" @click="test">Test connection</button>
+      </div>
+    </CollapseSection>
   </div>
 </template>
 
@@ -125,7 +125,6 @@ export default {
       busy: false,
       error: '',
       message: '',
-      users: [],
       newUser: { username: '', password: '' },
       passwordFor: null,
       newPassword: '',
@@ -138,9 +137,14 @@ export default {
     webhookUrl() {
       return `${location.origin}/api/webhooks/github`
     },
+    // Mirrored from the server's LiveState over the WebSocket, so adds and
+    // removals from any session show up without refetching.
+    users() {
+      return Object.values(store.live.users ?? {}).sort((a, b) => a.username.localeCompare(b.username))
+    },
   },
   async created() {
-    await Promise.all([this.load(), this.loadUsers()])
+    await this.load()
   },
   methods: {
     async load() {
@@ -192,9 +196,6 @@ export default {
         .map(([field, msg]) => `${field}: ${msg}`)
         .join(' — ')
     },
-    async loadUsers() {
-      this.users = await api.get('/api/users')
-    },
     async addUser() {
       this.crewBusy = true
       this.crewError = ''
@@ -202,7 +203,6 @@ export default {
       try {
         const user = await api.post('/api/users', this.newUser)
         this.newUser = { username: '', password: '' }
-        await this.loadUsers()
         this.crewMessage = `Welcome aboard, ${user.username} ✔`
       } catch (err) {
         this.crewError = this.describeError(err)
@@ -238,7 +238,6 @@ export default {
       this.crewMessage = ''
       try {
         await api.del(`/api/users/${user.id}`)
-        await this.loadUsers()
         this.crewMessage = `${user.username} has gone ashore.`
       } catch (err) {
         this.crewError = this.describeError(err)

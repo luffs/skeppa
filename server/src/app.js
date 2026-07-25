@@ -30,7 +30,7 @@ export function createApp({ db, config, liveState, hub, runner, github, poller, 
   app.route('/api/github', githubRoutes({ db, config, github }))
   app.route('/api/settings', settingsRoutes({ db, config, github }))
   app.route('/api/system', systemRoutes({ db, config, poller }))
-  app.route('/api/users', userRoutes({ db }))
+  app.route('/api/users', userRoutes({ db, liveState }))
 
   // WebSocket: session is validated before the upgrade happens.
   app.get(

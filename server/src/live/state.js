@@ -4,7 +4,15 @@ import { LazyWatch } from 'lazy-watch'
 // lazy-watch batches them into diffs that the Hub broadcasts to WS clients.
 // Log lines are deliberately NOT part of LiveState (see Hub log pub/sub).
 export function createLiveState() {
-  return new LazyWatch({ projects: {}, system: {} })
+  return new LazyWatch({ projects: {}, system: {}, users: {} })
+}
+
+// The user row as rendered by the frontend (crew list). Never includes the
+// password hash.
+export const USER_INFO_COLUMNS = 'id, username, created_at'
+
+export function getUserInfo(db, id) {
+  return db.query(`SELECT ${USER_INFO_COLUMNS} FROM users WHERE id = ?`).get(Number(id)) ?? null
 }
 
 // The project row as rendered by the frontend (dashboard cards, project
@@ -33,6 +41,9 @@ export function projectDefaults(lastDeployment = null, info = null) {
 
 // Populate LiveState from the DB at startup.
 export function initLiveState(liveState, db) {
+  for (const user of db.query(`SELECT ${USER_INFO_COLUMNS} FROM users`).all()) {
+    liveState.users[user.id] = user
+  }
   const projects = db.query(
     `SELECT ${PROJECT_INFO_COLUMNS}, head_sha, head_message, head_pushed_at FROM projects`
   ).all()

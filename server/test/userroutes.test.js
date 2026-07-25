@@ -3,6 +3,7 @@ import { Database } from 'bun:sqlite'
 import { Hono } from 'hono'
 import { fileURLToPath } from 'node:url'
 import { migrate } from '../src/db/migrate.js'
+import { createLiveState, initLiveState } from '../src/live/state.js'
 import { userRoutes } from '../src/routes/users.js'
 
 // The routes run behind requireSession in app.js; here a stub middleware plays
@@ -21,13 +22,16 @@ async function setup() {
   addSession('sess-captain-phone', 1)
   addSession('sess-bosun', 2)
 
+  const liveState = createLiveState()
+  initLiveState(liveState, db)
+
   const app = new Hono()
   app.use('*', (c, next) => {
     c.set('session', { id: 'sess-captain', user_id: 1 })
     return next()
   })
-  app.route('/', userRoutes({ db }))
-  return { db, app }
+  app.route('/', userRoutes({ db, liveState }))
+  return { db, app, liveState }
 }
 
 const sessionIds = db => db.query('SELECT id FROM sessions ORDER BY id').all().map(r => r.id)
@@ -41,16 +45,24 @@ test('lists users without password hashes', async () => {
   expect(Object.keys(users[0]).sort()).toEqual(['created_at', 'id', 'username'])
 })
 
-test('creates a user with a hashed password', async () => {
-  const { db, app } = await setup()
+test('initLiveState mirrors existing users without password hashes', async () => {
+  const { liveState } = await setup()
+  expect(Object.values(liveState.users).map(u => u.username).sort()).toEqual(['bosun', 'captain'])
+  expect(Object.keys(liveState.users[1]).sort()).toEqual(['created_at', 'id', 'username'])
+})
+
+test('creates a user with a hashed password and mirrors it into LiveState', async () => {
+  const { db, app, liveState } = await setup()
   const res = await app.request('/', {
     method: 'POST',
     body: JSON.stringify({ username: 'deckhand', password: 'seaworthy1' }),
   })
   expect(res.status).toBe(201)
-  expect((await res.json()).username).toBe('deckhand')
+  const created = await res.json()
+  expect(created.username).toBe('deckhand')
   const row = db.query("SELECT password_hash FROM users WHERE username = 'deckhand'").get()
   expect(await Bun.password.verify('seaworthy1', row.password_hash)).toBe(true)
+  expect(liveState.users[created.id]).toEqual(created)
 })
 
 test('rejects invalid usernames, short passwords, and duplicates', async () => {
@@ -98,12 +110,13 @@ test('rejects a too-short new password', async () => {
   expect(res.status).toBe(400)
 })
 
-test('deletes another user and cascades their sessions', async () => {
-  const { db, app } = await setup()
+test('deletes another user, cascades their sessions, and drops them from LiveState', async () => {
+  const { db, app, liveState } = await setup()
   const res = await app.request('/2', { method: 'DELETE' })
   expect(res.status).toBe(200)
   expect(db.query('SELECT COUNT(*) AS n FROM users').get().n).toBe(1)
   expect(sessionIds(db)).toEqual(['sess-captain', 'sess-captain-phone'])
+  expect(liveState.users[2]).toBeUndefined()
 })
 
 test('refuses to delete your own account', async () => {
