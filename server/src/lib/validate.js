@@ -8,6 +8,8 @@ export const BRANCH_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/
 export const PM2_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
 export const REPO_RE = /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/
 export const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/
+export const SUBDOMAIN_RE = /^[a-z0-9][a-z0-9-]{0,62}$/
+export const DOMAIN_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/
 // Allows plain names and email addresses: Google sign-in matches the Google
 // account's email against the username. Usernames never reach shells or paths.
 export const USERNAME_RE = /^[A-Za-z0-9][A-Za-z0-9._@+-]{0,63}$/
@@ -24,6 +26,10 @@ export function isValidCwd(cwd) {
   return cwd.split('/').every(seg => /^[A-Za-z0-9._-]+$/.test(seg) && seg !== '..')
 }
 
+export function isValidPort(port) {
+  return Number.isInteger(port) && port >= 1 && port <= 65535
+}
+
 export function slugify(name) {
   return String(name)
     .toLowerCase()
@@ -33,7 +39,7 @@ export function slugify(name) {
 }
 
 // Collects field errors for a project payload; returns {} when everything is valid.
-export function validateProject({ name, repo_full_name, branch, pm2_name, cwd, deploy_script, start_command }) {
+export function validateProject({ name, repo_full_name, branch, pm2_name, cwd, deploy_script, start_command, subdomain, port }) {
   const errors = {}
   if (typeof name !== 'string' || !name.trim()) errors.name = 'name is required'
   if (typeof repo_full_name !== 'string' || !REPO_RE.test(repo_full_name)) errors.repo_full_name = 'must be owner/repo'
@@ -42,5 +48,10 @@ export function validateProject({ name, repo_full_name, branch, pm2_name, cwd, d
   if (!isValidCwd(cwd)) errors.cwd = 'must be a safe relative path'
   if (deploy_script != null && typeof deploy_script !== 'string') errors.deploy_script = 'must be a string'
   if (start_command != null && typeof start_command !== 'string') errors.start_command = 'must be a string'
+  if (subdomain != null && !SUBDOMAIN_RE.test(subdomain)) {
+    errors.subdomain = 'lowercase letters, digits and dashes only'
+  }
+  if (port != null && !isValidPort(port)) errors.port = 'must be a port between 1 and 65535'
+  if (subdomain != null && port == null && !errors.port) errors.port = 'required to route the subdomain'
   return errors
 }

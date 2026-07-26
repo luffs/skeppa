@@ -44,6 +44,8 @@ export function writeEcosystem(db, config, project, envVars = null) {
   if (!project.start_command?.trim()) return null
   const dirs = projectDirs(config, project)
   const env = envVars ?? decryptedEnv(db, config, project.id)
+  // The routed port wins over a PORT from Cargo — it is what the proxy dials.
+  if (project.port) env.PORT = String(project.port)
   const [cmd, ...args] = project.start_command.trim().split(/\s+/)
   const app = {
     name: project.pm2_name,

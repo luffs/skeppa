@@ -141,6 +141,79 @@
         <button v-if="status.firebase_config" class="danger" :disabled="fbBusy" @click="removeFirebase">Disable</button>
       </div>
     </CollapseSection>
+
+    <CollapseSection title="Harbor gate">
+      <template #meta>
+        <span v-if="gate && gate.last_error" class="chip red">error</span>
+        <span v-else-if="gate && gate.base_domain && gate.process_status === 'online'" class="chip green">
+          routing {{ gate.routes.length }}
+        </span>
+        <span v-else-if="gate && gate.base_domain" class="chip amber">not running</span>
+      </template>
+
+      <p class="hint" style="font-size: 13.5px">
+        Routes each project's subdomain to its port through a panel-owned Caddy instance
+        (<span class="mono" style="font-size: 12.5px">skeppa-proxy</span> in the Engine room).
+        Set a subdomain and port per project under its Rigging tab; the routed port is injected
+        into the app as <span class="mono" style="font-size: 12.5px">PORT</span>. Requires the
+        <span class="mono" style="font-size: 12.5px">caddy</span> binary on the panel user's PATH.
+      </p>
+
+      <label>Base domain</label>
+      <input v-model="gateForm.base_domain" class="code" placeholder="apps.example.com" />
+
+      <div class="row">
+        <div style="flex: 1 1 140px">
+          <label>Listen port</label>
+          <input v-model="gateForm.http_port" class="code" placeholder="8100" />
+        </div>
+        <div style="flex: 1 1 140px">
+          <label>Admin port</label>
+          <input v-model="gateForm.admin_port" class="code" placeholder="2020" />
+        </div>
+      </div>
+      <p class="hint">
+        The admin port must differ from 2019 — the system Caddy already uses it.
+      </p>
+
+      <template v-if="gate && gate.base_domain">
+        <label style="margin-top: 20px">One-time setup for the system Caddy (ask the server admin)</label>
+        <textarea class="code" readonly rows="3" :value="adminSnippet" @focus="$event.target.select()"></textarea>
+        <p class="hint">
+          The wildcard needs a certificate: either a DNS-01 wildcard cert, or add
+          <span class="mono" style="font-size: 12.5px">tls { on_demand }</span> to the block.
+        </p>
+
+        <label style="margin-top: 20px">Routes</label>
+        <p v-if="!gate.routes.length" class="hint">
+          None yet — set a subdomain and port on a project's Rigging tab.
+        </p>
+        <div v-else class="crew-rows" style="margin-top: 0">
+          <div v-for="r in gate.routes" :key="r.project_id" class="crew-row">
+            <span class="mono" style="font-size: 13px">{{ r.host }}</span>
+            <span class="hint">→ localhost:{{ r.port }}</span>
+            <span class="spacer"></span>
+            <span class="hint">{{ r.name }}</span>
+          </div>
+        </div>
+
+        <p class="hint" style="margin-top: 12px">
+          <template v-if="!gate.caddy_available">⚠ caddy binary not found on PATH.</template>
+          <template v-else-if="gate.process_status">proxy process: {{ gate.process_status }}</template>
+          <template v-else>proxy process not started yet — Apply will start it.</template>
+        </p>
+      </template>
+
+      <p v-if="gate && gate.last_error" class="error">{{ gate.last_error }}</p>
+      <p v-if="gateError" class="error">{{ gateError }}</p>
+      <p v-if="gateMessage" class="hint">{{ gateMessage }}</p>
+      <div class="row" style="margin-top: 20px">
+        <button :disabled="gateBusy" @click="saveGate">{{ gateBusy ? 'Working…' : 'Save & apply' }}</button>
+        <button v-if="gate && gate.base_domain" class="secondary" :disabled="gateBusy" @click="applyGate">
+          Apply now
+        </button>
+      </div>
+    </CollapseSection>
   </div>
 </template>
 
@@ -169,6 +242,11 @@ export default {
       fbBusy: false,
       fbError: '',
       fbMessage: '',
+      gate: null,
+      gateForm: { base_domain: '', http_port: '8100', admin_port: '2020' },
+      gateBusy: false,
+      gateError: '',
+      gateMessage: '',
     }
   },
   computed: {
@@ -180,9 +258,12 @@ export default {
     users() {
       return Object.values(store.live.users ?? {}).sort((a, b) => a.username.localeCompare(b.username))
     },
+    adminSnippet() {
+      return `*.${this.gateForm.base_domain || 'apps.example.com'} {\n    reverse_proxy localhost:${this.gateForm.http_port || 8100}\n}`
+    },
   },
   async created() {
-    await this.load()
+    await Promise.all([this.load(), this.loadGate()])
   },
   methods: {
     async load() {
@@ -220,6 +301,48 @@ export default {
         this.error = err.message
       } finally {
         this.busy = false
+      }
+    },
+
+    async loadGate() {
+      this.gate = await api.get('/api/proxy')
+      this.gateForm = {
+        base_domain: this.gate.base_domain ?? '',
+        http_port: String(this.gate.http_port),
+        admin_port: String(this.gate.admin_port),
+      }
+    },
+    async saveGate() {
+      this.gateBusy = true
+      this.gateError = ''
+      this.gateMessage = ''
+      try {
+        this.gate = await api.put('/api/proxy', {
+          base_domain: this.gateForm.base_domain,
+          http_port: Number(this.gateForm.http_port),
+          admin_port: Number(this.gateForm.admin_port),
+        })
+        this.gateMessage = this.gate.base_domain
+          ? (this.gate.last_error ? 'Saved — but applying failed, see the error above.' : 'Saved & applied ✔')
+          : 'Harbor gate disabled.'
+      } catch (err) {
+        this.gateError = this.describeError(err)
+      } finally {
+        this.gateBusy = false
+      }
+    },
+    async applyGate() {
+      this.gateBusy = true
+      this.gateError = ''
+      this.gateMessage = ''
+      try {
+        this.gate = await api.post('/api/proxy/apply')
+        this.gateMessage = 'Applied ✔'
+      } catch (err) {
+        this.gateError = err.message
+        await this.loadGate().catch(() => {})
+      } finally {
+        this.gateBusy = false
       }
     },
 

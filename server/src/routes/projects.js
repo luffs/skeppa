@@ -8,12 +8,33 @@ import { projectDirs, writeEnvFiles, writeEcosystem } from '../deploy/envfiles.j
 
 const PROJECT_COLUMNS =
   'id, slug, name, repo_full_name, branch, deploy_script, pm2_name, start_command, cwd, ' +
-  'auto_deploy, head_sha, head_message, head_pushed_at, created_at'
+  'auto_deploy, subdomain, port, head_sha, head_message, head_pushed_at, created_at'
 
-export function projectRoutes({ db, config, liveState, runner, poller, github }) {
+export function projectRoutes({ db, config, liveState, runner, poller, github, proxy = null }) {
   const app = new Hono()
 
   const getProject = id => db.query(`SELECT ${PROJECT_COLUMNS} FROM projects WHERE id = ?`).get(Number(id))
+
+  const normalizeSubdomain = value =>
+    typeof value === 'string' && value.trim() ? value.trim().toLowerCase() : null
+  const normalizePort = value => (value == null || value === '' ? null : Number(value))
+
+  // Field errors for subdomain/port collisions with other projects.
+  const routingConflicts = ({ subdomain, port }, excludeId = -1) => {
+    const errors = {}
+    if (subdomain != null &&
+        db.query('SELECT 1 FROM projects WHERE subdomain = ? AND id != ?').get(subdomain, excludeId)) {
+      errors.subdomain = 'subdomain already routed'
+    }
+    if (port != null &&
+        db.query('SELECT 1 FROM projects WHERE port = ? AND id != ?').get(port, excludeId)) {
+      errors.port = 'port already used by another project'
+    }
+    return errors
+  }
+
+  const applyProxy = () =>
+    proxy?.apply().catch(err => console.error('[proxy] apply failed:', err.message))
 
   app.get('/', c => {
     return c.json(db.query(`SELECT ${PROJECT_COLUMNS} FROM projects ORDER BY name`).all())
@@ -30,8 +51,10 @@ export function projectRoutes({ db, config, liveState, runner, poller, github })
       pm2_name: body.pm2_name?.trim() || slugify(body.name ?? ''),
       cwd: body.cwd?.trim() || null,
       auto_deploy: body.auto_deploy === false ? 0 : 1,
+      subdomain: normalizeSubdomain(body.subdomain),
+      port: normalizePort(body.port),
     }
-    const errors = validateProject(project)
+    const errors = { ...validateProject(project), ...routingConflicts(project) }
     if (Object.keys(errors).length) return c.json({ error: 'validation failed', fields: errors }, 400)
 
     let slug = body.slug?.trim() || slugify(project.name)
@@ -46,12 +69,14 @@ export function projectRoutes({ db, config, liveState, runner, poller, github })
     }
 
     const { lastInsertRowid } = db.query(
-      `INSERT INTO projects (slug, name, repo_full_name, branch, deploy_script, pm2_name, start_command, cwd, auto_deploy)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO projects (slug, name, repo_full_name, branch, deploy_script, pm2_name, start_command, cwd, auto_deploy, subdomain, port)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(slug, project.name, project.repo_full_name, project.branch, project.deploy_script,
-          project.pm2_name, project.start_command, project.cwd, project.auto_deploy)
+          project.pm2_name, project.start_command, project.cwd, project.auto_deploy,
+          project.subdomain, project.port)
     const id = Number(lastInsertRowid)
     liveState.projects[id] = projectDefaults(null, getProjectInfo(db, id))
+    if (project.subdomain) await applyProxy()
     return c.json(getProject(id), 201)
   })
 
@@ -75,8 +100,10 @@ export function projectRoutes({ db, config, liveState, runner, poller, github })
       pm2_name: body.pm2_name?.trim() ?? project.pm2_name,
       cwd: 'cwd' in body ? (body.cwd?.trim() || null) : project.cwd,
       auto_deploy: 'auto_deploy' in body ? (body.auto_deploy ? 1 : 0) : project.auto_deploy,
+      subdomain: 'subdomain' in body ? normalizeSubdomain(body.subdomain) : project.subdomain,
+      port: 'port' in body ? normalizePort(body.port) : project.port,
     }
-    const errors = validateProject(merged)
+    const errors = { ...validateProject(merged), ...routingConflicts(merged, project.id) }
     if (Object.keys(errors).length) return c.json({ error: 'validation failed', fields: errors }, 400)
     if (merged.pm2_name !== project.pm2_name &&
         db.query('SELECT 1 FROM projects WHERE pm2_name = ? AND id != ?').get(merged.pm2_name, project.id)) {
@@ -85,12 +112,14 @@ export function projectRoutes({ db, config, liveState, runner, poller, github })
 
     db.query(
       `UPDATE projects SET name = ?, repo_full_name = ?, branch = ?, deploy_script = ?,
-         start_command = ?, pm2_name = ?, cwd = ?, auto_deploy = ? WHERE id = ?`
+         start_command = ?, pm2_name = ?, cwd = ?, auto_deploy = ?, subdomain = ?, port = ? WHERE id = ?`
     ).run(merged.name, merged.repo_full_name, merged.branch, merged.deploy_script,
-          merged.start_command, merged.pm2_name, merged.cwd, merged.auto_deploy, project.id)
+          merged.start_command, merged.pm2_name, merged.cwd, merged.auto_deploy,
+          merged.subdomain, merged.port, project.id)
     if (liveState.projects[project.id]) {
       liveState.projects[project.id].info = getProjectInfo(db, project.id)
     }
+    if (merged.subdomain !== project.subdomain || merged.port !== project.port) await applyProxy()
     return c.json(getProject(project.id))
   })
 
@@ -100,6 +129,7 @@ export function projectRoutes({ db, config, liveState, runner, poller, github })
     await deleteProcess(project.pm2_name)
     db.query('DELETE FROM projects WHERE id = ?').run(project.id)
     delete liveState.projects[project.id]
+    if (project.subdomain) await applyProxy()
     // Files under APPS_DIR/<slug> are intentionally left on disk; remove manually.
     return c.json({ ok: true, note: `files in ${config.appsDir}/${project.slug} were not deleted` })
   })

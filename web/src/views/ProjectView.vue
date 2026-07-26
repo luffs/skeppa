@@ -113,6 +113,27 @@
       <input v-model="edit.pm2_name" class="code" />
       <label>Working subdirectory</label>
       <input v-model="edit.cwd" class="code" />
+      <div class="row">
+        <div style="flex: 1 1 160px">
+          <label>Subdomain</label>
+          <input v-model="edit.subdomain" class="code" placeholder="myapp" />
+        </div>
+        <div style="flex: 1 1 120px">
+          <label>App port</label>
+          <input v-model="edit.port" class="code" placeholder="4001" />
+        </div>
+      </div>
+      <p class="hint" v-if="routedUrl">
+        Routed: <a :href="routedUrl" target="_blank" rel="noopener" class="mono" style="font-size: 12.5px">{{ routedUrl }}</a>
+        → localhost:{{ edit.port }} · the app gets <span class="mono" style="font-size: 12px">PORT={{ edit.port }}</span>
+      </p>
+      <p class="hint" v-else-if="edit.subdomain && gate && !gate.base_domain">
+        Set a base domain under Rigging → Harbor gate to route this subdomain.
+      </p>
+      <p class="hint" v-else>
+        Optional: route <span class="mono" style="font-size: 12px">subdomain.&lt;base domain&gt;</span>
+        to this app through the harbor gate proxy.
+      </p>
       <p v-if="saveError" class="error">{{ saveError }}</p>
       <p v-if="saved" class="hint">Saved ✔</p>
       <div class="row" style="margin-top: 22px; justify-content: space-between">
@@ -185,6 +206,7 @@ export default {
       cloneCommand: '',
       cloneExpiresAt: null,
       copiedCommand: false,
+      gate: null,
     }
   },
   computed: {
@@ -210,6 +232,10 @@ export default {
       const min = Math.round((this.cloneExpiresAt - Date.now()) / 60000)
       return min > 0 ? `in ~${min} min` : 'soon — fetch a fresh one'
     },
+    routedUrl() {
+      if (!this.edit.subdomain || !this.edit.port || !this.gate?.base_domain) return ''
+      return `https://${this.edit.subdomain}.${this.gate.base_domain}`
+    },
   },
   watch: {
     // A deploy starting or finishing changes the list — refresh it.
@@ -224,7 +250,7 @@ export default {
       immediate: true,
       handler(p) {
         if (p && !this.editLoaded) {
-          this.edit = { ...p, cwd: p.cwd ?? '', auto_deploy: !!p.auto_deploy }
+          this.edit = this.editable(p)
           this.editLoaded = true
         }
       },
@@ -233,6 +259,7 @@ export default {
   async created() {
     await this.loadDeployments()
     this.selectedId = this.currentDeploymentId ?? this.deployments[0]?.id ?? null
+    this.gate = await api.get('/api/proxy').catch(() => null)
   },
   methods: {
     timeAgo,
@@ -309,6 +336,15 @@ export default {
         this.pm2Busy = false
       }
     },
+    editable(p) {
+      return {
+        ...p,
+        cwd: p.cwd ?? '',
+        auto_deploy: !!p.auto_deploy,
+        subdomain: p.subdomain ?? '',
+        port: p.port ?? '',
+      }
+    },
     async save() {
       this.saving = true
       this.saveError = ''
@@ -317,10 +353,12 @@ export default {
         const updated = await api.patch(`/api/projects/${this.id}`, {
           ...this.edit,
           cwd: this.edit.cwd || null,
+          subdomain: this.edit.subdomain || null,
+          port: this.edit.port === '' ? null : Number(this.edit.port),
         })
         // LiveState carries the update to `project`; re-seed the form with the
         // server-normalized values.
-        this.edit = { ...updated, cwd: updated.cwd ?? '', auto_deploy: !!updated.auto_deploy }
+        this.edit = this.editable(updated)
         this.saved = true
       } catch (err) {
         const fields = err.fields ? ' — ' + Object.entries(err.fields).map(([k, v]) => `${k}: ${v}`).join(', ') : ''

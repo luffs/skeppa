@@ -13,6 +13,7 @@ Deploys private GitHub repos onto this server via webhooks, manages encrypted EN
 - **GitHub:** GitHub App (JWT → installation token, cached). Not OAuth, not a PAT.
 - **Auth:** username/password users (managed under Rigging → Crew; all have full access — no roles), bcrypt password hash (`Bun.password`), session cookie. Optional Google sign-in via a Firebase web config (Rigging → Google sign-in): the frontend loads Firebase from the gstatic CDN (never the npm package), the backend validates ID tokens with the Identity Toolkit REST `accounts:lookup` and matches the verified Google email against `users.username`.
 - **Secrets:** AES-256-GCM with `MASTER_KEY` (32-byte hex) from the panel's `.env`; unique IV per value.
+- **Subdomain routing ("harbor gate"):** a panel-owned Caddy instance (pm2 process `skeppa-proxy`, plain HTTP) routes `subdomain.<base_domain>` → `localhost:<project port>`; the admin's system Caddy forwards the wildcard to it with one static block and owns TLS. Config is generated as JSON (`server/src/proxy/`), hot-reloaded via the local admin API (never `:2019` — that's the system instance), cold-started via pm2. The routed port is injected into the app's env as `PORT`.
 
 ## Commands
 
@@ -25,7 +26,7 @@ Deploys private GitHub repos onto this server via webhooks, manages encrypted EN
 
 ## Directory layout
 
-- `server/src/` — Hono app: `routes/`, `deploy/` (runner, git, pm2), `live/` (LiveState, Hub, poller), `github/`, `auth/`, `db/`, `lib/`
+- `server/src/` — Hono app: `routes/`, `deploy/` (runner, git, pm2), `live/` (LiveState, Hub, poller), `github/`, `auth/`, `db/`, `lib/`, `proxy/` (harbor gate Caddy config + lifecycle)
 - `web/src/` — Vue app: `views/`, `components/`, `store.js`, `ws.js`, `api.js`
 - Deployed apps live in `APPS_DIR/<slug>/{source,shared}` (default `/srv/apps`)
 

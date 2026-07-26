@@ -9,6 +9,7 @@ import { pruneSessions } from './auth/sessions.js'
 import { createLiveState, initLiveState } from './live/state.js'
 import { Hub } from './live/hub.js'
 import { createPoller } from './live/poller.js'
+import { createProxy, proxySettings } from './proxy/index.js'
 import { GitHubApp } from './github/appClient.js'
 import { DeployRunner, recoverInterrupted } from './deploy/runner.js'
 import { createApp } from './app.js'
@@ -41,8 +42,15 @@ const hub = new Hub({
 const runner = new DeployRunner({ db, config, liveState, hub, github })
 hub.getLogBacklog = id => runner.getActiveLog(id)
 
+const proxy = createProxy({ db, config })
+// Bring the harbor gate back in sync after a restart (config may have changed
+// while the panel was down). Failures surface in Rigging, not at boot.
+if (proxySettings(db).baseDomain) {
+  proxy.apply().catch(err => console.error('[proxy] startup apply failed:', err.message))
+}
+
 const { upgradeWebSocket, websocket } = createBunWebSocket()
-const app = createApp({ db, config, liveState, hub, runner, github, poller, upgradeWebSocket })
+const app = createApp({ db, config, liveState, hub, runner, github, poller, proxy, upgradeWebSocket })
 
 const server = Bun.serve({ port: config.port, fetch: app.fetch, websocket })
 console.log(`Skeppa listening on http://localhost:${server.port} (${config.isProd ? 'production' : 'development'})`)

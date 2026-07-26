@@ -10,8 +10,9 @@ import { githubRoutes, settingsRoutes } from './routes/github.js'
 import { webhookRoutes } from './routes/webhooks.js'
 import { systemRoutes } from './routes/system.js'
 import { userRoutes } from './routes/users.js'
+import { proxyApiRoutes } from './routes/proxy.js'
 
-export function createApp({ db, config, liveState, hub, runner, github, poller, upgradeWebSocket }) {
+export function createApp({ db, config, liveState, hub, runner, github, poller, proxy, upgradeWebSocket }) {
   const app = new Hono()
 
   app.onError((err, c) => {
@@ -25,12 +26,13 @@ export function createApp({ db, config, liveState, hub, runner, github, poller, 
 
   // Everything else under /api requires a valid session.
   app.use('/api/*', requireSession(db))
-  app.route('/api/projects', projectRoutes({ db, config, liveState, runner, poller, github }))
+  app.route('/api/projects', projectRoutes({ db, config, liveState, runner, poller, github, proxy }))
   app.route('/api/deployments', deploymentRoutes({ db, runner }))
   app.route('/api/github', githubRoutes({ db, config, github }))
   app.route('/api/settings', settingsRoutes({ db, config, github }))
   app.route('/api/system', systemRoutes({ db, config, poller }))
   app.route('/api/users', userRoutes({ db, liveState }))
+  app.route('/api/proxy', proxyApiRoutes({ db, proxy }))
 
   // WebSocket: session is validated before the upgrade happens.
   app.get(
