@@ -359,19 +359,26 @@ tr:last-child td { border-bottom: none; }
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 20px 22px;
-  display: flex;
-  align-items: center;
-  gap: 20px;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0 20px;
   box-shadow: 0 1px 0 var(--shadow);
 }
-.harbor-row .main { flex: 1 1 260px; min-width: 0; }
-.harbor-row .title-line { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.harbor-row .title-line {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.harbor-row .title-line .status { margin-left: auto; }
+.harbor-row .main { min-width: 0; }
 .harbor-row a.name { font-size: 17px; font-weight: 700; color: var(--ink); }
 .harbor-row a.name:hover { color: var(--accent); }
-.harbor-row .repo-line { font-family: var(--mono); font-size: 12.5px; color: var(--dim); margin-top: 5px; }
+.harbor-row .repo-line { font-family: var(--mono); font-size: 12.5px; color: var(--dim); }
 .harbor-row .last-line { font-size: 13px; color: var(--dim); margin-top: 8px; display: flex; align-items: center; gap: 8px; }
-.harbor-row .side { display: flex; align-items: center; gap: 14px; margin-left: auto; }
+.harbor-row .side { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
 .harbor-row .uptime { font-family: var(--mono); font-size: 12px; color: var(--dim); text-align: right; }
 
 .feed-panel {
@@ -592,7 +599,10 @@ tr:last-child td { border-bottom: none; }
   .log-meta { display: none; }
   .logview, .proc-logs .logview { height: 240px; }
   .tabs { gap: 18px; }
-  .harbor-row .side { margin-left: 0; width: 100%; justify-content: space-between; }
+  .harbor-row { grid-template-columns: 1fr; }
+  .harbor-row .title-line { margin-bottom: 12px; }
+  .harbor-row .title-line .status { margin-left: 0; }
+  .harbor-row .side { flex-direction: row; align-items: center; width: 100%; justify-content: space-between; margin-top: 14px; }
 }
 
 /* ---- login ---- */

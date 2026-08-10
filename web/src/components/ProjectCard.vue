@@ -1,11 +1,11 @@
 <template>
   <div class="harbor-row">
+    <div class="title-line">
+      <router-link :to="`/projects/${project.id}`" class="name">{{ project.name }}</router-link>
+      <span v-if="undeployed" class="chip amber">commits ahead</span>
+      <StatusBadge :status="pm2Status" class="status" />
+    </div>
     <div class="main">
-      <div class="title-line">
-        <router-link :to="`/projects/${project.id}`" class="name">{{ project.name }}</router-link>
-        <StatusBadge :status="pm2Status" />
-        <span v-if="undeployed" class="chip amber">commits ahead</span>
-      </div>
       <div class="repo-line">{{ project.repo_full_name }} @ {{ project.branch }}</div>
       <div class="last-line">
         <span class="dot" :class="lastDot"></span>
@@ -62,7 +62,7 @@ export default {
     uptimeNote() {
       if (this.pm2Status === 'online') return `up ${uptimeSince(this.live?.pm2?.uptime)}`
       if (this.pm2Status === 'unknown') return '—'
-      return 'not running'
+      return ''
     },
   },
   methods: {
