@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { PM2_NAME_RE, PM2_ACTIONS } from '../lib/validate.js'
-import { projectDirs } from '../deploy/envfiles.js'
+import { projectDirs, decryptedEnv, runtimeEnv } from '../deploy/envfiles.js'
 import { tailFile } from '../lib/tail.js'
 import * as realPm2 from '../deploy/pm2.js'
 
@@ -15,11 +15,17 @@ export function systemRoutes({ db, config, poller, pm2 = realPm2 }) {
 
   const known = async name => (await pm2.jlist()).find(p => p.name === name) ?? null
 
-  // The ecosystem file of the project owning this pm2 name, when there is one.
-  // Externally-managed processes get null and a plain pm2 start/restart.
-  function ecosystemFor(name) {
-    const project = db.query('SELECT slug, cwd FROM projects WHERE pm2_name = ?').get(name)
-    return project ? projectDirs(config, project).ecosystem : null
+  // The owning project (if any) plus its ecosystem file and current ENV.
+  // Externally-managed processes get nulls and a plain pm2 start/restart
+  // (the daemon keeps whatever env they were started with).
+  function projectHandle(name) {
+    const project = db.query('SELECT * FROM projects WHERE pm2_name = ?').get(name) ?? null
+    if (!project) return { project, ecosystem: null, env: null }
+    return {
+      project,
+      ecosystem: projectDirs(config, project).ecosystem,
+      env: runtimeEnv(project, decryptedEnv(db, config, project.id)),
+    }
   }
 
   app.post('/pm2/:name/:action', async c => {
@@ -31,7 +37,13 @@ export function systemRoutes({ db, config, poller, pm2 = realPm2 }) {
     }
     try {
       if (!(await known(name))) return c.json({ error: 'unknown pm2 process' }, 404)
-      await pm2.applyAction(act, name, ecosystemFor(name))
+      const { project, ecosystem, env } = projectHandle(name)
+      await pm2.applyAction(act, name, ecosystem, env)
+      // Stop also turns off start-at-boot; start/restart turn it back on.
+      if (project) {
+        db.query('UPDATE projects SET auto_start = ? WHERE id = ?')
+          .run(act === 'stop' ? 0 : 1, project.id)
+      }
       poller?.tick()
       return c.json({ ok: true })
     } catch (err) {

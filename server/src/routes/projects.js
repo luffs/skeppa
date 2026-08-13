@@ -4,11 +4,11 @@ import { encrypt, decrypt } from '../lib/crypto.js'
 import { slugify, validateProject, SLUG_RE, ENV_KEY_RE, PM2_ACTIONS } from '../lib/validate.js'
 import { projectDefaults, getProjectInfo } from '../live/state.js'
 import { applyAction, deleteProcess } from '../deploy/pm2.js'
-import { projectDirs, writeEnvFiles, writeEcosystem } from '../deploy/envfiles.js'
+import { projectDirs, syncEnvFiles, writeEcosystem, decryptedEnv, runtimeEnv } from '../deploy/envfiles.js'
 
 const PROJECT_COLUMNS =
   'id, slug, name, repo_full_name, branch, deploy_script, pm2_name, start_command, cwd, ' +
-  'auto_deploy, subdomain, port, head_sha, head_message, head_pushed_at, created_at'
+  'auto_deploy, write_env_file, subdomain, port, head_sha, head_message, head_pushed_at, created_at'
 
 export function projectRoutes({ db, config, liveState, runner, poller, github, proxy = null }) {
   const app = new Hono()
@@ -51,6 +51,7 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
       pm2_name: body.pm2_name?.trim() || slugify(body.name ?? ''),
       cwd: body.cwd?.trim() || null,
       auto_deploy: body.auto_deploy === false ? 0 : 1,
+      write_env_file: body.write_env_file ? 1 : 0,
       subdomain: normalizeSubdomain(body.subdomain),
       port: normalizePort(body.port),
     }
@@ -69,11 +70,11 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
     }
 
     const { lastInsertRowid } = db.query(
-      `INSERT INTO projects (slug, name, repo_full_name, branch, deploy_script, pm2_name, start_command, cwd, auto_deploy, subdomain, port)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO projects (slug, name, repo_full_name, branch, deploy_script, pm2_name, start_command, cwd, auto_deploy, write_env_file, subdomain, port)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(slug, project.name, project.repo_full_name, project.branch, project.deploy_script,
           project.pm2_name, project.start_command, project.cwd, project.auto_deploy,
-          project.subdomain, project.port)
+          project.write_env_file, project.subdomain, project.port)
     const id = Number(lastInsertRowid)
     liveState.projects[id] = projectDefaults(null, getProjectInfo(db, id))
     if (project.subdomain) await applyProxy()
@@ -100,6 +101,7 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
       pm2_name: body.pm2_name?.trim() ?? project.pm2_name,
       cwd: 'cwd' in body ? (body.cwd?.trim() || null) : project.cwd,
       auto_deploy: 'auto_deploy' in body ? (body.auto_deploy ? 1 : 0) : project.auto_deploy,
+      write_env_file: 'write_env_file' in body ? (body.write_env_file ? 1 : 0) : project.write_env_file,
       subdomain: 'subdomain' in body ? normalizeSubdomain(body.subdomain) : project.subdomain,
       port: 'port' in body ? normalizePort(body.port) : project.port,
     }
@@ -112,12 +114,17 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
 
     db.query(
       `UPDATE projects SET name = ?, repo_full_name = ?, branch = ?, deploy_script = ?,
-         start_command = ?, pm2_name = ?, cwd = ?, auto_deploy = ?, subdomain = ?, port = ? WHERE id = ?`
+         start_command = ?, pm2_name = ?, cwd = ?, auto_deploy = ?, write_env_file = ?, subdomain = ?, port = ? WHERE id = ?`
     ).run(merged.name, merged.repo_full_name, merged.branch, merged.deploy_script,
           merged.start_command, merged.pm2_name, merged.cwd, merged.auto_deploy,
-          merged.subdomain, merged.port, project.id)
+          merged.write_env_file, merged.subdomain, merged.port, project.id)
     if (liveState.projects[project.id]) {
       liveState.projects[project.id].info = getProjectInfo(db, project.id)
+    }
+    // Flipping the .env toggle takes effect on disk right away — especially
+    // the off direction, which deletes the plaintext files.
+    if (merged.write_env_file !== project.write_env_file) {
+      syncEnvFiles(db, config, getProject(project.id))
     }
     if (merged.subdomain !== project.subdomain || merged.port !== project.port) await applyProxy()
     return c.json(getProject(project.id))
@@ -173,13 +180,14 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
     })
     replaceAll()
 
-    // If the app is already deployed, rewrite .env and the ecosystem file now
-    // so a pm2 restart (or the app itself re-reading .env) picks the changes
-    // up without waiting for the next deploy.
+    // If the app is already deployed, sync the .env files (written or removed
+    // per the project toggle) and refresh the ecosystem file now, so a pm2
+    // restart picks the changes up without waiting for the next deploy — the
+    // restart route decrypts and injects the fresh values.
     let applied = false
     if (existsSync(projectDirs(config, project).source)) {
-      const envVars = writeEnvFiles(db, config, project)
-      writeEcosystem(db, config, project, envVars)
+      syncEnvFiles(db, config, project)
+      writeEcosystem(config, project)
       applied = true
     }
     return c.json({ ok: true, count: body.length, applied })
@@ -251,7 +259,13 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
     const act = c.req.param('action')
     if (!PM2_ACTIONS.includes(act)) return c.json({ error: `action must be one of ${PM2_ACTIONS.join(', ')}` }, 400)
     try {
-      await applyAction(act, project.pm2_name, projectDirs(config, project).ecosystem)
+      // start/restart re-inject the current ENV set; decrypted only for the
+      // duration of the pm2 call, never written anywhere.
+      await applyAction(act, project.pm2_name, projectDirs(config, project).ecosystem,
+        runtimeEnv(project, decryptedEnv(db, config, project.id)))
+      // Stop also turns off start-at-boot; start/restart turn it back on.
+      db.query('UPDATE projects SET auto_start = ? WHERE id = ?')
+        .run(act === 'stop' ? 0 : 1, project.id)
       poller?.tick()
       return c.json({ ok: true })
     } catch (err) {

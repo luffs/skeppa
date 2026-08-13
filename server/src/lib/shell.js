@@ -27,11 +27,11 @@ export function resolveShell() {
   )
 }
 
-// Minimal base environment for deploy scripts. The panel's own env (MASTER_KEY!)
-// must not leak into deploys, but Windows processes break without a handful of
-// system variables.
-export function scriptEnvBase() {
-  const env = { PATH: process.env.PATH ?? '', CI: 'true', GIT_TERMINAL_PROMPT: '0' }
+// Smallest environment a child process can run with: PATH, HOME, and the
+// handful of system variables Windows breaks without. The panel's own env
+// (MASTER_KEY!) must never leak into anything it spawns.
+function systemEnvBase() {
+  const env = { PATH: process.env.PATH ?? '' }
   if (process.platform === 'win32') {
     for (const key of [
       'SYSTEMROOT', 'SystemRoot', 'COMSPEC', 'PATHEXT', 'USERPROFILE',
@@ -42,8 +42,24 @@ export function scriptEnvBase() {
     env.HOME = process.env.HOME ?? process.env.USERPROFILE ?? ''
   } else {
     env.HOME = process.env.HOME ?? ''
-    env.SHELL = '/bin/sh'
   }
+  return env
+}
+
+// Base environment for deploy scripts.
+export function scriptEnvBase() {
+  const env = { ...systemEnvBase(), CI: 'true', GIT_TERMINAL_PROMPT: '0' }
+  if (process.platform !== 'win32') env.SHELL = '/bin/sh'
+  return env
+}
+
+// Base environment for pm2 CLI calls. pm2 injects the CLI's environment into
+// the process it starts (that is what --update-env applies), so everything
+// here also ends up in the app's runtime env — keep it to what pm2 needs and
+// leave out script-only flags like CI.
+export function pm2EnvBase() {
+  const env = systemEnvBase()
+  if (process.env.PM2_HOME != null) env.PM2_HOME = process.env.PM2_HOME
   return env
 }
 

@@ -20,16 +20,36 @@ Stack: Bun, Hono, SQLite (`bun:sqlite`), Vue 3 (Options API) + Vite, pm2. Plain 
 ```bash
 # as a dedicated non-root user (e.g. `skeppa`)
 git clone <this repo> /srv/skeppa && cd /srv/skeppa
-bun install
-bun run build                      # build the frontend to web/dist
-
-cp .env.example .env
-openssl rand -hex 32               # -> MASTER_KEY in .env
-sudo mkdir -p /srv/apps && sudo chown $USER /srv/apps
-
-bun scripts/seed.js admin <your-password>
-pm2 start ecosystem.config.cjs && pm2 save
+bun scripts/install.js
 ```
+
+The installer asks a few questions and does the rest: creates the master-key file (chmod 600 —
+an existing key is never overwritten) and the data/apps directories, writes `.env`, builds the
+frontend, creates the admin user and starts the panel under pm2. It runs `pm2 save` at the one
+moment that is safe — while the panel is the sole pm2 process — and ends by printing the
+`pm2 startup` command that makes pm2 itself start at boot. Re-running the installer is safe.
+
+<details>
+<summary>Manual install (what the script does)</summary>
+
+```bash
+bun install && bun run build
+cp .env.example .env
+mkdir -p ~/.skeppa && openssl rand -hex 32 > ~/.skeppa/master.key && chmod 600 ~/.skeppa/master.key
+# point MASTER_KEY_FILE at that file in .env
+sudo mkdir -p /srv/apps && sudo chown $USER /srv/apps
+bun scripts/seed.js admin <your-password>
+pm2 start ecosystem.config.cjs && pm2 save && pm2 startup
+```
+
+</details>
+
+Run `pm2 save` only while the panel is the sole pm2 process. Deployed apps are deliberately
+kept out of the pm2 dump — `pm2 save` writes every process's environment in plaintext to
+`~/.pm2/dump.pm2`, which would defeat the ENV encryption. After a server reboot the panel
+starts its apps again by itself (with freshly decrypted ENV), so the dump never needs them.
+Stopping an app through the panel also turns off its start-at-boot flag, so it stays stopped
+across reboots; starting or deploying it turns the flag back on.
 
 The panel listens on `http://localhost:3000`.
 
@@ -70,14 +90,16 @@ Skeppa uses a GitHub App (not OAuth, not a PAT) for repo listing, clone tokens a
 
 1. **Settings** — paste GitHub App credentials, test the connection
 2. **New project** — pick a repo and branch, set a deploy script (e.g. `bun install && bun run build`) and a start command (e.g. `bun run start`; leave empty for build-only projects)
-3. **Environment tab** — add ENV vars; they're written to `shared/.env` and passed to the deploy script and pm2 app on each deploy
+3. **Environment tab** — add ENV vars; on each deploy they're decrypted in memory and injected into the deploy script and the pm2 process. Nothing is written to disk unless the project opts into a `.env` file (see below)
 4. Push to the branch — the deploy runs automatically; watch the live log in the project view
 
-Apps live in `APPS_DIR/<slug>/source` (git working copy) with `shared/.env` generated from the DB on every deploy. While a deploy runs, a second trigger queues (max 1; a newer one replaces it). Deploys are sequential per project, parallel across projects.
+Apps live in `APPS_DIR/<slug>/source` (git working copy). If something in the app reads `.env` from disk itself (e.g. Vite at build time), enable **"Write a plaintext .env file into the app"** in the project settings — the panel then maintains `shared/.env` (0600) plus a copy in the working dir, and deletes both when the toggle is turned off. While a deploy runs, a second trigger queues (max 1; a newer one replaces it). Deploys are sequential per project, parallel across projects.
 
 ## Deploying Skeppa with Skeppa (dogfooding)
 
 Add the panel's own repo as a project with pm2 name `skeppa` (must match `SKEPPA_PM2_NAME` in `.env`). The panel detects the self-deploy and runs the pm2 reload detached after the deploy finalizes, so it doesn't kill its own in-flight deploy process.
+
+Give the project's Environment tab the panel's config and leave the `.env`-file toggle off: the panel then runs from `APPS_DIR/skeppa/source` with the key read from the file and nothing secret written into the app directory. Required: `MASTER_KEY_FILE` (a path, not a secret) and an **absolute** `DATA_DIR` — its default follows the running checkout, so after a self-deploy an unset `DATA_DIR` would point at an empty database inside `APPS_DIR/skeppa/source`. Add `APPS_DIR` only if you changed it from `/srv/apps`. None of these are secrets, so the panel's process environment stays clean.
 
 ## Development
 
@@ -92,7 +114,12 @@ On Windows, deploy execution (`sh`, pm2) is not supported — develop the UI/API
 
 ## Security notes
 
-- ENV values and GitHub App secrets are AES-256-GCM encrypted with `MASTER_KEY`; without that key the DB leaks nothing. Don't lose it — there is no recovery.
+- ENV values and GitHub App secrets are AES-256-GCM encrypted with the master key; without it the DB leaks nothing. Don't lose it — there is no recovery (it's 64 hex chars: keep a copy in your password manager).
+- Keep the master key in a `MASTER_KEY_FILE` (chmod 600, e.g. `~/.skeppa/master.key`) rather than the `MASTER_KEY` env var: the file lives outside the repo, `DATA_DIR` and `APPS_DIR`, never enters the process environment (`pm2 env`, `/proc`, pm2 dumps), and the panel warns at boot if its permissions are loose. **Back it up separately from `data/`** — a backup containing both the DB and the key decrypts everything.
+- Decrypted ENV exists only in memory: it is injected through the pm2 CLI's process environment at start/reload and into the deploy script's environment. It is never written into ecosystem files, and `.env` files on disk are a per-project opt-in (written with mode 0600).
+- pm2 spawns for apps use a minimal, sanitized environment — the panel's own env (`MASTER_KEY`, tokens) is never inherited by deployed apps.
+- Know the boundary: pm2 keeps each process's environment in daemon memory, so anyone with shell access as the panel user can read secrets via `pm2 env`/`pm2 show` — and deployed apps run as that same user. The encryption protects the DB, its backups and the file system at rest; it does not isolate apps from each other or from the panel. If you need that, use per-app users or containers.
+- Never run `pm2 save` while apps are running (see Install) — the dump file would contain their env in plaintext.
 - Webhook payloads are verified with a timing-safe HMAC comparison before processing.
 - Clone tokens are short-lived installation tokens, passed per git invocation and never written to `.git/config` or logs.
 - The deploy script deliberately runs as shell **as your panel user** — that's the product. Everything else that reaches a shell or path is whitelist-validated.

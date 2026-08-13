@@ -14,7 +14,7 @@ function fakePm2(procs) {
   return {
     calls,
     jlist: async () => procs,
-    applyAction: async (act, name, ecosystemFile) => calls.push({ act, name, ecosystemFile }),
+    applyAction: async (act, name, ecosystemFile, appEnv) => calls.push({ act, name, ecosystemFile, appEnv }),
   }
 }
 
@@ -36,14 +36,32 @@ test('acts on a process pm2 already reports', async () => {
   const pm2 = fakePm2([proc('mageek')])
   const res = await setup(pm2).request('/pm2/mageek/restart', { method: 'POST' })
   expect(res.status).toBe(200)
-  expect(pm2.calls).toEqual([{ act: 'restart', name: 'mageek', ecosystemFile: null }])
+  expect(pm2.calls).toEqual([{ act: 'restart', name: 'mageek', ecosystemFile: null, appEnv: null }])
 })
 
-test('passes the ecosystem file for Skeppa-managed processes', async () => {
+test('passes the ecosystem file and env for Skeppa-managed processes', async () => {
   const pm2 = fakePm2([proc('app')])
   const res = await setup(pm2, { withProject: true }).request('/pm2/app/start', { method: 'POST' })
   expect(res.status).toBe(200)
   expect(pm2.calls[0].ecosystemFile).toBe(join('/srv/apps', 'app', 'ecosystem.config.cjs'))
+  expect(pm2.calls[0].appEnv).toEqual({ NODE_ENV: 'production' })
+})
+
+test('stop clears auto_start and start restores it for Skeppa-managed processes', async () => {
+  const db = new Database(':memory:')
+  migrate(db, fileURLToPath(new URL('../src/db/migrations', import.meta.url)))
+  db.query(
+    `INSERT INTO projects (slug, name, repo_full_name, branch, pm2_name)
+     VALUES ('app', 'App', 'luff/app', 'main', 'app')`
+  ).run()
+  const app = systemRoutes({ db, config: { appsDir: '/srv/apps' }, poller: null, pm2: fakePm2([proc('app')]) })
+  const autoStart = () => db.query('SELECT auto_start FROM projects').get().auto_start
+
+  expect(autoStart()).toBe(1) // column default
+  await app.request('/pm2/app/stop', { method: 'POST' })
+  expect(autoStart()).toBe(0)
+  await app.request('/pm2/app/start', { method: 'POST' })
+  expect(autoStart()).toBe(1)
 })
 
 test('refuses a name pm2 does not report', async () => {

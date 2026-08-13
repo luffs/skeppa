@@ -1,9 +1,9 @@
 <template>
   <div>
     <p class="hint" style="font-size: 13.5px; margin: 0 0 16px; max-width: 640px">
-      Values are AES-256-GCM encrypted at rest and masked until revealed.
-      Saving replaces the whole set and rewrites the app's <span class="mono">.env</span>
-      immediately — press <em>Restart</em> to apply them to the running process.
+      Values are AES-256-GCM encrypted at rest and masked until revealed. They are injected into
+      the deploy script and the pm2 process, decrypted only in memory — press <em>Restart</em>
+      to apply saved changes to the running process. Saving replaces the whole set.
     </p>
     <div v-if="rows.length" class="env-rows">
       <div v-for="(row, i) in rows" :key="i" class="env-row">

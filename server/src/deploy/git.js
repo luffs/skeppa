@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
+import { scriptEnvBase } from '../lib/shell.js'
 
 // Clone on first deploy, then fetch + hard reset. The installation token is
 // passed on the command line per invocation and never persisted into
@@ -13,7 +14,9 @@ export async function syncRepo({ dir, repoFullName, branch, token, onLine = () =
   const git = async (args, cwd) => {
     const proc = Bun.spawn(['git', ...args], {
       cwd,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      // Sanitized env, not the panel's own (scriptEnvBase sets
+      // GIT_TERMINAL_PROMPT=0 and keeps HOME so ~/.gitconfig still applies).
+      env: scriptEnvBase(),
       stdout: 'pipe',
       stderr: 'pipe',
     })

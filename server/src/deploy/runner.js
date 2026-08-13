@@ -1,6 +1,6 @@
 import { resolveShell, scriptEnvBase } from '../lib/shell.js'
 import { projectDefaults, getProjectInfo } from '../live/state.js'
-import { projectDirs, writeEnvFiles, writeEcosystem } from './envfiles.js'
+import { projectDirs, syncEnvFiles, writeEcosystem, runtimeEnv } from './envfiles.js'
 import { syncRepo } from './git.js'
 import { startOrReload, startOrReloadDetached } from './pm2.js'
 
@@ -188,8 +188,10 @@ export class DeployRunner {
     this.db.query('UPDATE deployments SET commit_sha = ?, commit_message = COALESCE(commit_message, ?) WHERE id = ?')
       .run(sha, message, deploymentId)
 
-    const envVars = writeEnvFiles(this.db, this.config, project)
-    log.line(`▸ wrote .env (${Object.keys(envVars).length} vars)`)
+    const envVars = syncEnvFiles(this.db, this.config, project)
+    log.line(project.write_env_file
+      ? `▸ wrote .env (${Object.keys(envVars).length} vars)`
+      : `▸ loaded ${Object.keys(envVars).length} ENV vars (injected in memory, no .env written)`)
 
     if (project.deploy_script?.trim()) {
       log.line(`▸ running deploy script`)
@@ -199,14 +201,17 @@ export class DeployRunner {
     }
 
     if (project.start_command?.trim()) {
-      const ecosystemPath = writeEcosystem(this.db, this.config, project, envVars)
+      const ecosystemPath = writeEcosystem(this.config, project)
+      const appEnv = runtimeEnv(project, envVars)
       if (project.pm2_name === this.config.selfPm2Name) {
         log.line('▸ self-deploy detected: pm2 reload will run detached after this deploy finalizes')
-        setTimeout(() => startOrReloadDetached(ecosystemPath), 1500)
+        setTimeout(() => startOrReloadDetached(ecosystemPath, appEnv), 1500)
       } else {
         log.line(`▸ pm2 startOrReload ${project.pm2_name}`)
-        await startOrReload(ecosystemPath)
+        await startOrReload(ecosystemPath, appEnv)
       }
+      // A deploy that (re)started the app means it should start at boot too.
+      this.db.query('UPDATE projects SET auto_start = 1 WHERE id = ?').run(project.id)
     } else {
       log.line('▸ no start command configured, skipping pm2')
     }

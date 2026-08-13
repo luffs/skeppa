@@ -113,6 +113,16 @@
       <input v-model="edit.pm2_name" class="code" />
       <label>Working subdirectory</label>
       <input v-model="edit.cwd" class="code" />
+      <label class="check-label">
+        <input type="checkbox" v-model="edit.write_env_file" />
+        Write a plaintext <span class="mono">.env</span> file into the app
+      </label>
+      <p class="hint">
+        ENV vars are always injected into the deploy script and the pm2 process — decrypted only in
+        memory. Turn this on only if something reads <span class="mono">.env</span> from disk itself
+        (e.g. Vite at build time); it writes <span class="mono">shared/.env</span> plus a copy in
+        the working directory. Turning it off deletes those files.
+      </p>
       <div class="row">
         <div style="flex: 1 1 160px">
           <label>Subdomain</label>
@@ -341,6 +351,7 @@ export default {
         ...p,
         cwd: p.cwd ?? '',
         auto_deploy: !!p.auto_deploy,
+        write_env_file: !!p.write_env_file,
         subdomain: p.subdomain ?? '',
         port: p.port ?? '',
       }

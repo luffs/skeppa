@@ -12,6 +12,7 @@ import { createPoller } from './live/poller.js'
 import { createProxy, proxySettings } from './proxy/index.js'
 import { GitHubApp } from './github/appClient.js'
 import { DeployRunner, recoverInterrupted } from './deploy/runner.js'
+import { resurrectApps } from './deploy/resurrect.js'
 import { createApp } from './app.js'
 
 const config = loadConfig()
@@ -48,6 +49,10 @@ const proxy = createProxy({ db, config })
 if (proxySettings(db).baseDomain) {
   proxy.apply().catch(err => console.error('[proxy] startup apply failed:', err.message))
 }
+
+// After a server reboot, deployed apps are not in the pm2 dump (saving them
+// would write their decrypted env to disk) — the panel starts them itself.
+resurrectApps({ db, config }).catch(err => console.error('[resurrect] failed:', err.message))
 
 const { upgradeWebSocket, websocket } = createBunWebSocket()
 const app = createApp({ db, config, liveState, hub, runner, github, poller, proxy, upgradeWebSocket })

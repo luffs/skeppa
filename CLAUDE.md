@@ -12,7 +12,7 @@ Deploys private GitHub repos onto this server via webhooks, manages encrypted EN
 - **Process management:** pm2 CLI (spawned, never a shell string).
 - **GitHub:** GitHub App (JWT → installation token, cached). Not OAuth, not a PAT.
 - **Auth:** username/password users (managed under Rigging → Crew; all have full access — no roles), bcrypt password hash (`Bun.password`), session cookie. Optional Google sign-in via a Firebase web config (Rigging → Google sign-in): the frontend loads Firebase from the gstatic CDN (never the npm package), the backend validates ID tokens with the Identity Toolkit REST `accounts:lookup` and matches the verified Google email against `users.username`.
-- **Secrets:** AES-256-GCM with `MASTER_KEY` (32-byte hex) from the panel's `.env`; unique IV per value.
+- **Secrets:** AES-256-GCM with a 32-byte-hex master key, read from `MASTER_KEY_FILE` (chmod-600 file outside repo/DATA_DIR/APPS_DIR; loose perms warned at boot) with `MASTER_KEY` env as dev fallback; unique IV per value. Decrypted ENV lives only in memory: injected into the deploy script env and via the pm2 CLI's process env (`pm2EnvBase` in `lib/shell.js` + `appEnv` in `deploy/pm2.js`), never written into ecosystem files. On-disk `.env` is a per-project opt-in (`projects.write_env_file`). At boot the panel resurrects app processes itself (`deploy/resurrect.js`, honoring `projects.auto_start`: pm2 stop via the panel clears it, start/restart/deploy set it) — apps must never be `pm2 save`d (the dump stores env in plaintext).
 - **Subdomain routing ("harbor gate"):** a panel-owned Caddy instance (pm2 process `skeppa-proxy`, plain HTTP) routes `subdomain.<base_domain>` → `localhost:<project port>`; the admin's system Caddy forwards the wildcard to it with one static block and owns TLS. Config is generated as JSON (`server/src/proxy/`), hot-reloaded via the local admin API (never `:2019` — that's the system instance), cold-started via pm2. The routed port is injected into the app's env as `PORT`.
 
 ## Commands
@@ -21,6 +21,7 @@ Deploys private GitHub repos onto this server via webhooks, manages encrypted EN
 - `bun run dev:server` / `bun run dev:web` — dev servers (Vite proxies `/api` and `/ws` to :3000)
 - `bun test` — server unit tests (in `server/test/`)
 - `bun run build` — build the frontend to `web/dist` (served by Hono in prod)
+- `bun scripts/install.js` — interactive server install (key file, dirs, .env, admin user, pm2 + safe `pm2 save`)
 - `bun scripts/seed.js <user> <password>` — create/reset the admin user
 - `bun start` — run the server (serves `web/dist` if present)
 
@@ -39,3 +40,4 @@ Deploys private GitHub repos onto this server via webhooks, manages encrypted EN
 5. The panel runs as its own non-root user; pm2 under the same user.
 6. Any input that reaches shell commands or paths and is *not* the intentional deploy script (slugs, branch names, pm2 names, cwd, env keys) is whitelist-validated in `lib/validate.js`. Processes are spawned with args arrays — no shell interpolation of user data. The deploy script itself intentionally runs as shell; the UI says so.
 7. WS client messages are schema-validated in `live/hub.js`; unknown types are ignored and logged.
+8. Anything the panel spawns (deploy scripts, pm2, git) gets a minimal sanitized environment — the panel's own `process.env` (MASTER_KEY!) must never be inherited by child processes; pm2 injects its CLI env into the apps it starts, so this applies doubly there.

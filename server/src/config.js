@@ -1,4 +1,5 @@
 import { join, resolve, dirname } from 'node:path'
+import { readFileSync, statSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 const HEX_KEY_RE = /^[0-9a-fA-F]{64}$/
@@ -6,15 +7,48 @@ const HEX_KEY_RE = /^[0-9a-fA-F]{64}$/
 // Repo root = two levels up from server/src/
 export const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
+// The master key preferably comes from MASTER_KEY_FILE — a chmod-600 file
+// holding 64 hex chars, living outside the repo, DATA_DIR and APPS_DIR so no
+// deploy, git tree or database backup ever includes it. The plain MASTER_KEY
+// env var still works (mainly for development) but puts the key in the
+// process environment, where pm2 tooling and /proc can see it.
+function readMasterKey(env, required) {
+  if (!env.MASTER_KEY_FILE) return env.MASTER_KEY || ''
+
+  let key = ''
+  try {
+    key = readFileSync(env.MASTER_KEY_FILE, 'utf8').trim()
+  } catch (err) {
+    if (required) {
+      console.error(`FATAL: cannot read MASTER_KEY_FILE (${env.MASTER_KEY_FILE}): ${err.message}`)
+      process.exit(1)
+    }
+    return ''
+  }
+  if (process.platform !== 'win32') {
+    try {
+      if (statSync(env.MASTER_KEY_FILE).mode & 0o077) {
+        console.warn(
+          `warning: ${env.MASTER_KEY_FILE} is readable by group/others — run: chmod 600 ${env.MASTER_KEY_FILE}`
+        )
+      }
+    } catch {
+      // stat raced against deletion — the read above already succeeded
+    }
+  }
+  return key
+}
+
 export function loadConfig({ requireMasterKey = true } = {}) {
   const env = process.env
-  const masterKey = env.MASTER_KEY || ''
+  const masterKey = readMasterKey(env, requireMasterKey)
 
   if (requireMasterKey && !HEX_KEY_RE.test(masterKey)) {
     console.error(
-      'FATAL: MASTER_KEY is missing or invalid. It must be 64 hex characters (32 bytes).\n' +
-      '       Generate one with:  openssl rand -hex 32\n' +
-      '       and put it in the panel’s .env file. Refusing to start.'
+      'FATAL: no valid master key. It must be 64 hex characters (32 bytes).\n' +
+      '       Generate one with:  mkdir -p ~/.skeppa && openssl rand -hex 32 > ~/.skeppa/master.key && chmod 600 ~/.skeppa/master.key\n' +
+      '       and point MASTER_KEY_FILE at it in the panel’s .env (or set MASTER_KEY directly, dev only).\n' +
+      '       Refusing to start.'
     )
     process.exit(1)
   }

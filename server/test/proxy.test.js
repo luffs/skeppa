@@ -9,7 +9,7 @@ import { setSetting } from '../src/db/settings.js'
 import { buildCaddyConfig, createProxy, PROXY_PROCESS } from '../src/proxy/index.js'
 import { proxyApiRoutes } from '../src/routes/proxy.js'
 import { projectRoutes } from '../src/routes/projects.js'
-import { writeEcosystem } from '../src/deploy/envfiles.js'
+import { writeEcosystem, runtimeEnv, decryptedEnv } from '../src/deploy/envfiles.js'
 import { createLiveState } from '../src/live/state.js'
 
 function makeDb() {
@@ -201,12 +201,16 @@ test('rejects a subdomain without a port and duplicate routes', async () => {
 
 // --- PORT injection ---------------------------------------------------------
 
-test('writeEcosystem injects the routed port as PORT', () => {
+test('the routed port reaches the app as PORT via the runtime env, not the ecosystem file', () => {
   const db = makeDb()
   const appsDir = mkdtempSync(join(tmpdir(), 'skeppa-eco-'))
+  const config = { appsDir, masterKey: '0'.repeat(64) }
   const id = addProject(db, { slug: 'app', subdomain: 'app', port: 4001, start: 'bun run start' })
   const project = db.query('SELECT * FROM projects WHERE id = ?').get(id)
-  const path = writeEcosystem(db, { appsDir, masterKey: '0'.repeat(64) }, project)
-  const eco = readFileSync(path, 'utf8')
-  expect(JSON.parse(eco.replace('module.exports = ', '')).apps[0].env.PORT).toBe('4001')
+
+  const env = runtimeEnv(project, decryptedEnv(db, config, project.id))
+  expect(env.PORT).toBe('4001')
+
+  const eco = readFileSync(writeEcosystem(config, project), 'utf8')
+  expect(JSON.parse(eco.replace('module.exports = ', '')).apps[0].env).toBeUndefined()
 })

@@ -1,5 +1,5 @@
 import { test, expect } from 'bun:test'
-import { resolveShell, scriptEnvBase, spawnable } from '../src/lib/shell.js'
+import { resolveShell, scriptEnvBase, pm2EnvBase, spawnable } from '../src/lib/shell.js'
 
 test('resolveShell returns a shell that runs POSIX one-liners', async () => {
   const shell = resolveShell()
@@ -20,6 +20,22 @@ test('scriptEnvBase never leaks the panel environment', () => {
     expect(env.MASTER_KEY).toBeUndefined()
     expect(env.PATH).toBeDefined()
     expect(env.CI).toBe('true')
+  } finally {
+    delete process.env.MASTER_KEY
+  }
+})
+
+// pm2 injects the CLI's environment into the app it starts, so this base is
+// what deployed apps inherit — it must carry neither panel secrets nor
+// script-only flags like CI.
+test('pm2EnvBase never leaks the panel environment into apps', () => {
+  process.env.MASTER_KEY = 'x'.repeat(64)
+  try {
+    const env = pm2EnvBase()
+    expect(env.MASTER_KEY).toBeUndefined()
+    expect(env.CI).toBeUndefined()
+    expect(env.PATH).toBeDefined()
+    expect(env.HOME).toBeDefined()
   } finally {
     delete process.env.MASTER_KEY
   }
