@@ -307,7 +307,7 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
           await recreateAppContainer({
             config, project, dirs,
             env: runtimeEnv(project, decryptedEnv(db, config, project.id)),
-            client: engine(),
+            client: engine(), db,
           })
         }
       } else {

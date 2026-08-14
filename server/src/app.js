@@ -11,6 +11,7 @@ import { webhookRoutes } from './routes/webhooks.js'
 import { systemRoutes } from './routes/system.js'
 import { userRoutes } from './routes/users.js'
 import { proxyApiRoutes } from './routes/proxy.js'
+import { imageRoutes } from './routes/images.js'
 
 export function createApp({ db, config, liveState, hub, runner, github, poller, proxy, upgradeWebSocket }) {
   const app = new Hono()
@@ -33,6 +34,7 @@ export function createApp({ db, config, liveState, hub, runner, github, poller, 
   app.route('/api/system', systemRoutes({ db, config, poller }))
   app.route('/api/users', userRoutes({ db, liveState }))
   app.route('/api/proxy', proxyApiRoutes({ db, proxy }))
+  app.route('/api/images', imageRoutes({ db, config }))
 
   // WebSocket: session is validated before the upgrade happens.
   app.get(

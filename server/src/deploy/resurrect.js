@@ -52,7 +52,7 @@ export async function resurrectApps({ db, config, pm2 = realPm2, containers = nu
         await recreateAppContainer({
           config, project, dirs,
           env: runtimeEnv(project, decryptedEnv(db, config, project.id)),
-          client: engine,
+          client: engine, db,
         })
         started.push(project.pm2_name)
         log(`[resurrect] started container ${appContainerName(project.slug)}`)

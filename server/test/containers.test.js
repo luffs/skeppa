@@ -159,6 +159,49 @@ test('tailLogs splits stdout and stderr into separate texts', async () => {
   expect(err).toBe('err 1')
 })
 
+test('buildImage posts the tar context and re-emits stream fragments as whole lines', async () => {
+  const enc = new TextEncoder()
+  const calls = []
+  const body = new ReadableStream({
+    start(controller) {
+      controller.enqueue(enc.encode('{"stream":"Step 1/2 : FROM oven/bun\\n"}\n'))
+      controller.enqueue(enc.encode('{"stream":"partial"}\n{"stream":" line\\n"}\n'))
+      controller.enqueue(enc.encode('{"aux":{"ID":"sha256:abc"}}\n'))
+      controller.close()
+    },
+  })
+  const client = createContainerClient({
+    socketPath: '/s',
+    fetchFn: async (url, init) => {
+      calls.push({ url, init })
+      return new Response(body, { status: 200 })
+    },
+  })
+  const lines = []
+  const tar = new Uint8Array([1, 2, 3])
+  await client.buildImage('localhost/skeppa/bun-node:latest', tar, l => lines.push(l))
+  expect(calls[0].url).toContain('/build?t=localhost%2Fskeppa%2Fbun-node%3Alatest')
+  expect(calls[0].init.headers['Content-Type']).toBe('application/x-tar')
+  expect(calls[0].init.body).toBe(tar)
+  expect(lines).toEqual(['Step 1/2 : FROM oven/bun', 'partial line'])
+})
+
+test('buildImage throws when the stream reports an error', async () => {
+  const enc = new TextEncoder()
+  const body = new ReadableStream({
+    start(controller) {
+      controller.enqueue(enc.encode('{"stream":"Step 1/1 : RUN nope\\n"}\n'))
+      controller.enqueue(enc.encode('{"error":"exit code: 127"}\n'))
+      controller.close()
+    },
+  })
+  const client = createContainerClient({
+    socketPath: '/s',
+    fetchFn: async () => new Response(body, { status: 200 }),
+  })
+  await expect(client.buildImage('t', new Uint8Array(0))).rejects.toThrow('exit code: 127')
+})
+
 test('pullImage surfaces a terminal error line from the progress stream', async () => {
   const enc = new TextEncoder()
   const body = new ReadableStream({

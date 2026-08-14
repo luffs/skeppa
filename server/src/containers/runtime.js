@@ -1,6 +1,7 @@
 import { posix } from 'node:path'
 import { mkdirSync } from 'node:fs'
 import { createContainerClient } from './client.js'
+import { createContainerEnsuringImage } from './images.js'
 
 // App containers ("container" runtime): stateless and rebuilt on every deploy.
 // The git working copy is mounted read-only at /app, the durable shared/ dir
@@ -38,23 +39,16 @@ export function appContainerSpec(config, project, dirs, env) {
 }
 
 // Remove-and-create: containers are disposable, the DB + shared/ carry all
-// state. Pulls the image on first use. Returns the new container id.
-export async function recreateAppContainer({ config, project, dirs, env, onLine = () => {}, client = null }) {
+// state. A missing image is pulled — or, for Shipyard-managed refs when `db`
+// is given, rebuilt from its stored Containerfile. Returns the container id.
+export async function recreateAppContainer({ config, project, dirs, env, onLine = () => {}, client = null, db = null }) {
   const engine = client ?? createContainerClient({ socketPath: config.containerSocket })
   const name = appContainerName(project.slug)
   const spec = appContainerSpec(config, project, dirs, env)
   mkdirSync(dirs.shared, { recursive: true })
 
   await engine.removeContainer(name)
-  let id
-  try {
-    id = await engine.createContainer(name, spec)
-  } catch (err) {
-    if (err.status !== 404) throw err
-    onLine(`pulling image ${spec.Image} (first use — this can take a while)`)
-    await engine.pullImage(spec.Image)
-    id = await engine.createContainer(name, spec)
-  }
+  const id = await createContainerEnsuringImage({ engine, name, spec, db, onLine })
   await engine.startContainer(id)
   return id
 }

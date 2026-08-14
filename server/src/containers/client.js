@@ -152,6 +152,82 @@ export function createContainerClient({ socketPath, fetchFn = fetch }) {
       demux.flush()
     },
 
+    // Builds an image from an in-memory tar context (see lib/tar.js). Build
+    // output arrives as JSON lines whose "stream" values are re-emitted as
+    // whole text lines via onLine; a terminal {"error": ...} becomes a throw.
+    async buildImage(tag, tarBytes, onLine = () => {}) {
+      const res = await fetchFn(`http://engine/build?t=${encodeURIComponent(tag)}&dockerfile=Containerfile`, {
+        method: 'POST',
+        unix: socketPath,
+        headers: { 'Content-Type': 'application/x-tar' },
+        body: tarBytes,
+      })
+      if (!res.ok) {
+        let detail = ''
+        try {
+          detail = (await res.json()).message ?? ''
+        } catch {
+          // non-JSON error body
+        }
+        const err = new Error(`container engine: POST /build → ${res.status}${detail ? ` (${detail})` : ''}`)
+        err.status = res.status
+        throw err
+      }
+      const decoder = new TextDecoder()
+      let buf = ''
+      let carry = '' // "stream" fragments do not align with line breaks
+      let buildError = null
+      const handle = line => {
+        if (!line.trim()) return
+        try {
+          const msg = JSON.parse(line)
+          if (msg.error) buildError = msg.error
+          else if (typeof msg.stream === 'string') {
+            carry += msg.stream
+            let i
+            while ((i = carry.indexOf('\n')) >= 0) {
+              onLine(carry.slice(0, i).replace(/\r$/, ''))
+              carry = carry.slice(i + 1)
+            }
+          }
+        } catch {
+          // non-JSON noise between messages — ignore
+        }
+      }
+      for await (const chunk of res.body) {
+        buf += decoder.decode(chunk, { stream: true })
+        let i
+        while ((i = buf.indexOf('\n')) >= 0) {
+          handle(buf.slice(0, i))
+          buf = buf.slice(i + 1)
+        }
+      }
+      buf += decoder.decode()
+      if (buf.trim()) handle(buf)
+      if (carry.trim()) onLine(carry.replace(/\r$/, ''))
+      if (buildError) throw new Error(`image build failed: ${buildError}`)
+    },
+
+    // [{ Id, RepoTags, Size, Created }] — dangling images have no RepoTags.
+    async listImages() {
+      const res = await api('GET', '/images/json')
+      return await res.json()
+    },
+
+    async removeImage(ref) {
+      try {
+        await api('DELETE', `/images/${encodeURIComponent(ref)}`)
+      } catch (err) {
+        if (err.status !== 404) throw err
+      }
+    },
+
+    // Removes dangling (untagged) layers only — the engine's default filter.
+    async pruneImages() {
+      const res = await api('POST', '/images/prune')
+      return await res.json()
+    },
+
     // Pulls an image; progress arrives as a stream of JSON lines. Progress
     // spam is swallowed, a terminal {"error": ...} line becomes a throw.
     async pullImage(ref) {

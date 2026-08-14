@@ -1,5 +1,6 @@
 import { posix } from 'node:path'
 import { createContainerClient } from '../containers/client.js'
+import { createContainerEnsuringImage } from '../containers/images.js'
 
 // Runs a deploy script inside a throwaway rootless container instead of on
 // the host: only the project's source directory is mounted (at /work), so a
@@ -23,8 +24,9 @@ function engineHint(err, socketPath) {
   return hint
 }
 
-// Returns { exitCode, timedOut }. Throws on engine/setup failures.
-export async function runScriptInContainer({ config, project, dirs, script, envVars, onLine, timeoutMs, client = null }) {
+// Returns { exitCode, timedOut }. Throws on engine/setup failures. `db`
+// enables rebuild-from-Shipyard when a managed build image is missing.
+export async function runScriptInContainer({ config, project, dirs, script, envVars, onLine, timeoutMs, client = null, db = null }) {
   if (!config.containerSocket) {
     throw new Error('no container socket path available — set CONTAINER_SOCKET in the panel .env')
   }
@@ -46,13 +48,10 @@ export async function runScriptInContainer({ config, project, dirs, script, envV
   await engine.removeContainer(name) // leftover from a crashed earlier deploy
   let id
   try {
-    id = await engine.createContainer(name, spec)
+    id = await createContainerEnsuringImage({ engine, name, spec, db, onLine })
   } catch (err) {
-    if (err.status == null) throw engineHint(err, engine.socketPath)
-    if (err.status !== 404) throw err
-    onLine(`pulling image ${image} (first use — this can take a while)`)
-    await engine.pullImage(image)
-    id = await engine.createContainer(name, spec)
+    if (err.status == null && !err.friendly) throw engineHint(err, engine.socketPath)
+    throw err
   }
 
   let timedOut = false

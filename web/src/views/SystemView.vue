@@ -85,6 +85,8 @@
           <Pm2Logs v-if="opened === p.name" :name="p.name" />
         </div>
       </div>
+
+      <Shipyard />
     </div>
   </div>
 </template>
@@ -92,13 +94,14 @@
 <script>
 import StatusBadge from '../components/StatusBadge.vue'
 import Pm2Logs from '../components/Pm2Logs.vue'
+import Shipyard from '../components/Shipyard.vue'
 import { store } from '../store.js'
 import { api } from '../api.js'
 import { bytes, uptimeSince, timeAgo } from '../lib/format.js'
 
 export default {
   name: 'SystemView',
-  components: { StatusBadge, Pm2Logs },
+  components: { StatusBadge, Pm2Logs, Shipyard },
   data() {
     return { opened: null, busy: null, actionError: '' }
   },

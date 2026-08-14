@@ -113,11 +113,15 @@
       <textarea v-model="edit.deploy_script" class="code" rows="4"></textarea>
       <p class="hint">⚠ Runs as a shell script on the server — only trusted commands.</p>
       <label>Build image</label>
-      <input v-model="edit.build_image" class="code" placeholder="panel default" />
+      <input v-model="edit.build_image" class="code" list="skeppa-images" placeholder="panel default" />
       <p class="hint">
         OCI image the deploy script runs in when the podman build sandbox is enabled
         (<span class="mono">SKEPPA_SANDBOX=podman</span>). Empty = panel default. Ignored in host mode.
+        Managed images from the Shipyard (Engine room) are suggested.
       </p>
+      <datalist id="skeppa-images">
+        <option v-for="ref in imageRefs" :key="ref" :value="ref" />
+      </datalist>
       <label>Start command</label>
       <input v-model="edit.start_command" class="code" />
       <label>Runtime</label>
@@ -133,7 +137,7 @@
       </p>
       <template v-if="edit.runtime === 'container'">
         <label>Run image</label>
-        <input v-model="edit.run_image" class="code" placeholder="same as build image" />
+        <input v-model="edit.run_image" class="code" list="skeppa-images" placeholder="same as build image" />
       </template>
       <label>pm2 process name</label>
       <input v-model="edit.pm2_name" class="code" />
@@ -244,6 +248,7 @@ export default {
       cloneExpiresAt: null,
       copiedCommand: false,
       gate: null,
+      imageRefs: [],
     }
   },
   computed: {
@@ -297,6 +302,12 @@ export default {
     await this.loadDeployments()
     this.selectedId = this.currentDeploymentId ?? this.deployments[0]?.id ?? null
     this.gate = await api.get('/api/proxy').catch(() => null)
+    // Shipyard images as datalist suggestions for the image fields.
+    api.get('/api/images')
+      .then(d => {
+        this.imageRefs = [...new Set([...d.managed.map(m => m.ref), d.default_image].filter(Boolean))]
+      })
+      .catch(() => {})
   },
   methods: {
     timeAgo,

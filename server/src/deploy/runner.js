@@ -216,7 +216,7 @@ export class DeployRunner {
         log.line(`▸ recreating container ${appContainerName(project.slug)}`)
         await recreateAppContainer({
           config: this.config, project, dirs, env: appEnv,
-          onLine: log.line, client: this.containerClient,
+          onLine: log.line, client: this.containerClient, db: this.db,
         })
       } else {
         await this._removeStaleContainer(project.slug)
@@ -259,6 +259,7 @@ export class DeployRunner {
         onLine: log.line,
         timeoutMs: this.config.deployTimeoutMs,
         client: this.containerClient,
+        db: this.db,
       })
       if (timedOut) throw new DeployError(`deploy script timed out after ${this.config.deployTimeoutMs} ms`, exitCode)
       if (exitCode !== 0) throw new DeployError(`deploy script exited with code ${exitCode}`, exitCode)
