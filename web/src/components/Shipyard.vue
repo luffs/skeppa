@@ -1,7 +1,7 @@
 <template>
   <div>
-    <div class="section-head" style="margin-top: 28px">
-      <span class="section-label">Shipyard — container images</span>
+    <div class="section-head">
+      <span class="section-label">managed images</span>
       <span class="mono" style="font-size: 12px; color: var(--dim)" v-if="localSummary">{{ localSummary }}</span>
     </div>
 
@@ -81,11 +81,11 @@
           {{ pruning ? 'Pruning…' : 'Prune dangling' }}
         </button>
       </div>
-      <p class="hint" v-if="pruneResult">{{ pruneResult }}</p>
+      <p class="hint" v-if="storeNote">{{ storeNote }}</p>
       <div class="table-scroll">
-        <table style="min-width: 560px">
+        <table style="min-width: 620px">
           <thead>
-            <tr><th>Image</th><th>Size</th><th>Used by</th></tr>
+            <tr><th>Image</th><th>Size</th><th>Used by</th><th></th></tr>
           </thead>
           <tbody>
             <tr v-for="img in localImages" :key="img.id">
@@ -95,6 +95,15 @@
               </td>
               <td class="mono" style="font-size: 12.5px">{{ bytes(img.size) }}</td>
               <td class="hint" style="font-size: 13px">{{ img.used_by.join(', ') || '—' }}</td>
+              <td style="text-align: right">
+                <button
+                  v-if="img.tags.length && !img.managed"
+                  class="secondary small"
+                  :disabled="pulling === img.id"
+                  title="Fetch the newest version of this tag from its registry"
+                  @click="pull(img)"
+                >{{ pulling === img.id ? 'Pulling…' : 'Pull' }}</button>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -128,7 +137,8 @@ export default {
       savedId: null,
       newName: '',
       pruning: false,
-      pruneResult: '',
+      pulling: null,
+      storeNote: '',
     }
   },
   computed: {
@@ -227,12 +237,27 @@ export default {
         this.error = `Remove failed: ${err.message}`
       }
     },
+    // "podman pull" for every tag on the row — updates the local copy to the
+    // registry's newest; apps pick it up on their next restart/deploy.
+    async pull(img) {
+      this.pulling = img.id
+      this.storeNote = ''
+      try {
+        for (const ref of img.tags) await api.post('/api/images/pull', { ref })
+        this.storeNote = `Pulled ${img.tags.join(', ')} — restart or deploy the apps using it to pick the new version up.`
+        await this.load()
+      } catch (err) {
+        this.error = `Pull failed: ${err.message}`
+      } finally {
+        this.pulling = null
+      }
+    },
     async prune() {
       this.pruning = true
-      this.pruneResult = ''
+      this.storeNote = ''
       try {
         const result = await api.post('/api/images/prune')
-        this.pruneResult = `Removed ${result.deleted} dangling layer(s), reclaimed ${bytes(result.reclaimed)}.`
+        this.storeNote = `Removed ${result.deleted} dangling layer(s), reclaimed ${bytes(result.reclaimed)}.`
         await this.load()
       } catch (err) {
         this.error = `Prune failed: ${err.message}`

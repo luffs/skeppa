@@ -65,13 +65,14 @@ test('materializeImage builds managed refs from the DB and pulls everything else
   addImage('bun-node')
   const calls = []
   const engine = {
-    async buildImage(tag) { calls.push(['build', tag]) },
+    async buildImage(tag, tar, onLine, opts) { calls.push(['build', tag, opts?.pull ?? false]) },
     async pullImage(ref) { calls.push(['pull', ref]) },
   }
   await materializeImage({ engine, db, image: 'localhost/skeppa/bun-node:latest' })
   await materializeImage({ engine, db, image: 'docker.io/oven/bun:1' })
   expect(calls).toEqual([
-    ['build', 'localhost/skeppa/bun-node:latest'],
+    // self-heal rebuilds use cached bases (pull=false) — fast, works offline
+    ['build', 'localhost/skeppa/bun-node:latest', false],
     ['pull', 'docker.io/oven/bun:1'],
   ])
 })

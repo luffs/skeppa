@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { streamText } from 'hono/streaming'
-import { SLUG_RE } from '../lib/validate.js'
+import { SLUG_RE, IMAGE_RE } from '../lib/validate.js'
 import { createContainerClient } from '../containers/client.js'
 import { managedRef, buildManagedImage, MANAGED_PREFIX } from '../containers/images.js'
 
@@ -80,6 +80,23 @@ export function imageRoutes({ db, config, containerClient = null }) {
     return c.json(db.query(`SELECT ${IMAGE_COLUMNS} FROM images WHERE id = ?`).get(Number(lastInsertRowid)), 201)
   })
 
+  // Refresh a registry image in the local store — the panel's `podman pull`.
+  // Managed refs are built, never pulled. Registered before /:id routes.
+  app.post('/pull', async c => {
+    const body = await c.req.json().catch(() => ({}))
+    const ref = body.ref?.trim() ?? ''
+    if (!IMAGE_RE.test(ref)) return c.json({ error: 'invalid image reference' }, 400)
+    if (ref.startsWith(MANAGED_PREFIX)) {
+      return c.json({ error: 'managed images are built from their Containerfile, not pulled' }, 400)
+    }
+    try {
+      await engine().pullImage(ref)
+      return c.json({ ok: true, ref })
+    } catch (err) {
+      return c.json({ error: err.message }, 500)
+    }
+  })
+
   // Dangling layers only (the engine's default filter) — never touches tagged
   // images, so it is always safe. Registered before /:id so it wins the match.
   app.post('/prune', async c => {
@@ -124,7 +141,9 @@ export function imageRoutes({ db, config, containerClient = null }) {
     }
     return streamText(c, async stream => {
       try {
-        await buildManagedImage({ db, engine: eng, image, onLine: line => stream.writeln(line) })
+        // Manual builds refresh FROM bases — pressing Build after an upstream
+        // release is how a managed image picks the new version up.
+        await buildManagedImage({ db, engine: eng, image, pull: true, onLine: line => stream.writeln(line) })
         await stream.writeln('✔ build finished')
       } catch (err) {
         await stream.writeln(`✖ build failed: ${err.message}`)

@@ -18,10 +18,11 @@ function fakeEngine({ images = [] } = {}) {
   return {
     calls,
     async listImages() { return images },
-    async buildImage(tag, tar, onLine) {
-      calls.push(['build', tag])
+    async buildImage(tag, tar, onLine, opts = {}) {
+      calls.push(['build', tag, opts])
       onLine('Step 1/1 : FROM alpine')
     },
+    async pullImage(ref) { calls.push(['pull', ref]) },
     async removeImage(ref) { calls.push(['removeImage', ref]) },
     async pruneImages() {
       calls.push(['prune'])
@@ -104,8 +105,24 @@ test('build streams the log and stores the result on the row', async () => {
   const text = await res.text()
   expect(text).toContain('Step 1/1 : FROM alpine')
   expect(text).toContain('✔ build finished')
-  expect(engine.calls).toEqual([['build', managedRef('bun-node')]])
+  // Manual builds refresh FROM bases (pull), unlike self-heal rebuilds.
+  expect(engine.calls).toEqual([['build', managedRef('bun-node'), { pull: true }]])
   expect(db.query('SELECT last_build_status FROM images WHERE id = ?').get(id).last_build_status).toBe('success')
+})
+
+test('pull refreshes a registry image and refuses managed refs', async () => {
+  const { app, engine } = setup()
+  const pull = ref => app.request('/pull', { method: 'POST', body: JSON.stringify({ ref }) })
+
+  expect((await pull('docker.io/oven/bun:1')).status).toBe(200)
+  expect(engine.calls).toEqual([['pull', 'docker.io/oven/bun:1']])
+
+  const managed = await pull('localhost/skeppa/bun-node:latest')
+  expect(managed.status).toBe(400)
+  expect((await managed.json()).error).toContain('built from their Containerfile')
+
+  expect((await pull('not a ref!')).status).toBe(400)
+  expect(engine.calls).toHaveLength(1)
 })
 
 test('a failing build streams the error and records the failure', async () => {

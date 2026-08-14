@@ -117,7 +117,7 @@
       <p class="hint">
         OCI image the deploy script runs in when the podman build sandbox is enabled
         (<span class="mono">SKEPPA_SANDBOX=podman</span>). Empty = panel default. Ignored in host mode.
-        Managed images from the Shipyard (Engine room) are suggested.
+        Managed images from the Shipyard are suggested.
       </p>
       <datalist id="skeppa-images">
         <option v-for="ref in imageRefs" :key="ref" :value="ref" />

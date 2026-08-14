@@ -142,8 +142,8 @@ like the master key.
 
 ### Shipyard — managed images
 
-Need a custom image (say bun **and** node in one)? Engine room → **Shipyard**: give it a name
-and a Containerfile, press Build. The image lands in the engine store as
+Need a custom image (say bun **and** node in one)? Open **Shipyard** in the masthead: give it a
+name and a Containerfile, press Build. The image lands in the engine store as
 `localhost/skeppa/<name>:latest` and shows up as a suggestion in the projects' Build/Run image
 fields. The Containerfile lives in the panel database, which makes these images reproducible
 state: if one is missing when a container is created — pruned store, fresh server — the panel
@@ -152,6 +152,15 @@ image store (sizes, dangling layers, which project uses what) is listed alongsid
 safe dangling-only prune. v1 builds have an empty context: `FROM`/`RUN`/`ENV`… work, `COPY` of
 local files does not. Private registries are not supported by the panel's auto-pull —
 `podman pull` once manually as the panel user instead.
+
+Updating when a new upstream version lands (say a bun release): pressing **Build** always
+refreshes the `FROM` bases from their registries, so a moving tag like `oven/bun:1` picks the
+new version up; automatic self-heal rebuilds keep using cached bases so a pruned store restores
+fast and offline. Registry images used directly by projects have a **Pull** button in the local
+store — the panel's `podman pull`. Either way the update reaches apps on their next restart or
+deploy, and the replaced layers show up as dangling for pruning. Pin an exact version
+(`FROM docker.io/oven/bun:1.2.19`) in the Containerfile if you want updates to be an explicit,
+visible edit instead.
 
 ## Deploying Skeppa with Skeppa (dogfooding)
 

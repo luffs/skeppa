@@ -181,9 +181,23 @@ test('buildImage posts the tar context and re-emits stream fragments as whole li
   const tar = new Uint8Array([1, 2, 3])
   await client.buildImage('localhost/skeppa/bun-node:latest', tar, l => lines.push(l))
   expect(calls[0].url).toContain('/build?t=localhost%2Fskeppa%2Fbun-node%3Alatest')
+  expect(calls[0].url).not.toContain('pull=1') // cached bases by default
   expect(calls[0].init.headers['Content-Type']).toBe('application/x-tar')
   expect(calls[0].init.body).toBe(tar)
   expect(lines).toEqual(['Step 1/2 : FROM oven/bun', 'partial line'])
+})
+
+test('buildImage with pull refreshes FROM bases from their registries', async () => {
+  const calls = []
+  const client = createContainerClient({
+    socketPath: '/s',
+    fetchFn: async url => {
+      calls.push(url)
+      return new Response(new ReadableStream({ start: c => c.close() }), { status: 200 })
+    },
+  })
+  await client.buildImage('t', new Uint8Array(0), () => {}, { pull: true })
+  expect(calls[0]).toContain('&pull=1')
 })
 
 test('buildImage throws when the stream reports an error', async () => {

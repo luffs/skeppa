@@ -20,7 +20,10 @@ export function managedNameFromRef(ref) {
 
 // Builds one managed image from its stored Containerfile (the build context
 // is an in-memory tar — no files on disk) and records the outcome on the row.
-export async function buildManagedImage({ db, engine, image, onLine = () => {} }) {
+// pull=true refreshes FROM bases from their registries — manual Shipyard
+// builds use it ("build against the latest"); self-heal rebuilds do not, so
+// restoring a pruned store stays fast and works offline.
+export async function buildManagedImage({ db, engine, image, onLine = () => {}, pull = false }) {
   const ref = managedRef(image.name)
   const context = tarArchive([{ name: 'Containerfile', content: image.containerfile }])
   const lines = []
@@ -29,7 +32,7 @@ export async function buildManagedImage({ db, engine, image, onLine = () => {} }
     onLine(line)
   }
   try {
-    await engine.buildImage(ref, context, capture)
+    await engine.buildImage(ref, context, capture, { pull })
     db.query(`UPDATE images SET last_built_at = ?, last_build_status = 'success', last_build_log = ? WHERE id = ?`)
       .run(new Date().toISOString(), lines.join('\n'), image.id)
   } catch (err) {

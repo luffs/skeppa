@@ -155,8 +155,10 @@ export function createContainerClient({ socketPath, fetchFn = fetch }) {
     // Builds an image from an in-memory tar context (see lib/tar.js). Build
     // output arrives as JSON lines whose "stream" values are re-emitted as
     // whole text lines via onLine; a terminal {"error": ...} becomes a throw.
-    async buildImage(tag, tarBytes, onLine = () => {}) {
-      const res = await fetchFn(`http://engine/build?t=${encodeURIComponent(tag)}&dockerfile=Containerfile`, {
+    // pull: refresh FROM bases from their registries instead of using cached
+    // copies (the engine's default is pull-if-missing).
+    async buildImage(tag, tarBytes, onLine = () => {}, { pull = false } = {}) {
+      const res = await fetchFn(`http://engine/build?t=${encodeURIComponent(tag)}&dockerfile=Containerfile${pull ? '&pull=1' : ''}`, {
         method: 'POST',
         unix: socketPath,
         headers: { 'Content-Type': 'application/x-tar' },
