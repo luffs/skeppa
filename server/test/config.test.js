@@ -56,3 +56,22 @@ test('a missing MASTER_KEY_FILE is tolerated when the key is not required (seed 
     expect(loadConfig({ requireMasterKey: false }).masterKey).toBe('')
   })
 })
+
+test('sandbox defaults to host and accepts podman', () => {
+  const saved = process.env.SKEPPA_SANDBOX
+  try {
+    delete process.env.SKEPPA_SANDBOX
+    withEnv({ MASTER_KEY: KEY }, () => {
+      expect(loadConfig().sandbox).toBe('host')
+    })
+    process.env.SKEPPA_SANDBOX = 'podman'
+    withEnv({ MASTER_KEY: KEY }, () => {
+      const config = loadConfig()
+      expect(config.sandbox).toBe('podman')
+      expect(config.buildImage).toBe('docker.io/oven/bun:1')
+    })
+  } finally {
+    if (saved == null) delete process.env.SKEPPA_SANDBOX
+    else process.env.SKEPPA_SANDBOX = saved
+  }
+})

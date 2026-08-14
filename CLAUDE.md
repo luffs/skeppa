@@ -1,6 +1,6 @@
 # Skeppa — self-hosted deploy panel
 
-Deploys private GitHub repos onto this server via webhooks, manages encrypted ENV vars, runs apps with pm2. Single user, no Docker.
+Deploys private GitHub repos onto this server via webhooks, manages encrypted ENV vars, runs apps with pm2. Single user. No Docker for the apps; deploy scripts can optionally run in a rootless-podman build sandbox.
 
 ## Technology choices (decided — do not change without discussion)
 
@@ -9,10 +9,11 @@ Deploys private GitHub repos onto this server via webhooks, manages encrypted EN
 - **Database:** SQLite via `bun:sqlite`, file `data/skeppa.db`. Migrations are numbered `.sql` files in `server/src/db/migrations/` run by the homemade runner in `migrate.js`.
 - **Frontend:** Vue 3 SFCs with the **Options API — not Composition API, no `<script setup>`**. Vite for tooling, vue-router. No state library.
 - **Real-time:** one WebSocket at `/ws`. State sync uses **`lazy-watch` diffs**: the server keeps a LiveState proxy (`server/src/live/state.js`); the Hub broadcasts batched diffs; the client mirrors them with `LazyWatch.patch` into a Vue-reactive object (`web/src/store.js`). Deploy log lines are NOT in LiveState — they use per-deployment `logs:subscribe`/`logs:line` pub/sub.
-- **Process management:** pm2 CLI (spawned, never a shell string).
+- **Process management:** pm2 CLI (spawned, never a shell string) for the panel, the proxy and pm2-runtime apps. Per-project `projects.runtime` can be `container`: the app then runs in a rootless-podman container (`server/src/containers/runtime.js`) — source read-only at `/app`, `shared/` at `/data`, port published on localhost, crash restarts via engine restart policy, boot/env-refresh via panel recreation. The panel itself must always be pm2 (enforced in routes).
 - **GitHub:** GitHub App (JWT → installation token, cached). Not OAuth, not a PAT.
 - **Auth:** username/password users (managed under Rigging → Crew; all have full access — no roles), bcrypt password hash (`Bun.password`), session cookie. Optional Google sign-in via a Firebase web config (Rigging → Google sign-in): the frontend loads Firebase from the gstatic CDN (never the npm package), the backend validates ID tokens with the Identity Toolkit REST `accounts:lookup` and matches the verified Google email against `users.username`.
 - **Secrets:** AES-256-GCM with a 32-byte-hex master key, read from `MASTER_KEY_FILE` (chmod-600 file outside repo/DATA_DIR/APPS_DIR; loose perms warned at boot) with `MASTER_KEY` env as dev fallback; unique IV per value. Decrypted ENV lives only in memory: injected into the deploy script env and via the pm2 CLI's process env (`pm2EnvBase` in `lib/shell.js` + `appEnv` in `deploy/pm2.js`), never written into ecosystem files. On-disk `.env` is a per-project opt-in (`projects.write_env_file`). At boot the panel resurrects app processes itself (`deploy/resurrect.js`, honoring `projects.auto_start`: pm2 stop via the panel clears it, start/restart/deploy set it) — apps must never be `pm2 save`d (the dump stores env in plaintext).
+- **Build sandbox:** with `SKEPPA_SANDBOX=podman`, deploy scripts run in throwaway rootless-podman containers (only `source/` mounted at `/work`) via the Docker-compatible REST API on the user unix socket (`server/src/containers/client.js`) — never by spawning a CLI, so ENV travels in request bodies in memory. Rootless Docker's socket is wire-compatible (`CONTAINER_SOCKET`). No fallback to host on engine errors — that would silently drop the sandbox. Default is `host` (legacy behavior).
 - **Subdomain routing ("harbor gate"):** a panel-owned Caddy instance (pm2 process `skeppa-proxy`, plain HTTP) routes `subdomain.<base_domain>` → `localhost:<project port>`; the admin's system Caddy forwards the wildcard to it with one static block and owns TLS. Config is generated as JSON (`server/src/proxy/`), hot-reloaded via the local admin API (never `:2019` — that's the system instance), cold-started via pm2. The routed port is injected into the app's env as `PORT`.
 
 ## Commands

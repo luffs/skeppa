@@ -35,7 +35,10 @@ const REFRESH_MS = 5000
 export default {
   name: 'Pm2Logs',
   props: {
-    name: { type: String, required: true },
+    name: { type: String, default: '' },
+    // Overrides the Engine-room pm2 endpoint — the project log route serves
+    // the same response shape for both runtimes.
+    url: { type: String, default: '' },
     lines: { type: Number, default: 200 },
   },
   data() {
@@ -92,7 +95,8 @@ export default {
       if (this.busy) return
       this.busy = true
       try {
-        this.data = await api.get(`/api/system/pm2/${encodeURIComponent(this.name)}/logs?lines=${this.lines}`)
+        const target = this.url || `/api/system/pm2/${encodeURIComponent(this.name)}/logs`
+        this.data = await api.get(`${target}?lines=${this.lines}`)
         this.error = ''
       } catch (err) {
         this.error = `Could not read logs: ${err.message}`

@@ -33,11 +33,11 @@ function setup() {
     masterKey: MASTER_KEY,
     selfPm2Name: 'skeppa',
   }
-  const addProject = (slug, { start_command = 'bun run start', port = null, env = {}, auto_start = 1 } = {}) => {
+  const addProject = (slug, { start_command = 'bun run start', port = null, env = {}, auto_start = 1, runtime = 'pm2' } = {}) => {
     const { lastInsertRowid } = db.query(
-      `INSERT INTO projects (slug, name, repo_full_name, branch, pm2_name, start_command, port, auto_start)
-       VALUES (?, ?, 'o/r', 'main', ?, ?, ?, ?)`
-    ).run(slug, slug, slug, start_command, port, auto_start)
+      `INSERT INTO projects (slug, name, repo_full_name, branch, pm2_name, start_command, port, auto_start, runtime)
+       VALUES (?, ?, 'o/r', 'main', ?, ?, ?, ?, ?)`
+    ).run(slug, slug, slug, start_command, port, auto_start, runtime)
     const project = db.query('SELECT * FROM projects WHERE id = ?').get(Number(lastInsertRowid))
     for (const [key, value] of Object.entries(env)) {
       const enc = encrypt(value, MASTER_KEY)
@@ -109,6 +109,66 @@ test('one failing app does not stop the others', async () => {
 
   const pm2 = fakePm2([], { failFor: [join('bad', 'ecosystem.config.cjs')] })
   expect(await resurrectApps({ db, config, pm2, log: () => {} })).toEqual(['good'])
+})
+
+// Fake container engine for the container-runtime path.
+function fakeContainers({ running = false, exists = true } = {}) {
+  const calls = []
+  return {
+    calls,
+    async inspectContainer(name) {
+      calls.push(['inspect', name])
+      return exists ? { State: { Running: running } } : null
+    },
+    async removeContainer(id) { calls.push(['remove', id]) },
+    async createContainer(name, spec) { calls.push(['create', name, spec]); return 'cid' },
+    async startContainer(id) { calls.push(['start', id]) },
+    async pullImage(ref) { calls.push(['pull', ref]) },
+  }
+}
+
+test('recreates a container app that is not running, with freshly decrypted env', async () => {
+  const { db, config, addProject } = setup()
+  const project = addProject('capp', { runtime: 'container', port: 4100, env: { TOKEN: 'sekret' } })
+  mkdirSync(projectDirs(config, project).source, { recursive: true })
+
+  const containers = fakeContainers({ exists: true, running: false })
+  const started = await resurrectApps({ db, config, pm2: fakePm2([]), containers, log: () => {} })
+  expect(started).toEqual(['capp'])
+  const [, , spec] = containers.calls.find(c => c[0] === 'create')
+  expect(spec.Env).toContain('TOKEN=sekret')
+  expect(spec.Env).toContain('PORT=4100')
+})
+
+test('leaves a running container app alone', async () => {
+  const { db, config, addProject } = setup()
+  const project = addProject('capp', { runtime: 'container' })
+  mkdirSync(projectDirs(config, project).source, { recursive: true })
+
+  const containers = fakeContainers({ running: true })
+  expect(await resurrectApps({ db, config, pm2: fakePm2([]), containers, log: () => {} })).toEqual([])
+  expect(containers.calls.filter(c => c[0] === 'create')).toEqual([])
+})
+
+test('a panel-stopped container app (auto_start off) stays down', async () => {
+  const { db, config, addProject } = setup()
+  const project = addProject('capp', { runtime: 'container', auto_start: 0 })
+  mkdirSync(projectDirs(config, project).source, { recursive: true })
+
+  const containers = fakeContainers({ exists: true, running: false })
+  expect(await resurrectApps({ db, config, pm2: fakePm2([]), containers, log: () => {} })).toEqual([])
+  expect(containers.calls).toEqual([])
+})
+
+test('scrubs a stale ecosystem file left from a pm2 era on container projects', async () => {
+  const { db, config, addProject } = setup()
+  const project = addProject('capp', { runtime: 'container', start_command: '' })
+  const dirs = projectDirs(config, project)
+  mkdirSync(dirs.root, { recursive: true })
+  writeFileSync(dirs.ecosystem, 'module.exports = {}\n')
+
+  await resurrectApps({ db, config, pm2: fakePm2([]), containers: fakeContainers(), log: () => {} })
+  expect(existsSync(dirs.ecosystem)).toBe(false)
 })
 
 test('an unreachable pm2 daemon is a logged no-op, not a crash', async () => {

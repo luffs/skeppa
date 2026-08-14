@@ -3,21 +3,41 @@ import { existsSync } from 'node:fs'
 import { encrypt, decrypt } from '../lib/crypto.js'
 import { slugify, validateProject, SLUG_RE, ENV_KEY_RE, PM2_ACTIONS } from '../lib/validate.js'
 import { projectDefaults, getProjectInfo } from '../live/state.js'
-import { applyAction, deleteProcess } from '../deploy/pm2.js'
+import { applyAction, deleteProcess, describe } from '../deploy/pm2.js'
 import { projectDirs, syncEnvFiles, writeEcosystem, decryptedEnv, runtimeEnv } from '../deploy/envfiles.js'
+import { createContainerClient } from '../containers/client.js'
+import { appContainerName, recreateAppContainer } from '../containers/runtime.js'
+import { tailFile } from '../lib/tail.js'
 
 const PROJECT_COLUMNS =
-  'id, slug, name, repo_full_name, branch, deploy_script, pm2_name, start_command, cwd, ' +
+  'id, slug, name, repo_full_name, branch, deploy_script, build_image, run_image, runtime, pm2_name, start_command, cwd, ' +
   'auto_deploy, write_env_file, subdomain, port, head_sha, head_message, head_pushed_at, created_at'
 
-export function projectRoutes({ db, config, liveState, runner, poller, github, proxy = null }) {
+const DEFAULT_LOG_LINES = 200
+const MAX_LOG_LINES = 2000
+
+export function projectRoutes({ db, config, liveState, runner, poller, github, proxy = null, containerClient = null }) {
   const app = new Hono()
+
+  // Lazy so pm2-only installs never touch the socket; throws a useful message
+  // when a container action is attempted without an engine configured.
+  let engineInstance = containerClient
+  const engine = () => {
+    if (!engineInstance) {
+      if (!config.containerSocket) {
+        throw new Error('no container engine socket configured — see the build sandbox section in the README')
+      }
+      engineInstance = createContainerClient({ socketPath: config.containerSocket })
+    }
+    return engineInstance
+  }
 
   const getProject = id => db.query(`SELECT ${PROJECT_COLUMNS} FROM projects WHERE id = ?`).get(Number(id))
 
   const normalizeSubdomain = value =>
     typeof value === 'string' && value.trim() ? value.trim().toLowerCase() : null
   const normalizePort = value => (value == null || value === '' ? null : Number(value))
+  const normalizeImage = value => (typeof value === 'string' && value.trim() ? value.trim() : null)
 
   // Field errors for subdomain/port collisions with other projects.
   const routingConflicts = ({ subdomain, port }, excludeId = -1) => {
@@ -47,6 +67,9 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
       repo_full_name: body.repo_full_name,
       branch: body.branch || 'main',
       deploy_script: body.deploy_script ?? '',
+      build_image: normalizeImage(body.build_image),
+      run_image: normalizeImage(body.run_image),
+      runtime: body.runtime ?? 'pm2',
       start_command: body.start_command ?? '',
       pm2_name: body.pm2_name?.trim() || slugify(body.name ?? ''),
       cwd: body.cwd?.trim() || null,
@@ -56,6 +79,9 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
       port: normalizePort(body.port),
     }
     const errors = { ...validateProject(project), ...routingConflicts(project) }
+    if (project.runtime === 'container' && project.pm2_name === config.selfPm2Name) {
+      errors.runtime = 'the panel itself must run under pm2'
+    }
     if (Object.keys(errors).length) return c.json({ error: 'validation failed', fields: errors }, 400)
 
     let slug = body.slug?.trim() || slugify(project.name)
@@ -70,11 +96,11 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
     }
 
     const { lastInsertRowid } = db.query(
-      `INSERT INTO projects (slug, name, repo_full_name, branch, deploy_script, pm2_name, start_command, cwd, auto_deploy, write_env_file, subdomain, port)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO projects (slug, name, repo_full_name, branch, deploy_script, build_image, run_image, runtime, pm2_name, start_command, cwd, auto_deploy, write_env_file, subdomain, port)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(slug, project.name, project.repo_full_name, project.branch, project.deploy_script,
-          project.pm2_name, project.start_command, project.cwd, project.auto_deploy,
-          project.write_env_file, project.subdomain, project.port)
+          project.build_image, project.run_image, project.runtime, project.pm2_name, project.start_command,
+          project.cwd, project.auto_deploy, project.write_env_file, project.subdomain, project.port)
     const id = Number(lastInsertRowid)
     liveState.projects[id] = projectDefaults(null, getProjectInfo(db, id))
     if (project.subdomain) await applyProxy()
@@ -97,6 +123,9 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
       repo_full_name: body.repo_full_name ?? project.repo_full_name,
       branch: body.branch ?? project.branch,
       deploy_script: body.deploy_script ?? project.deploy_script,
+      build_image: 'build_image' in body ? normalizeImage(body.build_image) : project.build_image,
+      run_image: 'run_image' in body ? normalizeImage(body.run_image) : project.run_image,
+      runtime: 'runtime' in body ? body.runtime : project.runtime,
       start_command: body.start_command ?? project.start_command,
       pm2_name: body.pm2_name?.trim() ?? project.pm2_name,
       cwd: 'cwd' in body ? (body.cwd?.trim() || null) : project.cwd,
@@ -106,6 +135,9 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
       port: 'port' in body ? normalizePort(body.port) : project.port,
     }
     const errors = { ...validateProject(merged), ...routingConflicts(merged, project.id) }
+    if (merged.runtime === 'container' && merged.pm2_name === config.selfPm2Name) {
+      errors.runtime = 'the panel itself must run under pm2'
+    }
     if (Object.keys(errors).length) return c.json({ error: 'validation failed', fields: errors }, 400)
     if (merged.pm2_name !== project.pm2_name &&
         db.query('SELECT 1 FROM projects WHERE pm2_name = ? AND id != ?').get(merged.pm2_name, project.id)) {
@@ -113,10 +145,10 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
     }
 
     db.query(
-      `UPDATE projects SET name = ?, repo_full_name = ?, branch = ?, deploy_script = ?,
+      `UPDATE projects SET name = ?, repo_full_name = ?, branch = ?, deploy_script = ?, build_image = ?, run_image = ?, runtime = ?,
          start_command = ?, pm2_name = ?, cwd = ?, auto_deploy = ?, write_env_file = ?, subdomain = ?, port = ? WHERE id = ?`
-    ).run(merged.name, merged.repo_full_name, merged.branch, merged.deploy_script,
-          merged.start_command, merged.pm2_name, merged.cwd, merged.auto_deploy,
+    ).run(merged.name, merged.repo_full_name, merged.branch, merged.deploy_script, merged.build_image,
+          merged.run_image, merged.runtime, merged.start_command, merged.pm2_name, merged.cwd, merged.auto_deploy,
           merged.write_env_file, merged.subdomain, merged.port, project.id)
     if (liveState.projects[project.id]) {
       liveState.projects[project.id].info = getProjectInfo(db, project.id)
@@ -134,6 +166,11 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
     const project = getProject(c.req.param('id'))
     if (!project) return c.json({ error: 'not found' }, 404)
     await deleteProcess(project.pm2_name)
+    try {
+      await engine().removeContainer(appContainerName(project.slug))
+    } catch {
+      // no engine configured/reachable — then there is no container either
+    }
     db.query('DELETE FROM projects WHERE id = ?').run(project.id)
     delete liveState.projects[project.id]
     if (project.subdomain) await applyProxy()
@@ -259,15 +296,71 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
     const act = c.req.param('action')
     if (!PM2_ACTIONS.includes(act)) return c.json({ error: `action must be one of ${PM2_ACTIONS.join(', ')}` }, 400)
     try {
-      // start/restart re-inject the current ENV set; decrypted only for the
-      // duration of the pm2 call, never written anywhere.
-      await applyAction(act, project.pm2_name, projectDirs(config, project).ecosystem,
-        runtimeEnv(project, decryptedEnv(db, config, project.id)))
+      if (project.runtime === 'container') {
+        if (act === 'stop') {
+          await engine().stopContainer(appContainerName(project.slug))
+        } else {
+          // start/restart = recreate: containers are disposable and this is
+          // the only way stale env is replaced with freshly decrypted values.
+          const dirs = projectDirs(config, project)
+          if (!existsSync(dirs.source)) return c.json({ error: 'deploy the project first' }, 400)
+          await recreateAppContainer({
+            config, project, dirs,
+            env: runtimeEnv(project, decryptedEnv(db, config, project.id)),
+            client: engine(),
+          })
+        }
+      } else {
+        // start/restart re-inject the current ENV set; decrypted only for the
+        // duration of the pm2 call, never written anywhere.
+        await applyAction(act, project.pm2_name, projectDirs(config, project).ecosystem,
+          runtimeEnv(project, decryptedEnv(db, config, project.id)))
+      }
       // Stop also turns off start-at-boot; start/restart turn it back on.
       db.query('UPDATE projects SET auto_start = ? WHERE id = ?')
         .run(act === 'stop' ? 0 : 1, project.id)
       poller?.tick()
       return c.json({ ok: true })
+    } catch (err) {
+      return c.json({ error: err.message }, 500)
+    }
+  })
+
+  // Recent logs for the project's process, same response shape for both
+  // runtimes (and as the Engine room pm2 log route), so one UI component fits.
+  app.get('/:id/logs', async c => {
+    const project = getProject(c.req.param('id'))
+    if (!project) return c.json({ error: 'not found' }, 404)
+    const requested = parseInt(c.req.query('lines') ?? '', 10)
+    const lines = Math.min(Math.max(Number.isFinite(requested) ? requested : DEFAULT_LOG_LINES, 1), MAX_LOG_LINES)
+    try {
+      if (project.runtime === 'container') {
+        try {
+          const { out, err } = await engine().tailLogs(appContainerName(project.slug), lines)
+          const wrap = text => ({
+            path: null,
+            text,
+            truncated: text ? text.split('\n').length >= lines : false,
+            missing: false,
+          })
+          return c.json({ name: project.slug, lines, out: wrap(out), err: wrap(err) })
+        } catch (err) {
+          if (err.status !== 404) throw err
+          const missing = { path: null, text: '', truncated: false, missing: true }
+          return c.json({ name: project.slug, lines, out: missing, err: missing })
+        }
+      }
+      const proc = await describe(project.pm2_name)
+      if (!proc) return c.json({ error: 'not running under pm2 yet' }, 404)
+      const read = async path =>
+        path
+          ? { path, ...(await tailFile(path, { lines })) }
+          : { path: null, text: '', truncated: false, missing: true }
+      const [out, err] = await Promise.all([
+        read(proc.pm2_env?.pm_out_log_path ?? null),
+        read(proc.pm2_env?.pm_err_log_path ?? null),
+      ])
+      return c.json({ name: project.pm2_name, lines, out, err })
     } catch (err) {
       return c.json({ error: err.message }, 500)
     }

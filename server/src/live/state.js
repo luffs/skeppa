@@ -19,7 +19,7 @@ export function getUserInfo(db, id) {
 // header, settings form). head_* is deliberately excluded — the live
 // `headCommit` is the single source of truth for that.
 export const PROJECT_INFO_COLUMNS =
-  'id, slug, name, repo_full_name, branch, deploy_script, pm2_name, start_command, cwd, auto_deploy, write_env_file, subdomain, port, created_at'
+  'id, slug, name, repo_full_name, branch, deploy_script, build_image, run_image, runtime, pm2_name, start_command, cwd, auto_deploy, write_env_file, subdomain, port, created_at'
 
 export function getProjectInfo(db, id) {
   return db.query(`SELECT ${PROJECT_INFO_COLUMNS} FROM projects WHERE id = ?`).get(Number(id)) ?? null

@@ -95,6 +95,51 @@ Skeppa uses a GitHub App (not OAuth, not a PAT) for repo listing, clone tokens a
 
 Apps live in `APPS_DIR/<slug>/source` (git working copy). If something in the app reads `.env` from disk itself (e.g. Vite at build time), enable **"Write a plaintext .env file into the app"** in the project settings — the panel then maintains `shared/.env` (0600) plus a copy in the working dir, and deletes both when the toggle is turned off. While a deploy runs, a second trigger queues (max 1; a newer one replaces it). Deploys are sequential per project, parallel across projects.
 
+## Build sandbox (podman)
+
+By default the deploy script runs as a shell **on the host, as the panel user** — simple, but it
+means a malicious or compromised repo's deploy script can read anything the panel can. With
+rootless podman installed you can run every deploy script in a throwaway container instead:
+
+```bash
+sudo apt install podman uidmap        # or your distro's equivalent
+sudo loginctl enable-linger $(whoami) # keep user services alive without a login session
+systemctl --user enable --now podman.socket
+# then in the panel .env:
+# SKEPPA_SANDBOX=podman
+```
+
+Each deploy creates an ephemeral container from the project's **Build image** (panel default:
+`docker.io/oven/bun:1`, override per project or via `BUILD_IMAGE`), mounts only
+`APPS_DIR/<slug>/source` at `/work`, injects the project ENV via the engine API (in memory —
+never argv or env files) and streams the output into the deploy log. The script cannot see the
+master key, the database, other apps or the panel user's home. Rootless podman maps
+container-root to the panel user, so files the build writes (e.g. `node_modules`) have the right
+owner on the host. There is no silent fallback: if the engine is unreachable the deploy fails
+with instructions rather than running unsandboxed. The image needs `/bin/sh`; network is
+available for registry access. Rootless Docker's socket is wire-compatible — point
+`CONTAINER_SOCKET` at it if you prefer Docker.
+
+### Running apps in containers
+
+With the same podman setup, each project can also *run* in a container: switch **Runtime** from
+pm2 to container in the project settings. On the next deploy (or restart) the app is recreated
+as `skeppa-app-<slug>`: source mounted **read-only** at `/app`, the durable `shared/` dir
+writable at `/data`, the start command run via `/bin/sh`, the routed port published on
+`127.0.0.1` only, and ENV injected through the engine API. The app cannot read the panel, the
+master key or other apps — this is the isolation pm2 cannot give you. **Run image** overrides
+the container image (default: the build image, then the panel default).
+
+Semantics match the pm2 runtime: crash restarts are handled by the engine (`on-failure`, max
+10 retries), start/restart from the panel recreates the container with freshly decrypted ENV,
+stop keeps it stopped (also across reboots — same start-at-boot flag), and after a server
+reboot the panel recreates running apps itself. The panel and the harbor gate proxy always run
+under pm2; the panel refuses `runtime: container` for its own project.
+
+One trade-off to know: the engine stores a created container's spec — ENV included — under
+`~/.local/share/containers` (panel-user-only permissions). Exclude that directory from backups,
+like the master key.
+
 ## Deploying Skeppa with Skeppa (dogfooding)
 
 Add the panel's own repo as a project with pm2 name `skeppa` (must match `SKEPPA_PM2_NAME` in `.env`). The panel detects the self-deploy and runs the pm2 reload detached after the deploy finalizes, so it doesn't kill its own in-flight deploy process.
@@ -122,5 +167,5 @@ On Windows, deploy execution (`sh`, pm2) is not supported — develop the UI/API
 - Never run `pm2 save` while apps are running (see Install) — the dump file would contain their env in plaintext.
 - Webhook payloads are verified with a timing-safe HMAC comparison before processing.
 - Clone tokens are short-lived installation tokens, passed per git invocation and never written to `.git/config` or logs.
-- The deploy script deliberately runs as shell **as your panel user** — that's the product. Everything else that reaches a shell or path is whitelist-validated.
+- The deploy script deliberately runs as shell — that's the product. On the host it runs **as your panel user**; enable the podman build sandbox (`SKEPPA_SANDBOX=podman`) to confine it to a throwaway container that only sees the project's source. Everything else that reaches a shell or path is whitelist-validated.
 - Run the panel as its own non-root user; pm2 runs under the same user.

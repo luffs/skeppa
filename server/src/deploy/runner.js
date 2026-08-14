@@ -1,8 +1,12 @@
+import { rmSync } from 'node:fs'
 import { resolveShell, scriptEnvBase } from '../lib/shell.js'
 import { projectDefaults, getProjectInfo } from '../live/state.js'
 import { projectDirs, syncEnvFiles, writeEcosystem, runtimeEnv } from './envfiles.js'
 import { syncRepo } from './git.js'
-import { startOrReload, startOrReloadDetached } from './pm2.js'
+import { runScriptInContainer } from './sandbox.js'
+import { startOrReload, startOrReloadDetached, deleteProcess } from './pm2.js'
+import { createContainerClient } from '../containers/client.js'
+import { appContainerName, recreateAppContainer } from '../containers/runtime.js'
 
 export class DeployError extends Error {
   constructor(message, exitCode = null) {
@@ -70,12 +74,13 @@ export function recoverInterrupted(db) {
 // runs, at most one more waits; a newer enqueue replaces the waiting one
 // (which is marked cancelled).
 export class DeployRunner {
-  constructor({ db, config, liveState, hub, github, execute }) {
+  constructor({ db, config, liveState, hub, github, execute, containerClient = null }) {
     this.db = db
     this.config = config
     this.liveState = liveState
     this.hub = hub
     this.github = github
+    this.containerClient = containerClient // test injection; null = real engine
     this.queues = new Map() // projectId -> { runningId, queuedId }
     this.activeLogs = new Map() // deploymentId -> LogCollector
     this._execute = execute || ((project, deploymentId, log) => this._deploy(project, deploymentId, log))
@@ -194,34 +199,76 @@ export class DeployRunner {
       : `▸ loaded ${Object.keys(envVars).length} ENV vars (injected in memory, no .env written)`)
 
     if (project.deploy_script?.trim()) {
-      log.line(`▸ running deploy script`)
-      await this._runScript(project.deploy_script, dirs.work, envVars, log)
+      log.line(this.config.sandbox === 'podman'
+        ? '▸ running deploy script (podman sandbox)'
+        : '▸ running deploy script')
+      await this._runScript(project, dirs, envVars, log)
     } else {
       log.line('▸ no deploy script configured, skipping')
     }
 
     if (project.start_command?.trim()) {
-      const ecosystemPath = writeEcosystem(this.config, project)
       const appEnv = runtimeEnv(project, envVars)
-      if (project.pm2_name === this.config.selfPm2Name) {
-        log.line('▸ self-deploy detected: pm2 reload will run detached after this deploy finalizes')
-        setTimeout(() => startOrReloadDetached(ecosystemPath, appEnv), 1500)
+      if (project.runtime === 'container') {
+        // Leftovers from before a pm2 → container runtime switch.
+        rmSync(dirs.ecosystem, { force: true })
+        await deleteProcess(project.pm2_name)
+        log.line(`▸ recreating container ${appContainerName(project.slug)}`)
+        await recreateAppContainer({
+          config: this.config, project, dirs, env: appEnv,
+          onLine: log.line, client: this.containerClient,
+        })
       } else {
-        log.line(`▸ pm2 startOrReload ${project.pm2_name}`)
-        await startOrReload(ecosystemPath, appEnv)
+        await this._removeStaleContainer(project.slug)
+        const ecosystemPath = writeEcosystem(this.config, project)
+        if (project.pm2_name === this.config.selfPm2Name) {
+          log.line('▸ self-deploy detected: pm2 reload will run detached after this deploy finalizes')
+          setTimeout(() => startOrReloadDetached(ecosystemPath, appEnv), 1500)
+        } else {
+          log.line(`▸ pm2 startOrReload ${project.pm2_name}`)
+          await startOrReload(ecosystemPath, appEnv)
+        }
       }
       // A deploy that (re)started the app means it should start at boot too.
       this.db.query('UPDATE projects SET auto_start = 1 WHERE id = ?').run(project.id)
     } else {
-      log.line('▸ no start command configured, skipping pm2')
+      log.line('▸ no start command configured, skipping start')
     }
   }
 
-  async _runScript(script, cwd, envVars, log) {
-    // Minimal environment: the project's vars plus what a shell needs.
-    // The panel's own environment (MASTER_KEY!) must not leak into deploys.
+  // A container left behind after a container → pm2 runtime switch would keep
+  // the published port. Best-effort: no engine configured means nothing to do.
+  async _removeStaleContainer(slug) {
+    if (!this.config.containerSocket) return
+    try {
+      const engine = this.containerClient ?? createContainerClient({ socketPath: this.config.containerSocket })
+      await engine.removeContainer(appContainerName(slug))
+    } catch {
+      // engine unreachable — there is no container to remove then
+    }
+  }
+
+  async _runScript(project, dirs, envVars, log) {
+    if (this.config.sandbox === 'podman') {
+      const { exitCode, timedOut } = await runScriptInContainer({
+        config: this.config,
+        project,
+        dirs,
+        script: project.deploy_script,
+        envVars,
+        onLine: log.line,
+        timeoutMs: this.config.deployTimeoutMs,
+        client: this.containerClient,
+      })
+      if (timedOut) throw new DeployError(`deploy script timed out after ${this.config.deployTimeoutMs} ms`, exitCode)
+      if (exitCode !== 0) throw new DeployError(`deploy script exited with code ${exitCode}`, exitCode)
+      return
+    }
+
+    // Host mode: minimal environment — the project's vars plus what a shell
+    // needs. The panel's own environment (MASTER_KEY!) must not leak in.
     const env = { ...scriptEnvBase(), ...envVars }
-    const proc = Bun.spawn([...resolveShell(), script], { cwd, env, stdout: 'pipe', stderr: 'pipe' })
+    const proc = Bun.spawn([...resolveShell(), project.deploy_script], { cwd: dirs.work, env, stdout: 'pipe', stderr: 'pipe' })
     let timedOut = false
     const timer = setTimeout(() => {
       timedOut = true

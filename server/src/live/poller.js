@@ -1,6 +1,8 @@
 import os from 'node:os'
 import { statfsSync } from 'node:fs'
 import { jlist } from '../deploy/pm2.js'
+import { createContainerClient } from '../containers/client.js'
+import { appContainerName, appLiveStats } from '../containers/runtime.js'
 
 // `du` over the whole apps dir is the expensive part — refresh it far less
 // often than the cheap pm2/memory/uptime stats.
@@ -40,9 +42,16 @@ async function diskUsage(appsDir) {
 
 // Refreshes projects[*].pm2 and the `system` section of LiveState. Only runs
 // while at least one WS client is connected (the Hub starts/stops it).
-export function createPoller({ db, config, liveState, intervalMs = 5000 }) {
+const EMPTY_STATS = { status: 'not started', uptime: null, memory: null, cpu: null, restarts: null, pid: null }
+
+export function createPoller({ db, config, liveState, intervalMs = 5000, containerClient = null }) {
   let timer = null
   let ticking = false
+  let engine = containerClient
+  const getEngine = () => {
+    if (!engine && config.containerSocket) engine = createContainerClient({ socketPath: config.containerSocket })
+    return engine
+  }
   let disk = { appsDirBytes: null, free: null, total: null }
   let diskCheckedAt = 0
   // Boot/start instants instead of uptime seconds: uptimes grow every tick by
@@ -74,13 +83,29 @@ export function createPoller({ db, config, liveState, intervalMs = 5000 }) {
       }
       const byName = new Map((list ?? []).map(p => [p.name, p]))
 
-      for (const { id, pm2_name } of db.query('SELECT id, pm2_name FROM projects').all()) {
+      for (const { id, pm2_name, slug, runtime } of db.query('SELECT id, pm2_name, slug, runtime FROM projects').all()) {
         const live = liveState.projects[id]
         if (!live) continue
+        if (runtime === 'container') {
+          // live.pm2 keeps its name for wire/UI compatibility — the shape is
+          // identical, appLiveStats maps container state onto it.
+          const eng = getEngine()
+          if (!eng) {
+            live.pm2 = { ...EMPTY_STATS, status: 'unknown' }
+            continue
+          }
+          try {
+            const stats = await appLiveStats(eng, appContainerName(slug))
+            live.pm2 = stats
+              ? { ...stats, memory: roundMem(stats.memory), cpu: roundCpu(stats.cpu) }
+              : { ...EMPTY_STATS }
+          } catch {
+            live.pm2 = { ...EMPTY_STATS, status: 'unknown' }
+          }
+          continue
+        }
         const proc = byName.get(pm2_name)
-        live.pm2 = proc
-          ? pm2Stats(proc)
-          : { status: 'not started', uptime: null, memory: null, cpu: null, restarts: null, pid: null }
+        live.pm2 = proc ? pm2Stats(proc) : { ...EMPTY_STATS }
       }
 
       liveState.system = {

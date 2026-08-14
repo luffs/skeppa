@@ -39,9 +39,22 @@ function readMasterKey(env, required) {
   return key
 }
 
+// Where deploy scripts run: on the host (legacy) or inside a throwaway
+// rootless-podman container. A typo here must never silently mean "no
+// sandbox", so anything unknown is fatal.
+const SANDBOXES = ['host', 'podman']
+
 export function loadConfig({ requireMasterKey = true } = {}) {
   const env = process.env
   const masterKey = readMasterKey(env, requireMasterKey)
+
+  const sandbox = env.SKEPPA_SANDBOX || 'host'
+  if (!SANDBOXES.includes(sandbox)) {
+    console.error(`FATAL: SKEPPA_SANDBOX must be one of: ${SANDBOXES.join(', ')} (got "${sandbox}"). Refusing to start.`)
+    process.exit(1)
+  }
+  const runtimeDir = env.XDG_RUNTIME_DIR ||
+    (typeof process.getuid === 'function' ? `/run/user/${process.getuid()}` : null)
 
   if (requireMasterKey && !HEX_KEY_RE.test(masterKey)) {
     console.error(
@@ -61,6 +74,10 @@ export function loadConfig({ requireMasterKey = true } = {}) {
     appsDir: resolve(env.APPS_DIR || '/srv/apps'),
     webDist: join(rootDir, 'web', 'dist'),
     deployTimeoutMs: Number(env.DEPLOY_TIMEOUT_MS || 10 * 60 * 1000),
+    sandbox,
+    // Podman's rootless user socket; rootless Docker's socket is wire-compatible.
+    containerSocket: env.CONTAINER_SOCKET || (runtimeDir ? join(runtimeDir, 'podman', 'podman.sock') : null),
+    buildImage: env.BUILD_IMAGE || 'docker.io/oven/bun:1',
     selfPm2Name: env.SKEPPA_PM2_NAME || 'skeppa',
     isSecureCookie: env.SKEPPA_SECURE_COOKIE !== 'false',
     skeppaApi: env.SKEPPA_API,

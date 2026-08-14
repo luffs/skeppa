@@ -47,6 +47,7 @@
 
     <div class="tabs">
       <button :class="{ active: tab === 'deploys' }" @click="tab = 'deploys'">Voyages</button>
+      <button :class="{ active: tab === 'logs' }" @click="tab = 'logs'">Logbook</button>
       <button :class="{ active: tab === 'env' }" @click="tab = 'env'">Cargo (env)</button>
       <button :class="{ active: tab === 'settings' }" @click="tab = 'settings'">Rigging</button>
     </div>
@@ -88,6 +89,10 @@
       </div>
     </div>
 
+    <div v-else-if="tab === 'logs'" class="panel">
+      <Pm2Logs :url="`/api/projects/${project.id}/logs`" :name="project.pm2_name" />
+    </div>
+
     <div v-else-if="tab === 'env'" class="panel">
       <EnvEditor :project-id="project.id" />
     </div>
@@ -107,8 +112,29 @@
       <label>Deploy script</label>
       <textarea v-model="edit.deploy_script" class="code" rows="4"></textarea>
       <p class="hint">⚠ Runs as a shell script on the server — only trusted commands.</p>
+      <label>Build image</label>
+      <input v-model="edit.build_image" class="code" placeholder="panel default" />
+      <p class="hint">
+        OCI image the deploy script runs in when the podman build sandbox is enabled
+        (<span class="mono">SKEPPA_SANDBOX=podman</span>). Empty = panel default. Ignored in host mode.
+      </p>
       <label>Start command</label>
       <input v-model="edit.start_command" class="code" />
+      <label>Runtime</label>
+      <select v-model="edit.runtime" class="code">
+        <option value="pm2">pm2 — host process</option>
+        <option value="container">container — rootless podman</option>
+      </select>
+      <p class="hint" v-if="edit.runtime === 'container'">
+        The start command runs in a disposable container: source read-only at
+        <span class="mono">/app</span>, <span class="mono">shared/</span> writable at
+        <span class="mono">/data</span>, the app port published on localhost. Takes effect on the
+        next deploy or restart.
+      </p>
+      <template v-if="edit.runtime === 'container'">
+        <label>Run image</label>
+        <input v-model="edit.run_image" class="code" placeholder="same as build image" />
+      </template>
       <label>pm2 process name</label>
       <input v-model="edit.pm2_name" class="code" />
       <label>Working subdirectory</label>
@@ -189,13 +215,14 @@
 import StatusBadge from '../components/StatusBadge.vue'
 import DeployLog from '../components/DeployLog.vue'
 import EnvEditor from '../components/EnvEditor.vue'
+import Pm2Logs from '../components/Pm2Logs.vue'
 import { api } from '../api.js'
 import { liveProject } from '../store.js'
 import { timeAgo, duration, uptimeSince, bytes } from '../lib/format.js'
 
 export default {
   name: 'ProjectView',
-  components: { StatusBadge, DeployLog, EnvEditor },
+  components: { StatusBadge, DeployLog, EnvEditor, Pm2Logs },
   props: { id: { type: String, required: true } },
   data() {
     return {
@@ -350,6 +377,9 @@ export default {
       return {
         ...p,
         cwd: p.cwd ?? '',
+        build_image: p.build_image ?? '',
+        run_image: p.run_image ?? '',
+        runtime: p.runtime ?? 'pm2',
         auto_deploy: !!p.auto_deploy,
         write_env_file: !!p.write_env_file,
         subdomain: p.subdomain ?? '',
@@ -364,6 +394,8 @@ export default {
         const updated = await api.patch(`/api/projects/${this.id}`, {
           ...this.edit,
           cwd: this.edit.cwd || null,
+          build_image: this.edit.build_image || null,
+          run_image: this.edit.run_image || null,
           subdomain: this.edit.subdomain || null,
           port: this.edit.port === '' ? null : Number(this.edit.port),
         })
