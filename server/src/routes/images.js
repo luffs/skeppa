@@ -97,6 +97,27 @@ export function imageRoutes({ db, config, containerClient = null }) {
     }
   })
 
+  // Remove one registry image from the local store (the panel's `podman rmi`).
+  // Guarded: managed images go through their card's delete, and anything a
+  // project references stays. If a container still uses the image the engine
+  // answers 409, which is surfaced instead of forced.
+  app.post('/remove', async c => {
+    const body = await c.req.json().catch(() => ({}))
+    const ref = body.ref?.trim() ?? ''
+    if (!IMAGE_RE.test(ref)) return c.json({ error: 'invalid image reference' }, 400)
+    if (ref.startsWith(MANAGED_PREFIX)) {
+      return c.json({ error: 'managed images are removed from their Shipyard card' }, 400)
+    }
+    const usedBy = projectsUsing(ref)
+    if (usedBy.length) return c.json({ error: `image is used by: ${usedBy.join(', ')}` }, 400)
+    try {
+      await engine().removeImage(ref)
+      return c.json({ ok: true, ref })
+    } catch (err) {
+      return c.json({ error: err.message }, err.status === 409 ? 409 : 500)
+    }
+  })
+
   // Dangling layers only (the engine's default filter) — never touches tagged
   // images, so it is always safe. Registered before /:id so it wins the match.
   app.post('/prune', async c => {

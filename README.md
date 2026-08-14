@@ -148,8 +148,9 @@ name and a Containerfile, press Build. The image lands in the engine store as
 fields. The Containerfile lives in the panel database, which makes these images reproducible
 state: if one is missing when a container is created — pruned store, fresh server — the panel
 rebuilds it from the stored Containerfile automatically instead of trying to pull. The local
-image store (sizes, dangling layers, which project uses what) is listed alongside, with a
-safe dangling-only prune. v1 builds have an empty context: `FROM`/`RUN`/`ENV`… work, `COPY` of
+image store (sizes, dangling layers, which project uses what) is listed alongside, with
+per-image pull/remove and a safe dangling-only prune (dangling = untagged layers left behind
+when a tag moves; removing a tagged-but-unused image is the ✕ button's job). v1 builds have an empty context: `FROM`/`RUN`/`ENV`… work, `COPY` of
 local files does not. Private registries are not supported by the panel's auto-pull —
 `podman pull` once manually as the panel user instead.
 

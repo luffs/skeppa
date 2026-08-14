@@ -95,7 +95,7 @@
               </td>
               <td class="mono" style="font-size: 12.5px">{{ bytes(img.size) }}</td>
               <td class="hint" style="font-size: 13px">{{ img.used_by.join(', ') || '—' }}</td>
-              <td style="text-align: right">
+              <td style="text-align: right; white-space: nowrap">
                 <button
                   v-if="img.tags.length && !img.managed"
                   class="secondary small"
@@ -103,6 +103,16 @@
                   title="Fetch the newest version of this tag from its registry"
                   @click="pull(img)"
                 >{{ pulling === img.id ? 'Pulling…' : 'Pull' }}</button>
+                <button
+                  v-if="img.tags.length && !img.managed"
+                  class="danger small"
+                  style="margin-left: 6px"
+                  :disabled="removing === img.id || img.used_by.length > 0"
+                  :title="img.used_by.length
+                    ? `In use by: ${img.used_by.join(', ')}`
+                    : 'Remove from the local store (pulled again automatically if something needs it)'"
+                  @click="removeLocal(img)"
+                >✕</button>
               </td>
             </tr>
           </tbody>
@@ -138,6 +148,7 @@ export default {
       newName: '',
       pruning: false,
       pulling: null,
+      removing: null,
       storeNote: '',
     }
   },
@@ -250,6 +261,21 @@ export default {
         this.error = `Pull failed: ${err.message}`
       } finally {
         this.pulling = null
+      }
+    },
+    // "podman rmi" — removes every tag on the row, which deletes the image.
+    async removeLocal(img) {
+      if (!confirm(`Remove ${img.tags.join(', ')} from the local store?`)) return
+      this.removing = img.id
+      this.storeNote = ''
+      try {
+        for (const ref of img.tags) await api.post('/api/images/remove', { ref })
+        this.storeNote = `Removed ${img.tags.join(', ')}.`
+        await this.load()
+      } catch (err) {
+        this.error = `Remove failed: ${err.message}`
+      } finally {
+        this.removing = null
       }
     },
     async prune() {

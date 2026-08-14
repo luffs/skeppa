@@ -162,6 +162,41 @@ test('delete removes the row and the engine image when unused', async () => {
   expect(db.query('SELECT COUNT(*) AS n FROM images').get().n).toBe(0)
 })
 
+test('remove deletes a registry image but refuses managed and project-referenced refs', async () => {
+  const { db, app, engine } = setup()
+  const remove = ref => app.request('/remove', { method: 'POST', body: JSON.stringify({ ref }) })
+
+  expect((await remove('docker.io/library/hello-world:latest')).status).toBe(200)
+  expect(engine.calls).toEqual([['removeImage', 'docker.io/library/hello-world:latest']])
+
+  expect((await remove('localhost/skeppa/bun-node:latest')).status).toBe(400)
+
+  db.query(
+    `INSERT INTO projects (slug, name, repo_full_name, branch, pm2_name, build_image)
+     VALUES ('app', 'App', 'o/r', 'main', 'app', 'docker.io/oven/bun:1')`
+  ).run()
+  const used = await remove('docker.io/oven/bun:1')
+  expect(used.status).toBe(400)
+  expect((await used.json()).error).toContain('app')
+
+  expect((await remove('not a ref!')).status).toBe(400)
+  expect(engine.calls).toHaveLength(1)
+})
+
+test('remove surfaces the engine conflict when a container still uses the image', async () => {
+  const engine = fakeEngine()
+  engine.removeImage = async () => {
+    throw Object.assign(new Error('image used by abc123: image is in use by a container'), { status: 409 })
+  }
+  const { app } = setup({ engine })
+  const res = await app.request('/remove', {
+    method: 'POST',
+    body: JSON.stringify({ ref: 'docker.io/library/hello-world:latest' }),
+  })
+  expect(res.status).toBe(409)
+  expect((await res.json()).error).toContain('in use by a container')
+})
+
 test('prune reports what was reclaimed', async () => {
   const { app } = setup()
   const res = await app.request('/prune', { method: 'POST' })
