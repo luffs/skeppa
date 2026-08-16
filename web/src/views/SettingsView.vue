@@ -128,6 +128,36 @@
         <button :disabled="busy" @click="save">{{ busy ? 'Saving…' : 'Save' }}</button>
         <button class="secondary" :disabled="busy" @click="test">Test connection</button>
       </div>
+
+      <template v-if="status.has_private_key">
+        <label style="margin-top: 26px">Recent webhook deliveries</label>
+        <p class="hint" style="font-size: 13.5px">
+          GitHub's log of what it sent to the webhook URL — the first place to look when a push
+          does not start a voyage. Redeliver resends one after you fix the cause.
+        </p>
+        <p v-if="deliveriesError" class="error">{{ deliveriesError }}</p>
+        <p v-else-if="!deliveries.length" class="hint">
+          {{ deliveriesBusy ? 'Loading…' : 'No deliveries yet — GitHub sends one for every push to a repo the app is installed on.' }}
+        </p>
+        <div v-else class="crew-rows" style="margin-top: 0">
+          <div v-for="d in deliveries" :key="d.id" class="crew-row">
+            <span class="dot" :class="deliveryOk(d) ? 'green' : 'red'"></span>
+            <span class="mono" style="font-size: 13px">{{ d.event }}{{ d.action ? ':' + d.action : '' }}</span>
+            <span class="hint">{{ d.status_code }} · {{ d.status }}</span>
+            <span v-if="d.redelivery" class="chip">redelivery</span>
+            <span class="spacer"></span>
+            <span class="hint">{{ timeAgo(d.delivered_at) }}</span>
+            <button class="secondary small" :disabled="redelivering === d.id" @click="redeliver(d)">
+              {{ redelivering === d.id ? 'Sending…' : 'Redeliver' }}
+            </button>
+          </div>
+        </div>
+        <div class="row" style="margin-top: 10px">
+          <button class="secondary small" :disabled="deliveriesBusy" @click="loadDeliveries">
+            {{ deliveriesBusy ? 'Loading…' : 'Refresh' }}
+          </button>
+        </div>
+      </template>
     </CollapseSection>
 
     <CollapseSection title="Google sign-in">
@@ -242,6 +272,7 @@
 <script>
 import { api } from '../api.js'
 import { store } from '../store.js'
+import { timeAgo } from '../lib/format.js'
 import CollapseSection from '../components/CollapseSection.vue'
 
 export default {
@@ -257,6 +288,10 @@ export default {
       manifestOrg: '',
       creating: false,
       installUrl: '',
+      deliveries: [],
+      deliveriesBusy: false,
+      deliveriesError: '',
+      redelivering: null,
       newUser: { username: '', password: '' },
       passwordFor: null,
       newPassword: '',
@@ -294,6 +329,7 @@ export default {
     if (code || setupAction) this.$router.replace({ path: '/settings' })
     if (code && state) await this.completeManifest(String(code), String(state))
     await Promise.all([this.load(), this.loadGate()])
+    if (this.status.has_private_key) this.loadDeliveries()
     if (setupAction) await this.test()
   },
   methods: {
@@ -379,6 +415,36 @@ export default {
         this.error = err.message
       } finally {
         this.busy = false
+      }
+    },
+
+    timeAgo,
+    deliveryOk(d) {
+      return d.status === 'OK' || (d.status_code >= 200 && d.status_code < 300)
+    },
+    async loadDeliveries() {
+      this.deliveriesBusy = true
+      this.deliveriesError = ''
+      try {
+        this.deliveries = await api.get('/api/github/webhook-deliveries')
+      } catch (err) {
+        this.deliveries = []
+        this.deliveriesError = err.message
+      } finally {
+        this.deliveriesBusy = false
+      }
+    },
+    async redeliver(d) {
+      this.redelivering = d.id
+      this.deliveriesError = ''
+      try {
+        await api.post(`/api/github/webhook-deliveries/${d.id}/redeliver`)
+        this.message = 'Redelivery requested ✔ — give GitHub a few seconds, then refresh the list.'
+        await this.loadDeliveries()
+      } catch (err) {
+        this.deliveriesError = err.message
+      } finally {
+        this.redelivering = null
       }
     },
 

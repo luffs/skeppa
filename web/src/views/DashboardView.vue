@@ -30,12 +30,43 @@
       </div>
     </div>
 
-    <div v-else-if="ready" class="panel" style="margin-top: 22px">
-      <p style="margin-top: 0">No vessels in the harbor yet.</p>
-      <p class="hint" style="margin-bottom: 0">
-        Configure the <router-link to="/settings" style="color: var(--accent)">GitHub App</router-link> first, then
-        <router-link to="/projects/new" style="color: var(--accent)">moor your first project</router-link>.
+    <div v-else-if="ready" class="panel" style="margin-top: 22px; max-width: 680px">
+      <p style="margin-top: 0">
+        <strong>No vessels in the harbor yet.</strong> Three steps to the first voyage:
       </p>
+
+      <div class="crew-rows" style="margin-top: 8px">
+        <div class="crew-row">
+          <span class="chip" :class="setupStep > 1 ? 'green' : setupStep === 1 ? 'blue' : ''">
+            {{ setupStep > 1 ? '✓' : '1' }}
+          </span>
+          <span>Connect GitHub — Skeppa creates the GitHub App for you</span>
+          <span class="spacer"></span>
+          <router-link v-if="setupStep === 1" to="/settings"><button class="small">Create GitHub App</button></router-link>
+        </div>
+        <div class="crew-row">
+          <span class="chip" :class="setupStep > 2 ? 'green' : setupStep === 2 ? 'blue' : ''">
+            {{ setupStep > 2 ? '✓' : '2' }}
+          </span>
+          <span>Install the app on GitHub, picking the repos to deploy</span>
+          <span v-if="setupStep > 2 && setup.repos != null" class="hint">
+            {{ setup.repos }} repo{{ setup.repos === 1 ? '' : 's' }} reachable
+          </span>
+          <span class="spacer"></span>
+          <a v-if="setupStep === 2 && setup.install_url" :href="setup.install_url">
+            <button class="small">Install on GitHub</button>
+          </a>
+        </div>
+        <div class="crew-row">
+          <span class="chip" :class="setupStep === 3 ? 'blue' : ''">3</span>
+          <span>Moor your first project — pick the repo, give it a deploy script</span>
+          <span class="spacer"></span>
+          <router-link v-if="setupStep === 3" to="/projects/new"><button class="small">Moor a project</button></router-link>
+        </div>
+      </div>
+
+      <p v-if="setupProblem" class="error" style="margin-bottom: 0">{{ setupProblem }}</p>
+      <p v-else-if="!setup" class="hint" style="margin-bottom: 0">Taking bearings…</p>
     </div>
   </div>
 </template>
@@ -59,7 +90,7 @@ export default {
   name: 'DashboardView',
   components: { ProjectCard },
   data() {
-    return { deploymentsByProject: {} }
+    return { deploymentsByProject: {}, setup: null, setupError: '' }
   },
   computed: {
     // Rendered straight from the LiveState mirror — no API round-trip when
@@ -72,6 +103,19 @@ export default {
     },
     ready() {
       return store.ready
+    },
+    needsSetup() {
+      return this.ready && !this.projects.length
+    },
+    // 0 = still checking, 1 = connect GitHub, 2 = install the app, 3 = moor a project
+    setupStep() {
+      if (!this.setup) return 0
+      if (!this.setup.configured) return 1
+      if (!this.setup.installed) return 2
+      return 3
+    },
+    setupProblem() {
+      return this.setupError || this.setup?.error || ''
     },
     fleetSummary() {
       const all = Object.values(store.live.projects ?? {}).filter(p => p.info)
@@ -123,8 +167,19 @@ export default {
   },
   watch: {
     deployStamp: { immediate: true, handler: 'loadFeed' },
+    // The checklist only concerns an empty harbor — don't poke GitHub on
+    // every dashboard visit once projects exist.
+    needsSetup: { immediate: true, handler(v) { if (v && !this.setup) this.checkSetup() } },
   },
   methods: {
+    async checkSetup() {
+      this.setupError = ''
+      try {
+        this.setup = await api.get('/api/github/setup')
+      } catch (err) {
+        this.setupError = err.message
+      }
+    },
     async loadFeed() {
       const byProject = {}
       await Promise.all(

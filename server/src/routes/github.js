@@ -26,6 +26,52 @@ export function githubRoutes({ db, config, github }) {
     }
   })
 
+  // One call answering the first-run checklist: credentials present? app
+  // reachable on GitHub? installed anywhere? how many repos can it see?
+  // GitHub-side failures land in `error` rather than failing the request, so
+  // the checklist can still render the steps it does know.
+  app.get('/setup', async c => {
+    const { appId, privateKey, webhookSecret } = github.credentials()
+    const out = {
+      configured: Boolean(appId && privateKey && webhookSecret),
+      app: null,
+      install_url: null,
+      installed: false,
+      repos: null,
+      error: null,
+    }
+    if (!out.configured) return c.json(out)
+    try {
+      const info = await github.getApp()
+      out.app = { name: info.name, slug: info.slug, html_url: info.html_url }
+      if (info.slug) out.install_url = `https://github.com/apps/${encodeURIComponent(info.slug)}/installations/new`
+      out.installed = (await github.listInstallations()).length > 0
+      if (out.installed) out.repos = (await github.listRepos()).length
+    } catch (err) {
+      out.error = err.message
+    }
+    return c.json(out)
+  })
+
+  app.get('/webhook-deliveries', async c => {
+    try {
+      return c.json(await github.listWebhookDeliveries())
+    } catch (err) {
+      return c.json({ error: err.message }, 502)
+    }
+  })
+
+  app.post('/webhook-deliveries/:id/redeliver', async c => {
+    const id = c.req.param('id')
+    if (!/^\d+$/.test(id)) return c.json({ error: 'malformed delivery id' }, 400)
+    try {
+      await github.redeliverWebhookDelivery(id)
+      return c.json({ ok: true })
+    } catch (err) {
+      return c.json({ error: err.message }, 502)
+    }
+  })
+
   // Prepare the handoff to GitHub. The frontend supplies its origin (the
   // panel only knows localhost behind the proxy) and submits the returned
   // manifest to the returned action URL as a top-level form POST.

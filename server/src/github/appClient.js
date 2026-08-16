@@ -79,7 +79,9 @@ export class GitHubApp {
       const body = await res.text().catch(() => '')
       throw new Error(`GitHub API ${method} ${path} failed (${res.status}): ${body.slice(0, 300)}`)
     }
-    return res.json()
+    // Some endpoints (webhook redelivery) reply 202 with an empty body.
+    const text = await res.text()
+    return text ? JSON.parse(text) : null
   }
 
   async _appJwt() {
@@ -111,6 +113,40 @@ export class GitHubApp {
     })
     this._tokenCache = { token: data.token, expiresAt: new Date(data.expires_at).getTime() }
     return data.token
+  }
+
+  // App metadata (name, slug, html_url) — the slug builds the install link.
+  async getApp() {
+    return this._fetch('/app', { jwt: await this._appJwt() })
+  }
+
+  // Unlike getInstallationId this never throws on "none yet" — the first-run
+  // checklist needs to distinguish "not installed" from "broken".
+  async listInstallations() {
+    return this._fetch('/app/installations', { jwt: await this._appJwt() })
+  }
+
+  // GitHub's log of recent webhook deliveries — the authoritative answer to
+  // "I pushed and nothing happened".
+  async listWebhookDeliveries(perPage = 20) {
+    const rows = await this._fetch(`/app/hook/deliveries?per_page=${perPage}`, { jwt: await this._appJwt() })
+    return rows.map(d => ({
+      id: d.id,
+      delivered_at: d.delivered_at,
+      event: d.event,
+      action: d.action,
+      status: d.status,
+      status_code: d.status_code,
+      redelivery: d.redelivery,
+      duration: d.duration,
+    }))
+  }
+
+  async redeliverWebhookDelivery(deliveryId) {
+    return this._fetch(`/app/hook/deliveries/${deliveryId}/attempts`, {
+      jwt: await this._appJwt(),
+      method: 'POST',
+    })
   }
 
   // Token plus its expiry, for callers that show the token to the user

@@ -104,10 +104,18 @@ your browser, so a panel browsed via `localhost` would register an unreachable w
 
 ## Usage
 
+An empty harbor shows a first-run checklist that tracks these steps live (GitHub App
+configured? installed? first project moored?) with a button for whichever step is next.
+
 1. **Settings** — press Create GitHub App (or paste credentials manually), test the connection
 2. **New project** — pick a repo and branch, set a deploy script (e.g. `bun install && bun run build`) and a start command (e.g. `bun run start`; leave empty for build-only projects)
 3. **Environment tab** — add ENV vars; on each deploy they're decrypted in memory and injected into the deploy script and the pm2 process. Nothing is written to disk unless the project opts into a `.env` file (see below)
 4. Push to the branch — the deploy runs automatically; watch the live log in the project view
+
+If a push doesn't start a deploy, open **Settings → GitHub App**: the panel lists GitHub's
+recent webhook deliveries (event, response code, age) straight from GitHub's log, with a
+Redeliver button to resend one once you've fixed the cause — usually a webhook URL that isn't
+reachable over HTTPS from the internet.
 
 Apps live in `APPS_DIR/<slug>/source` (git working copy). If something in the app reads `.env` from disk itself (e.g. Vite at build time), enable **"Write a plaintext .env file into the app"** in the project settings — the panel then maintains `shared/.env` (0600) plus a copy in the working dir, and deletes both when the toggle is turned off. While a deploy runs, a second trigger queues (max 1; a newer one replaces it). Deploys are sequential per project, parallel across projects.
 
