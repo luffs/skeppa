@@ -45,6 +45,26 @@ export class GitHubApp {
     this._installationId = null
   }
 
+  // Exchange a one-time code from GitHub's app-manifest creation flow for the
+  // new app's credentials (id, slug, pem, webhook_secret, …). Deliberately
+  // unauthenticated — the short-lived, single-use code is the proof.
+  async convertManifestCode(code) {
+    const res = await fetch(`${API}/app-manifests/${encodeURIComponent(code)}/conversions`, {
+      method: 'POST',
+      headers: {
+        accept: 'application/vnd.github+json',
+        'user-agent': 'skeppa',
+        'x-github-api-version': '2022-11-28',
+      },
+    })
+    if (res.status !== 201) {
+      // Non-201 bodies are plain error JSON — credentials only travel on 201.
+      const body = await res.text().catch(() => '')
+      throw new Error(`GitHub app-manifest conversion failed (${res.status}): ${body.slice(0, 300)}`)
+    }
+    return res.json()
+  }
+
   async _fetch(path, { token, jwt, method = 'GET' } = {}) {
     const res = await fetch(`${API}${path}`, {
       method,

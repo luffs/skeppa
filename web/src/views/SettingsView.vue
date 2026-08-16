@@ -68,11 +68,33 @@
       </template>
 
       <p class="hint" style="font-size: 13.5px">
-        Create a GitHub App (Settings → Developer settings → GitHub Apps) with
-        <strong>Contents: read</strong> and <strong>Metadata: read</strong> permissions and the
-        <strong>push</strong> event subscribed, install it on your account, then paste its
-        credentials here. Set the webhook URL to
-        <span class="mono" style="font-size: 12.5px">{{ webhookUrl }}</span>
+        Skeppa needs a GitHub App for repo access, clone tokens and push webhooks. Let Skeppa
+        create it: GitHub shows the app pre-filled — webhook URL, permissions and events already
+        set — and once you confirm, the credentials land here by themselves. Finish by installing
+        the app on the repos you want to deploy when GitHub offers it.
+      </p>
+
+      <div class="row">
+        <input
+          v-model="manifestOrg"
+          class="code"
+          placeholder="organization (blank = your account)"
+          style="flex: 1 1 220px; width: auto"
+        />
+        <button :disabled="creating" @click="createGithubApp">
+          {{ creating ? 'Off to GitHub…' : 'Create GitHub App →' }}
+        </button>
+      </div>
+      <p v-if="installUrl" class="hint">
+        App created ✔ — <a :href="installUrl" style="color: var(--accent)">install it on GitHub</a>,
+        picking the repos to deploy, and you land back here.
+      </p>
+
+      <p class="hint" style="font-size: 13.5px; margin-top: 18px">
+        Or create the app yourself (GitHub → Settings → Developer settings → GitHub Apps:
+        <strong>Contents: read</strong>, <strong>Metadata: read</strong>, the <strong>push</strong>
+        event, webhook URL <span class="mono" style="font-size: 12.5px">{{ webhookUrl }}</span>)
+        and paste its credentials:
       </p>
 
       <label>App ID</label>
@@ -232,6 +254,9 @@ export default {
       busy: false,
       error: '',
       message: '',
+      manifestOrg: '',
+      creating: false,
+      installUrl: '',
       newUser: { username: '', password: '' },
       passwordFor: null,
       newPassword: '',
@@ -263,7 +288,13 @@ export default {
     },
   },
   async created() {
+    // Returning from GitHub: app created (?code=&state=) or app installed
+    // (?setup_action=). Strip the query first so a refresh can't replay it.
+    const { code, state, setup_action: setupAction } = this.$route.query
+    if (code || setupAction) this.$router.replace({ path: '/settings' })
+    if (code && state) await this.completeManifest(String(code), String(state))
     await Promise.all([this.load(), this.loadGate()])
+    if (setupAction) await this.test()
   },
   methods: {
     async load() {
@@ -297,6 +328,53 @@ export default {
       try {
         const repos = await api.get('/api/github/repos')
         this.message = `Connection OK — the app can access ${repos.length} repositori${repos.length === 1 ? 'y' : 'es'}.`
+      } catch (err) {
+        this.error = err.message
+      } finally {
+        this.busy = false
+      }
+    },
+
+    async createGithubApp() {
+      if (
+        this.status.has_private_key &&
+        !confirm('A GitHub App is already configured — creating a new one replaces its credentials here. Continue?')
+      ) {
+        return
+      }
+      this.creating = true
+      this.error = ''
+      this.message = ''
+      try {
+        const { action, manifest } = await api.post('/api/github/manifest', {
+          origin: location.origin,
+          organization: this.manifestOrg.trim() || undefined,
+        })
+        // GitHub's manifest flow expects a top-level form POST, so build one
+        // and leave the page; GitHub redirects back here with ?code=&state=.
+        const form = document.createElement('form')
+        form.method = 'post'
+        form.action = action
+        const field = document.createElement('input')
+        field.type = 'hidden'
+        field.name = 'manifest'
+        field.value = JSON.stringify(manifest)
+        form.appendChild(field)
+        document.body.appendChild(form)
+        form.submit()
+      } catch (err) {
+        this.error = err.message
+        this.creating = false
+      }
+    },
+    async completeManifest(code, state) {
+      this.busy = true
+      this.error = ''
+      this.message = ''
+      try {
+        const res = await api.post('/api/github/manifest/convert', { code, state })
+        this.installUrl = res.install_url
+        this.message = `GitHub App created and credentials saved ✔ (app id ${res.app_id})`
       } catch (err) {
         this.error = err.message
       } finally {

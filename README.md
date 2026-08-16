@@ -77,6 +77,20 @@ location / {
 
 Skeppa uses a GitHub App (not OAuth, not a PAT) for repo listing, clone tokens and webhooks.
 
+Log in to the panel, open **Settings → GitHub App** and press **Create GitHub App**. GitHub
+shows the app pre-filled ([manifest flow](https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest):
+webhook URL, read-only Contents/Metadata permissions and the push event are already set — only
+the name is yours to tweak). Confirm it, and the App ID, private key and webhook secret land in
+Skeppa automatically. GitHub then offers to **install** the app: pick the repos you want to
+deploy and you are sent back to the panel, which verifies the connection. To create the app
+under an organization, put the org name in the field next to the button.
+
+Do this from the panel's real HTTPS address — the webhook URL is derived from the address in
+your browser, so a panel browsed via `localhost` would register an unreachable webhook.
+
+<details>
+<summary>Manual setup (what the button automates)</summary>
+
 1. GitHub → Settings → Developer settings → GitHub Apps → **New GitHub App**
    - Webhook URL: `https://deploy.example.com/api/webhooks/github`
    - Webhook secret: a long random string (`openssl rand -hex 24`)
@@ -86,9 +100,11 @@ Skeppa uses a GitHub App (not OAuth, not a PAT) for repo listing, clone tokens a
 3. **Install the app** on your account/org, selecting the repos you want to deploy
 4. In Skeppa → Settings, paste the App ID, the PEM private key, and the webhook secret
 
+</details>
+
 ## Usage
 
-1. **Settings** — paste GitHub App credentials, test the connection
+1. **Settings** — press Create GitHub App (or paste credentials manually), test the connection
 2. **New project** — pick a repo and branch, set a deploy script (e.g. `bun install && bun run build`) and a start command (e.g. `bun run start`; leave empty for build-only projects)
 3. **Environment tab** — add ENV vars; on each deploy they're decrypted in memory and injected into the deploy script and the pm2 process. Nothing is written to disk unless the project opts into a `.env` file (see below)
 4. Push to the branch — the deploy runs automatically; watch the live log in the project view

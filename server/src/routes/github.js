@@ -1,11 +1,22 @@
 import { Hono } from 'hono'
+import { randomBytes } from 'node:crypto'
 import {
   getSetting, setSetting, setSecretSetting, deleteSetting,
   getFirebaseConfig, FIREBASE_CONFIG_KEYS,
 } from '../db/settings.js'
 
+// GitHub's app-manifest flow: the panel prepares a manifest, the browser
+// form-POSTs it to github.com, and GitHub redirects back with a one-time code
+// that converts into the new app's credentials. The state ties the callback to
+// a creation started from this panel — without it, a crafted link could plant
+// an attacker's app credentials into the settings.
+const MANIFEST_STATE_TTL_MS = 15 * 60_000
+const MANIFEST_CODE_RE = /^[A-Za-z0-9_-]{1,255}$/
+const GITHUB_ORG_RE = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/
+
 export function githubRoutes({ db, config, github }) {
   const app = new Hono()
+  const pendingManifestStates = new Map() // state → expiry (ms since epoch)
 
   app.get('/repos', async c => {
     try {
@@ -13,6 +24,90 @@ export function githubRoutes({ db, config, github }) {
     } catch (err) {
       return c.json({ error: err.message }, 502)
     }
+  })
+
+  // Prepare the handoff to GitHub. The frontend supplies its origin (the
+  // panel only knows localhost behind the proxy) and submits the returned
+  // manifest to the returned action URL as a top-level form POST.
+  app.post('/manifest', async c => {
+    const body = await c.req.json().catch(() => ({}))
+    let origin
+    try {
+      const url = new URL(String(body.origin ?? ''))
+      if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new Error('bad protocol')
+      origin = url.origin
+    } catch {
+      return c.json({ error: 'origin must be an http(s) URL' }, 400)
+    }
+    const organization = String(body.organization ?? '').trim()
+    if (organization && !GITHUB_ORG_RE.test(organization)) {
+      return c.json({ error: 'organization must be a GitHub organization name' }, 400)
+    }
+
+    for (const [state, expiresAt] of pendingManifestStates) {
+      if (expiresAt < Date.now()) pendingManifestStates.delete(state)
+    }
+    const state = randomBytes(16).toString('hex')
+    pendingManifestStates.set(state, Date.now() + MANIFEST_STATE_TTL_MS)
+
+    // App names are ≤34 chars and editable on GitHub's confirmation page —
+    // this is only a suggestion.
+    const host = new URL(origin).hostname
+    const name = `skeppa-${host.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`.slice(0, 34).replace(/-+$/, '')
+    return c.json({
+      action: organization
+        ? `https://github.com/organizations/${organization}/settings/apps/new?state=${state}`
+        : `https://github.com/settings/apps/new?state=${state}`,
+      state,
+      manifest: {
+        name,
+        url: origin,
+        description: 'Created by Skeppa — deploys pushes to this server.',
+        hook_attributes: { url: `${origin}/api/webhooks/github` },
+        redirect_url: `${origin}/settings`, // back to the settings page with ?code=&state=
+        setup_url: `${origin}/settings`, // and back again after the user installs the app
+        public: false,
+        default_permissions: { contents: 'read', metadata: 'read' },
+        default_events: ['push'],
+      },
+    })
+  })
+
+  // Complete the flow: swap the callback code for credentials and store them
+  // exactly like the manually pasted ones.
+  app.post('/manifest/convert', async c => {
+    const body = await c.req.json().catch(() => ({}))
+    const code = String(body.code ?? '')
+    const state = String(body.state ?? '')
+    if (!MANIFEST_CODE_RE.test(code)) return c.json({ error: 'malformed code' }, 400)
+    const expiresAt = pendingManifestStates.get(state)
+    if (!expiresAt || expiresAt < Date.now()) {
+      return c.json({
+        error:
+          'this app creation is unknown or expired — press Create GitHub App again ' +
+          '(if the app already exists on GitHub, paste its credentials manually instead)',
+      }, 400)
+    }
+    pendingManifestStates.delete(state)
+
+    let converted
+    try {
+      converted = await github.convertManifestCode(code)
+    } catch (err) {
+      return c.json({ error: err.message }, 502)
+    }
+    if (!converted?.id || !converted.slug || !converted.pem || !converted.webhook_secret) {
+      return c.json({ error: 'GitHub returned an incomplete app — create it manually instead' }, 502)
+    }
+    setSetting(db, 'github_app_id', String(converted.id))
+    setSecretSetting(db, config.masterKey, 'github_private_key', converted.pem)
+    setSecretSetting(db, config.masterKey, 'github_webhook_secret', converted.webhook_secret)
+    github.reset()
+    return c.json({
+      app_id: String(converted.id),
+      slug: converted.slug,
+      install_url: `https://github.com/apps/${encodeURIComponent(converted.slug)}/installations/new`,
+    })
   })
 
   return app
