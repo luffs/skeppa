@@ -1,36 +1,36 @@
 # ⛵ Skeppa
 
-A self-hosted deploy panel in the spirit of a simplified buddy.works. Runs on your own Linux server, deploys private GitHub repos via webhooks, manages encrypted ENV variables, and runs apps with pm2.
+A self-hosted deploy panel that turns a git push into a running app on your own Linux server. Deploys private GitHub repos via webhooks, manages encrypted ENV variables, and runs apps with pm2.
 
 - Add a project by picking a private GitHub repo + branch
 - Automatic deploy on push (GitHub App webhook, HMAC-verified) or manually from the UI
 - Per-project deploy script and ENV vars (AES-256-GCM encrypted at rest)
-- Start/stop/restart apps via pm2
+- Start/stop/restart apps via pm2 — or run an app in its own rootless-podman container
 - Live deploy logs and live status over a single WebSocket ([lazy-watch](https://www.npmjs.com/package/lazy-watch) diff sync)
+- Optional extras once you're running: a throwaway-container build sandbox, managed images (Shipyard), wildcard subdomain routing (harbor gate)
 
 Stack: Bun, Hono, SQLite (`bun:sqlite`), Vue 3 (Options API) + Vite, pm2. Plain ES6 JavaScript, no TypeScript.
 
-## Requirements
+## Quickstart — zero to first deploy
 
-- Linux server, [Bun](https://bun.sh) ≥ 1.1, `git`, [pm2](https://pm2.keymetrics.io) (`bun install -g pm2` or via npm)
-- A reverse proxy with HTTPS (Caddy/nginx). **Never expose the panel over plain HTTP** — it uses cookie sessions and carries deploy secrets.
+You need a Linux server and a domain; the rest takes about ten minutes.
 
-## Install
+**1. On the server** — as a dedicated non-root user (e.g. `skeppa`):
 
 ```bash
-# as a dedicated non-root user (e.g. `skeppa`)
+curl -fsSL https://bun.sh/install | bash    # Bun ≥ 1.1 — skip if installed
+bun install -g pm2                          # pm2 — skip if installed
 git clone <this repo> /srv/skeppa && cd /srv/skeppa
 bun scripts/install.js
 ```
 
-The installer asks a few questions and does the rest: creates the master-key file (chmod 600 —
-an existing key is never overwritten) and the data/apps directories, writes `.env`, builds the
-frontend, creates the admin user and starts the panel under pm2. It runs `pm2 save` at the one
-moment that is safe — while the panel is the sole pm2 process — and ends by printing the
-`pm2 startup` command that makes pm2 itself start at boot. Re-running the installer is safe.
+The interactive installer does the rest: creates the master-key file (chmod 600 — an existing
+key is never overwritten) and the data/apps directories, writes `.env`, builds the frontend,
+creates the admin user and starts the panel under pm2, ending with the `pm2 startup` command
+that makes pm2 itself start at boot. Re-running the installer is safe.
 
 <details>
-<summary>Manual install (what the script does)</summary>
+<summary>Manual install (what the script does), and why it runs pm2 save when it does</summary>
 
 ```bash
 bun install && bun run build
@@ -42,18 +42,17 @@ bun scripts/seed.js admin <your-password>
 pm2 start ecosystem.config.cjs && pm2 save && pm2 startup
 ```
 
+Run `pm2 save` only while the panel is the sole pm2 process — the installer does it at exactly
+that moment. Deployed apps are deliberately kept out of the pm2 dump: `pm2 save` writes every
+process's environment in plaintext to `~/.pm2/dump.pm2`, which would defeat the ENV encryption.
+After a server reboot the panel starts its apps again by itself (with freshly decrypted ENV),
+so the dump never needs them.
+
 </details>
 
-Run `pm2 save` only while the panel is the sole pm2 process. Deployed apps are deliberately
-kept out of the pm2 dump — `pm2 save` writes every process's environment in plaintext to
-`~/.pm2/dump.pm2`, which would defeat the ENV encryption. After a server reboot the panel
-starts its apps again by itself (with freshly decrypted ENV), so the dump never needs them.
-Stopping an app through the panel also turns off its start-at-boot flag, so it stays stopped
-across reboots; starting or deploying it turns the flag back on.
-
-The panel listens on `http://localhost:3000`.
-
-### Reverse proxy (Caddy example)
+**2. HTTPS in front** — the panel listens on `http://localhost:3000` and must only be exposed
+through an HTTPS reverse proxy (it uses cookie sessions and carries deploy secrets — never
+plain HTTP). Caddy:
 
 ```caddy
 deploy.example.com {
@@ -61,7 +60,10 @@ deploy.example.com {
 }
 ```
 
-For nginx, remember to proxy WS upgrades on `/ws`:
+<details>
+<summary>nginx instead</summary>
+
+Remember to proxy WS upgrades on `/ws`:
 
 ```nginx
 location / {
@@ -72,6 +74,42 @@ location / {
     proxy_set_header Host $host;
 }
 ```
+
+</details>
+
+**3. In the browser** — open `https://deploy.example.com` (the real domain, not `localhost`:
+the GitHub webhook URL is derived from the address you're browsing), log in, and follow the
+first-run checklist waiting on the dashboard:
+
+1. **Create GitHub App** — one button under Settings; GitHub shows the app pre-filled and the
+   credentials land in Skeppa automatically (details: [GitHub App setup](#github-app-setup))
+2. **Install the app** on the repos you want to deploy, when GitHub offers it
+3. **Moor a project** — pick repo + branch, give it a deploy script (e.g.
+   `bun install && bun run build`) and a start command (e.g. `bun run start`; leave empty for
+   build-only projects), and add ENV vars under the project's Environment tab
+4. **Push to the branch** — the deploy starts by itself; watch the live log in the project view
+
+If a push doesn't start a deploy, open **Settings → GitHub App**: the panel lists GitHub's
+recent webhook deliveries (event, response code, age) straight from GitHub's log, with a
+Redeliver button to resend one once you've fixed the cause — usually a webhook URL that isn't
+reachable over HTTPS from the internet.
+
+Everything below is reference for once you're sailing.
+
+## Day-to-day
+
+- ENV vars are decrypted in memory on each deploy and injected into the deploy script and the
+  pm2 process — nothing is written to disk. If something in the app reads `.env` from disk
+  itself (e.g. Vite at build time), enable **"Write a plaintext .env file into the app"** in
+  the project settings: the panel then maintains `shared/.env` (0600) plus a copy in the
+  working dir, and deletes both when the toggle is turned off.
+- Apps live in `APPS_DIR/<slug>/source` (git working copy); durable files go in
+  `APPS_DIR/<slug>/shared`.
+- While a deploy runs, a second trigger queues (max 1; a newer one replaces it). Deploys are
+  sequential per project, parallel across projects.
+- Stopping an app through the panel also turns off its start-at-boot flag, so it stays stopped
+  across reboots; starting or deploying it turns the flag back on. After a reboot the panel
+  restarts its apps itself.
 
 ## GitHub App setup
 
@@ -101,23 +139,6 @@ your browser, so a panel browsed via `localhost` would register an unreachable w
 4. In Skeppa → Settings, paste the App ID, the PEM private key, and the webhook secret
 
 </details>
-
-## Usage
-
-An empty harbor shows a first-run checklist that tracks these steps live (GitHub App
-configured? installed? first project moored?) with a button for whichever step is next.
-
-1. **Settings** — press Create GitHub App (or paste credentials manually), test the connection
-2. **New project** — pick a repo and branch, set a deploy script (e.g. `bun install && bun run build`) and a start command (e.g. `bun run start`; leave empty for build-only projects)
-3. **Environment tab** — add ENV vars; on each deploy they're decrypted in memory and injected into the deploy script and the pm2 process. Nothing is written to disk unless the project opts into a `.env` file (see below)
-4. Push to the branch — the deploy runs automatically; watch the live log in the project view
-
-If a push doesn't start a deploy, open **Settings → GitHub App**: the panel lists GitHub's
-recent webhook deliveries (event, response code, age) straight from GitHub's log, with a
-Redeliver button to resend one once you've fixed the cause — usually a webhook URL that isn't
-reachable over HTTPS from the internet.
-
-Apps live in `APPS_DIR/<slug>/source` (git working copy). If something in the app reads `.env` from disk itself (e.g. Vite at build time), enable **"Write a plaintext .env file into the app"** in the project settings — the panel then maintains `shared/.env` (0600) plus a copy in the working dir, and deletes both when the toggle is turned off. While a deploy runs, a second trigger queues (max 1; a newer one replaces it). Deploys are sequential per project, parallel across projects.
 
 ## Build sandbox (podman)
 
@@ -187,6 +208,16 @@ deploy, and the replaced layers show up as dangling for pruning. Pin an exact ve
 (`FROM docker.io/oven/bun:1.2.19`) in the Containerfile if you want updates to be an explicit,
 visible edit instead.
 
+## Subdomain routing (harbor gate)
+
+Give each app a subdomain instead of a port number: set a **base domain** under Settings →
+Harbor gate, then a **subdomain + port** on each project's settings. A panel-owned Caddy
+instance (pm2 process `skeppa-proxy`, plain HTTP, requires the `caddy` binary on the panel
+user's PATH) routes `subdomain.<base domain>` → `localhost:<port>`, and the routed port is
+injected into the app's environment as `PORT`. Your system Caddy forwards the wildcard to it
+with the one static block the panel shows you, and keeps owning TLS — give the wildcard a
+DNS-01 certificate or add `tls { on_demand }` to the block.
+
 ## Deploying Skeppa with Skeppa (dogfooding)
 
 Add the panel's own repo as a project with pm2 name `skeppa` (must match `SKEPPA_PM2_NAME` in `.env`). The panel detects the self-deploy and runs the pm2 reload detached after the deploy finalizes, so it doesn't kill its own in-flight deploy process.
@@ -211,7 +242,7 @@ On Windows, deploy execution (`sh`, pm2) is not supported — develop the UI/API
 - Decrypted ENV exists only in memory: it is injected through the pm2 CLI's process environment at start/reload and into the deploy script's environment. It is never written into ecosystem files, and `.env` files on disk are a per-project opt-in (written with mode 0600).
 - pm2 spawns for apps use a minimal, sanitized environment — the panel's own env (`MASTER_KEY`, tokens) is never inherited by deployed apps.
 - Know the boundary: pm2 keeps each process's environment in daemon memory, so anyone with shell access as the panel user can read secrets via `pm2 env`/`pm2 show` — and deployed apps run as that same user. The encryption protects the DB, its backups and the file system at rest; it does not isolate apps from each other or from the panel. If you need that, use per-app users or containers.
-- Never run `pm2 save` while apps are running (see Install) — the dump file would contain their env in plaintext.
+- Never run `pm2 save` while apps are running (see Quickstart) — the dump file would contain their env in plaintext.
 - Webhook payloads are verified with a timing-safe HMAC comparison before processing.
 - Clone tokens are short-lived installation tokens, passed per git invocation and never written to `.git/config` or logs.
 - The deploy script deliberately runs as shell — that's the product. On the host it runs **as your panel user**; enable the podman build sandbox (`SKEPPA_SANDBOX=podman`) to confine it to a throwaway container that only sees the project's source. Everything else that reaches a shell or path is whitelist-validated.
