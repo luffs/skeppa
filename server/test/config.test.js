@@ -96,6 +96,19 @@ test('the process environment overrides the config file per key', () => {
   }
 })
 
+test('the apps dir defaults to ~/apps — creatable without sudo', () => {
+  const saved = process.env.APPS_DIR
+  try {
+    delete process.env.APPS_DIR
+    withEnv({ MASTER_KEY: KEY }, () => {
+      expect(loadConfig().appsDir).toBe(join(homedir(), 'apps'))
+    })
+  } finally {
+    if (saved == null) delete process.env.APPS_DIR
+    else process.env.APPS_DIR = saved
+  }
+})
+
 test('~ expands to the home directory in path values', () => {
   const dir = mkdtempSync(join(tmpdir(), 'skeppa-cfg-'))
   writeFileSync(join(dir, 'config'), 'DATA_DIR=~/skeppa-test-data\n')

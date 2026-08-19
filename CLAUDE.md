@@ -32,7 +32,7 @@ Deploys private GitHub repos onto this server via webhooks, manages encrypted EN
 
 - `server/src/` — Hono app: `routes/`, `deploy/` (runner, git, pm2), `live/` (LiveState, Hub, poller), `github/`, `auth/`, `db/`, `lib/`, `proxy/` (harbor gate Caddy config + lifecycle)
 - `web/src/` — Vue app: `views/`, `components/`, `store.js`, `ws.js`, `api.js`
-- Deployed apps live in `APPS_DIR/<slug>/{source,shared}` (default `/srv/apps`)
+- Deployed apps live in `APPS_DIR/<slug>/{source,shared}` (default `~/apps` — HOME-based so the non-root panel user needs no sudo)
 
 ## Security requirements (non-negotiable)
 

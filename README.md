@@ -20,9 +20,11 @@ You need a Linux server and a domain; the rest takes about ten minutes.
 ```bash
 curl -fsSL https://bun.sh/install | bash    # Bun ≥ 1.1 — skip if installed
 bun install -g pm2                          # pm2 — skip if installed
-git clone <this repo> /srv/skeppa && cd /srv/skeppa
+git clone <this repo> ~/skeppa && cd ~/skeppa
 bun scripts/install.js
 ```
+
+No sudo needed — everything (checkout, config, data, apps) defaults to the panel user's home.
 
 The interactive installer does the rest: creates the master-key file (chmod 600 — an existing
 key is never overwritten) and the data/apps directories, writes the panel config to
@@ -37,7 +39,7 @@ the installer is safe.
 bun install && bun run build
 mkdir -p ~/.skeppa && openssl rand -hex 32 > ~/.skeppa/master.key && chmod 600 ~/.skeppa/master.key
 cp .env.example ~/.skeppa/config   # then check DATA_DIR — everything else defaults sensibly
-sudo mkdir -p /srv/apps && sudo chown $USER /srv/apps
+mkdir -p ~/apps ~/.local/share/skeppa
 bun scripts/seed.js admin <your-password>
 pm2 start ecosystem.config.cjs && pm2 save && pm2 startup
 ```

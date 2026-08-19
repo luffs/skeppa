@@ -104,9 +104,10 @@ const readKv = path => (existsSync(path) ? parseKeyValues(readFileSync(path, 'ut
 const existingEnv = readKv(envPath)
 const prior = { ...existingEnv, ...readKv(configPath) }
 
+// Defaults live under HOME so the whole install works without sudo.
 const keyFile = resolve(expandHome(ask('Master key file', prior.MASTER_KEY_FILE || '~/.skeppa/master.key')))
-const dataDir = resolve(expandHome(ask('Data directory (SQLite database)', prior.DATA_DIR || join(rootDir, 'data'))))
-const appsDir = resolve(expandHome(ask('Apps directory (deployed apps)', prior.APPS_DIR || '/srv/apps')))
+const dataDir = resolve(expandHome(ask('Data directory (SQLite database)', prior.DATA_DIR || '~/.local/share/skeppa')))
+const appsDir = resolve(expandHome(ask('Apps directory (deployed apps)', prior.APPS_DIR || '~/apps')))
 const port = ask('Panel port', prior.PORT || '3000')
 
 // --- master key file --------------------------------------------------------

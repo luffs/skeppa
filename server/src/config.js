@@ -122,7 +122,8 @@ export function loadConfig({ requireMasterKey = true } = {}) {
     isProd: env.NODE_ENV === 'production',
     masterKey,
     dataDir: resolve(env.DATA_DIR || join(rootDir, 'data')),
-    appsDir: resolve(env.APPS_DIR || '/srv/apps'),
+    // Under HOME so a non-root panel user can create it without sudo.
+    appsDir: resolve(env.APPS_DIR || join(homedir(), 'apps')),
     webDist: join(rootDir, 'web', 'dist'),
     deployTimeoutMs: Number(env.DEPLOY_TIMEOUT_MS || 10 * 60 * 1000),
     sandbox,
