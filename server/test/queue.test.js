@@ -3,7 +3,7 @@ import { Database } from 'bun:sqlite'
 import { fileURLToPath } from 'node:url'
 import { migrate } from '../src/db/migrate.js'
 import { DeployRunner, recoverInterrupted } from '../src/deploy/runner.js'
-import { createLiveState } from '../src/live/state.js'
+import { createLiveState, RECENT_DEPLOYMENTS_LIMIT } from '../src/live/state.js'
 
 const migrationsDir = fileURLToPath(new URL('../src/db/migrations', import.meta.url))
 const tick = () => new Promise(r => setTimeout(r, 0))
@@ -15,15 +15,16 @@ function setup(execute) {
   const { lastInsertRowid } = db.query(
     `INSERT INTO projects (slug, name, repo_full_name, branch, pm2_name) VALUES ('p', 'P', 'o/r', 'main', 'p')`
   ).run()
+  const liveState = createLiveState()
   const runner = new DeployRunner({
     db,
     config: { appsDir: '/tmp/apps', masterKey: 'a'.repeat(64), deployTimeoutMs: 1000, selfPm2Name: 'skeppa' },
-    liveState: createLiveState(),
+    liveState,
     hub: { sendLog() {} },
     github: null,
     execute,
   })
-  return { db, runner, projectId: Number(lastInsertRowid) }
+  return { db, runner, liveState, projectId: Number(lastInsertRowid) }
 }
 
 // Executor whose completion the test controls.
@@ -109,6 +110,57 @@ test('deploys for different projects run in parallel', async () => {
   pending.forEach(p => p.resolve())
   await tick(); await tick()
   expect(statuses(db)).toEqual(['success', 'success'])
+})
+
+// The dashboard renders its log from LiveState, so every status change has to
+// land there — otherwise the log silently freezes at whatever the last
+// snapshot held.
+test('recentDeployments follows a deploy through queued, running and success', async () => {
+  const { execute, pending } = manualExecutor()
+  const { runner, liveState, projectId } = setup(execute)
+  const recent = () => liveState.projects[projectId].recentDeployments
+
+  const id = runner.enqueue(projectId, { trigger: 'manual' })
+  expect(recent().length).toBe(1)
+  expect(recent()[0]).toMatchObject({ id, status: 'queued', trigger: 'manual' })
+
+  await tick()
+  expect(recent()[0]).toMatchObject({ id, status: 'running' })
+  expect(recent()[0].startedAt).toBeTruthy()
+
+  pending[0].resolve()
+  await tick(); await tick()
+  expect(recent()[0]).toMatchObject({ id, status: 'success' })
+  expect(recent()[0].finishedAt).toBeTruthy()
+})
+
+test('a replaced waiting deploy shows up as cancelled in recentDeployments', async () => {
+  const { execute, pending } = manualExecutor()
+  const { runner, liveState, projectId } = setup(execute)
+  runner.enqueue(projectId, { trigger: 'webhook' })
+  await tick()
+  const waiting = runner.enqueue(projectId, { trigger: 'webhook' })
+  runner.enqueue(projectId, { trigger: 'webhook' })
+
+  const recent = liveState.projects[projectId].recentDeployments
+  expect(recent.length).toBe(3) // newest first
+  expect(recent.find(d => d.id === waiting).status).toBe('cancelled')
+  pending[0].resolve()
+  await tick(); await tick()
+})
+
+test('recentDeployments keeps only the newest few', async () => {
+  const { execute, pending } = manualExecutor()
+  const { runner, liveState, projectId } = setup(execute)
+  for (let i = 0; i < RECENT_DEPLOYMENTS_LIMIT + 3; i++) {
+    runner.enqueue(projectId, { trigger: 'manual' })
+    await tick()
+    pending.at(-1)?.resolve()
+    await tick(); await tick()
+  }
+  const recent = liveState.projects[projectId].recentDeployments
+  expect(recent.length).toBe(RECENT_DEPLOYMENTS_LIMIT)
+  expect(recent[0].id).toBeGreaterThan(recent.at(-1).id)
 })
 
 test('recoverInterrupted fails queued and running deployments on startup', () => {

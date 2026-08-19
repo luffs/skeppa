@@ -1,7 +1,7 @@
 import { rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { resolveShell, scriptEnvBase } from '../lib/shell.js'
-import { projectDefaults, getProjectInfo } from '../live/state.js'
+import { projectDefaults, getProjectInfo, getRecentDeployments } from '../live/state.js'
 import { projectDirs, syncEnvFiles, writeEcosystem, runtimeEnv } from './envfiles.js'
 import { syncRepo } from './git.js'
 import { runScriptInContainer } from './sandbox.js'
@@ -111,6 +111,7 @@ export class DeployRunner {
       q.runningId = deploymentId
       queueMicrotask(() => this._run(project.id, deploymentId))
     }
+    this._refreshRecent(project.id)
     return deploymentId
   }
 
@@ -129,6 +130,13 @@ export class DeployRunner {
     return live
   }
 
+  // Re-reads the tail of the history after every status change. Cheap (an
+  // indexed 5-row query) and impossible to drift, unlike patching the array
+  // in place; lazy-watch turns it into a diff only when something differs.
+  _refreshRecent(projectId) {
+    this._live(projectId).recentDeployments = getRecentDeployments(this.db, projectId)
+  }
+
   async _run(projectId, deploymentId) {
     const log = new LogCollector(this.db, this.hub, deploymentId)
     this.activeLogs.set(deploymentId, log)
@@ -136,6 +144,7 @@ export class DeployRunner {
     this.db.query(`UPDATE deployments SET status = 'running', started_at = ? WHERE id = ?`)
       .run(startedAt, deploymentId)
     this._live(projectId).currentDeployment = { id: deploymentId, status: 'running', startedAt }
+    this._refreshRecent(projectId)
 
     let status = 'success'
     let exitCode = 0
@@ -162,6 +171,7 @@ export class DeployRunner {
     live.currentDeployment = null
     live.lastDeployment = { id: deploymentId, status, finishedAt, commitSha: row?.commit_sha ?? null }
     if (status === 'success' && row?.commit_sha) live.deployedSha = row.commit_sha
+    this._refreshRecent(projectId)
 
     const q = this.queues.get(projectId)
     if (q) {
@@ -193,6 +203,8 @@ export class DeployRunner {
     log.line(`▸ checked out ${sha.slice(0, 7)} — ${message}`)
     this.db.query('UPDATE deployments SET commit_sha = ?, commit_message = COALESCE(commit_message, ?) WHERE id = ?')
       .run(sha, message, deploymentId)
+    // The sha is what the log entry shows for a running deploy.
+    this._refreshRecent(project.id)
 
     const envVars = syncEnvFiles(this.db, this.config, project)
     log.line(project.write_env_file

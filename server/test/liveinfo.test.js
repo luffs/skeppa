@@ -3,7 +3,7 @@ import { Database } from 'bun:sqlite'
 import { fileURLToPath } from 'node:url'
 import { migrate } from '../src/db/migrate.js'
 import { setSetting } from '../src/db/settings.js'
-import { createLiveState, initLiveState } from '../src/live/state.js'
+import { createLiveState, initLiveState, RECENT_DEPLOYMENTS_LIMIT } from '../src/live/state.js'
 
 function makeDb() {
   const db = new Database(':memory:')
@@ -36,6 +36,31 @@ test('initLiveState carries project info, head commit and deployed sha', () => {
   expect(live.deployedSha).toBe('oldsha') // last SUCCESSFUL deploy, not the failed one
 })
 
+// The dashboard's ship's log renders from this instead of firing one
+// /deployments request per project.
+test('initLiveState carries the tail of each project\'s deploy history', () => {
+  const db = makeDb()
+  db.query(
+    `INSERT INTO projects (slug, name, repo_full_name, branch, pm2_name)
+     VALUES ('app', 'App', 'luff/app', 'main', 'app')`
+  ).run()
+  for (let i = 0; i < 7; i++) {
+    db.query(
+      `INSERT INTO deployments (project_id, status, "trigger", commit_sha, started_at, finished_at)
+       VALUES (1, 'success', 'manual', ?, 's', 'f')`
+    ).run(`sha${i}`)
+  }
+
+  const liveState = createLiveState()
+  initLiveState(liveState, db)
+  const recent = liveState.projects[1].recentDeployments
+
+  expect(recent.length).toBe(RECENT_DEPLOYMENTS_LIMIT)
+  expect(recent[0].commitSha).toBe('sha6') // newest first
+  expect(recent.at(-1).commitSha).toBe('sha2')
+  expect(recent[0]).toMatchObject({ status: 'success', trigger: 'manual', startedAt: 's', finishedAt: 'f' })
+})
+
 // The frontend builds "open the app" links from this, so it must be in the
 // state clients receive rather than something they have to fetch.
 test('initLiveState carries the harbor gate base domain', () => {
@@ -63,4 +88,5 @@ test('initLiveState handles a fresh project without deploys or pushes', () => {
   expect(live.headCommit).toBeNull()
   expect(live.deployedSha).toBeNull()
   expect(live.lastDeployment).toBeNull()
+  expect(live.recentDeployments).toEqual([])
 })

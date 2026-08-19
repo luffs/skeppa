@@ -40,12 +40,35 @@ export function getProjectInfo(db, id) {
   return db.query(`SELECT ${PROJECT_INFO_COLUMNS} FROM projects WHERE id = ?`).get(Number(id)) ?? null
 }
 
+// The tail of the deployment history the dashboard's ship's log renders. It
+// lives in LiveState so the dashboard needs no request of its own — one
+// /deployments call per project on every visit was the alternative — and so
+// the log updates as deploys queue, start and finish. The full history (with
+// logs and commit messages) stays on /api/projects/:id/deployments.
+export const RECENT_DEPLOYMENTS_LIMIT = 5
+
+export function getRecentDeployments(db, projectId) {
+  return db.query(
+    `SELECT id, status, "trigger", commit_sha, started_at, finished_at, created_at
+     FROM deployments WHERE project_id = ? ORDER BY id DESC LIMIT ?`
+  ).all(Number(projectId), RECENT_DEPLOYMENTS_LIMIT).map(d => ({
+    id: d.id,
+    status: d.status,
+    trigger: d.trigger,
+    commitSha: d.commit_sha,
+    startedAt: d.started_at,
+    finishedAt: d.finished_at,
+    createdAt: d.created_at,
+  }))
+}
+
 export function projectDefaults(lastDeployment = null, info = null) {
   return {
     info,
     pm2: { status: 'unknown', uptime: null, memory: null, cpu: null },
     currentDeployment: null,
     lastDeployment,
+    recentDeployments: [],
     // sha of the last successful deployment; compared against headCommit.sha
     // to detect pushed-but-undeployed commits.
     deployedSha: null,
@@ -80,6 +103,7 @@ export function initLiveState(liveState, db) {
         : null,
       info
     )
+    live.recentDeployments = getRecentDeployments(db, info.id)
     live.deployedSha = lastSuccess?.commit_sha ?? null
     live.headCommit = head_sha
       ? { sha: head_sha, message: head_message, pushedAt: head_pushed_at }

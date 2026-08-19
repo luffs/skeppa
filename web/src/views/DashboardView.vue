@@ -90,7 +90,7 @@ export default {
   name: 'DashboardView',
   components: { ProjectCard },
   data() {
-    return { deploymentsByProject: {}, setup: null, setupError: '' }
+    return { setup: null, setupError: '' }
   },
   computed: {
     // Rendered straight from the LiveState mirror — no API round-trip when
@@ -128,28 +128,24 @@ export default {
       ).length
       return `${n} vessel${n === 1 ? '' : 's'} moored · ${running} running · ${attention} need${attention === 1 ? 's' : ''} attention`
     },
-    // Deploys starting or finishing anywhere should refresh the log.
-    deployStamp() {
-      return Object.values(store.live.projects ?? {})
-        .map(p => `${p.info?.id}:${p.currentDeployment?.id ?? ''}:${p.lastDeployment?.id ?? ''}`)
-        .join('|')
-    },
+    // Built straight off the LiveState mirror: the server keeps the tail of
+    // each project's history in `recentDeployments`, so the log needs no
+    // request of its own and moves as deploys queue, start and finish.
     feed() {
       const items = []
       for (const p of Object.values(store.live.projects ?? {})) {
         const info = p.info
         if (!info) continue
-        for (const d of (this.deploymentsByProject[info.id] ?? []).slice(0, 5)) {
-          const status = d.id === p.currentDeployment?.id ? p.currentDeployment.status : d.status
-          const when = d.finished_at || d.started_at || d.created_at
+        for (const d of p.recentDeployments ?? []) {
+          const when = d.finishedAt || d.startedAt || d.createdAt
           items.push({
             ts: when ? new Date(when).getTime() : 0,
             project: info.name,
-            text: (FEED_TEXT[status] ?? (id => `voyage #${id} — ${status}`))(d.id),
-            meta: [d.trigger, d.commit_sha?.slice(0, 7), duration(d.started_at, d.finished_at), timeAgo(when)]
+            text: (FEED_TEXT[d.status] ?? (id => `voyage #${id} — ${d.status}`))(d.id),
+            meta: [d.trigger, d.commitSha?.slice(0, 7), duration(d.startedAt, d.finishedAt), timeAgo(when)]
               .filter(v => v && v !== '—')
               .join(' · '),
-            dot: FEED_DOT[status] ?? '',
+            dot: FEED_DOT[d.status] ?? '',
           })
         }
         if (p.headCommit?.sha && !p.currentDeployment && p.headCommit.sha !== p.deployedSha) {
@@ -166,7 +162,6 @@ export default {
     },
   },
   watch: {
-    deployStamp: { immediate: true, handler: 'loadFeed' },
     // The checklist only concerns an empty harbor — don't poke GitHub on
     // every dashboard visit once projects exist.
     needsSetup: { immediate: true, handler(v) { if (v && !this.setup) this.checkSetup() } },
@@ -179,15 +174,6 @@ export default {
       } catch (err) {
         this.setupError = err.message
       }
-    },
-    async loadFeed() {
-      const byProject = {}
-      await Promise.all(
-        this.projects.map(async p => {
-          byProject[p.id] = await api.get(`/api/projects/${p.id}/deployments`).catch(() => [])
-        })
-      )
-      this.deploymentsByProject = byProject
     },
   },
 }
