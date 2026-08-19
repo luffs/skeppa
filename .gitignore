@@ -6,3 +6,4 @@ data/
 .env
 web/dist/
 .DS_Store
+.idea/
