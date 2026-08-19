@@ -25,22 +25,26 @@ bun scripts/install.js
 ```
 
 The interactive installer does the rest: creates the master-key file (chmod 600 — an existing
-key is never overwritten) and the data/apps directories, writes `.env`, builds the frontend,
-creates the admin user and starts the panel under pm2, ending with the `pm2 startup` command
-that makes pm2 itself start at boot. Re-running the installer is safe.
+key is never overwritten) and the data/apps directories, writes the panel config to
+`~/.skeppa/config`, builds the frontend, creates the admin user and starts the panel under
+pm2, ending with the `pm2 startup` command that makes pm2 itself start at boot. Re-running
+the installer is safe.
 
 <details>
 <summary>Manual install (what the script does), and why it runs pm2 save when it does</summary>
 
 ```bash
 bun install && bun run build
-cp .env.example .env
 mkdir -p ~/.skeppa && openssl rand -hex 32 > ~/.skeppa/master.key && chmod 600 ~/.skeppa/master.key
-# point MASTER_KEY_FILE at that file in .env
+cp .env.example ~/.skeppa/config   # then check DATA_DIR — everything else defaults sensibly
 sudo mkdir -p /srv/apps && sudo chown $USER /srv/apps
 bun scripts/seed.js admin <your-password>
 pm2 start ecosystem.config.cjs && pm2 save && pm2 startup
 ```
+
+The config lives at `~/.skeppa/config` (KEY=VALUE, same keys as `.env.example`) — one fixed
+home regardless of which checkout the panel runs from; the process environment overrides it
+per key, so a repo `.env` still works as a dev-time override.
 
 Run `pm2 save` only while the panel is the sole pm2 process — the installer does it at exactly
 that moment. Deployed apps are deliberately kept out of the pm2 dump: `pm2 save` writes every
@@ -150,7 +154,7 @@ rootless podman installed you can run every deploy script in a throwaway contain
 sudo apt install podman uidmap        # or your distro's equivalent
 sudo loginctl enable-linger $(whoami) # keep user services alive without a login session
 systemctl --user enable --now podman.socket
-# then in the panel .env:
+# then in the panel config (~/.skeppa/config):
 # SKEPPA_SANDBOX=podman
 ```
 
@@ -220,9 +224,14 @@ DNS-01 certificate or add `tls { on_demand }` to the block.
 
 ## Deploying Skeppa with Skeppa (dogfooding)
 
-Add the panel's own repo as a project with pm2 name `skeppa` (must match `SKEPPA_PM2_NAME` in `.env`). The panel detects the self-deploy and runs the pm2 reload detached after the deploy finalizes, so it doesn't kill its own in-flight deploy process.
+Add the panel's own repo as a project with pm2 name `skeppa` (must match `SKEPPA_PM2_NAME`,
+default `skeppa`). The panel detects the self-deploy and runs the pm2 reload detached after
+the deploy finalizes, so it doesn't kill its own in-flight deploy process.
 
-Give the project's Environment tab the panel's config and leave the `.env`-file toggle off: the panel then runs from `APPS_DIR/skeppa/source` with the key read from the file and nothing secret written into the app directory. Required: `MASTER_KEY_FILE` (a path, not a secret) and an **absolute** `DATA_DIR` — its default follows the running checkout, so after a self-deploy an unset `DATA_DIR` would point at an empty database inside `APPS_DIR/skeppa/source`. Add `APPS_DIR` only if you changed it from `/srv/apps`. None of these are secrets, so the panel's process environment stays clean.
+No project ENV is needed and the `.env`-file toggle stays off: whichever checkout the panel
+runs from — the original install or `APPS_DIR/skeppa/source` — it reads the same
+`~/.skeppa/config` and master-key file. Nothing secret, and no config, lives in the app
+directory or the panel's process environment.
 
 ## Development
 
@@ -233,7 +242,9 @@ bun run dev:web           # Vite on :5173, proxies /api and /ws to VITE_SKEPPA_A
 bun test                  # unit tests
 ```
 
-On Windows, deploy execution (`sh`, pm2) is not supported — develop the UI/API and run real deploys on Linux.
+A `.env` in the repo root is the dev-time config (Bun loads it into the process env, which
+overrides `~/.skeppa/config` per key). On Windows, deploy execution (`sh`, pm2) is not
+supported — develop the UI/API and run real deploys on Linux.
 
 ## Security notes
 

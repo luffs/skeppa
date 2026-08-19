@@ -1,11 +1,50 @@
 import { join, resolve, dirname } from 'node:path'
-import { readFileSync, statSync } from 'node:fs'
+import { readFileSync, statSync, existsSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 
 const HEX_KEY_RE = /^[0-9a-fA-F]{64}$/
 
 // Repo root = two levels up from server/src/
 export const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
+
+// The panel's config file: KEY=VALUE lines at a fixed path independent of
+// which checkout is running (the original install or a self-deployed copy in
+// APPS_DIR), so there is exactly one source of truth. The process environment
+// overrides the file per key — which keeps one-off overrides possible and
+// makes a repo .env (Bun loads it into the process env) a dev-time override.
+export function configFilePath(env = process.env) {
+  return env.SKEPPA_CONFIG || join(homedir(), '.skeppa', 'config')
+}
+
+// Same shape the .env family uses: KEY=VALUE per line, # comments and blank
+// lines ignored, optional surrounding quotes stripped. No inline comments.
+export function parseKeyValues(text) {
+  const values = {}
+  for (const line of text.split('\n')) {
+    const m = line.match(/^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.*?)\s*$/)
+    if (!m) continue
+    let value = m[2]
+    if (value.length >= 2 && (value[0] === '"' || value[0] === "'") && value.endsWith(value[0])) {
+      value = value.slice(1, -1)
+    }
+    values[m[1]] = value
+  }
+  return values
+}
+
+function readConfigFile(path) {
+  try {
+    return parseKeyValues(readFileSync(path, 'utf8'))
+  } catch {
+    return {} // no config file — the process env / a dev .env carries everything
+  }
+}
+
+// Config files are hand-written, so `~/` deserves to work in path values —
+// readFileSync/resolve treat it literally (tilde is shell syntax).
+const expandHome = p => (p === '~' || p?.startsWith('~/') ? join(homedir(), p.slice(1)) : p)
+const PATH_KEYS = ['MASTER_KEY_FILE', 'DATA_DIR', 'APPS_DIR', 'CONTAINER_SOCKET']
 
 // The master key preferably comes from MASTER_KEY_FILE — a chmod-600 file
 // holding 64 hex chars, living outside the repo, DATA_DIR and APPS_DIR so no
@@ -45,7 +84,19 @@ function readMasterKey(env, required) {
 const SANDBOXES = ['host', 'podman']
 
 export function loadConfig({ requireMasterKey = true } = {}) {
-  const env = process.env
+  const configPath = configFilePath()
+  const env = { ...readConfigFile(configPath), ...process.env }
+  for (const key of PATH_KEYS) {
+    if (env[key]) env[key] = expandHome(env[key])
+  }
+
+  // Nothing configured at all: a master.key next to the config file is the
+  // default — the installer puts it there.
+  if (!env.MASTER_KEY_FILE && !env.MASTER_KEY) {
+    const sibling = join(dirname(configPath), 'master.key')
+    if (existsSync(sibling)) env.MASTER_KEY_FILE = sibling
+  }
+
   const masterKey = readMasterKey(env, requireMasterKey)
 
   const sandbox = env.SKEPPA_SANDBOX || 'host'
@@ -60,7 +111,7 @@ export function loadConfig({ requireMasterKey = true } = {}) {
     console.error(
       'FATAL: no valid master key. It must be 64 hex characters (32 bytes).\n' +
       '       Generate one with:  mkdir -p ~/.skeppa && openssl rand -hex 32 > ~/.skeppa/master.key && chmod 600 ~/.skeppa/master.key\n' +
-      '       and point MASTER_KEY_FILE at it in the panel’s .env (or set MASTER_KEY directly, dev only).\n' +
+      '       — that path is picked up automatically. Elsewhere: set MASTER_KEY_FILE in ~/.skeppa/config (or MASTER_KEY directly, dev only).\n' +
       '       Refusing to start.'
     )
     process.exit(1)
