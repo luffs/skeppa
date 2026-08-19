@@ -94,7 +94,7 @@
 <script>
 import StatusBadge from '../components/StatusBadge.vue'
 import Pm2Logs from '../components/Pm2Logs.vue'
-import { store, loadGate, appUrlFor } from '../store.js'
+import { store, appUrlFor } from '../store.js'
 import { api } from '../api.js'
 import { bytes, uptimeSince, timeAgo } from '../lib/format.js'
 
@@ -103,9 +103,6 @@ export default {
   components: { StatusBadge, Pm2Logs },
   data() {
     return { opened: null, busy: null, actionError: '' }
-  },
-  created() {
-    loadGate() // routed processes link to their app from the status badge
   },
   computed: {
     // Fed by the server-side poller through LiveState — renders instantly on

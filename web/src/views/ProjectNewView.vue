@@ -29,9 +29,6 @@
       <label>Name</label>
       <input v-model="form.name" placeholder="My app" @input="syncPm2Name" />
 
-      <label>pm2 process name</label>
-      <input v-model="form.pm2_name" class="code" />
-
       <label>Deploy script</label>
       <textarea v-model="form.deploy_script" class="code" rows="4" placeholder="bun install && bun run build"></textarea>
       <p class="hint">
@@ -45,6 +42,15 @@
       <label>Working subdirectory <span class="soft">(optional, relative to repo root)</span></label>
       <input v-model="form.cwd" class="code" placeholder="apps/api" />
 
+      <RuntimeFields v-model:runtime="form.runtime" v-model:run-image="form.run_image" />
+
+      <template v-if="form.runtime === 'pm2'">
+        <label>pm2 process name</label>
+        <input v-model="form.pm2_name" class="code" />
+      </template>
+
+      <RoutingFields v-model:subdomain="form.subdomain" v-model:port="form.port" />
+
       <p v-if="error" class="error">{{ error }}</p>
       <p style="margin: 22px 0 0">
         <button :disabled="busy || !form.repo_full_name || !form.name" @click="submit">
@@ -57,9 +63,12 @@
 
 <script>
 import { api } from '../api.js'
+import RuntimeFields from '../components/RuntimeFields.vue'
+import RoutingFields from '../components/RoutingFields.vue'
 
 export default {
   name: 'ProjectNewView',
+  components: { RuntimeFields, RoutingFields },
   data() {
     return {
       repos: [],
@@ -77,6 +86,13 @@ export default {
         start_command: '',
         cwd: '',
         auto_deploy: true,
+        // Set here rather than in Rigging afterwards: these decide what the
+        // very first deploy does. Build image and the .env-file toggle have
+        // working defaults and stay in the project settings.
+        runtime: 'pm2',
+        run_image: '',
+        subdomain: '',
+        port: '',
       },
     }
   },
@@ -112,7 +128,13 @@ export default {
       this.busy = true
       this.error = ''
       try {
-        const created = await api.post('/api/projects', { ...this.form, cwd: this.form.cwd || null })
+        const created = await api.post('/api/projects', {
+          ...this.form,
+          cwd: this.form.cwd || null,
+          run_image: this.form.run_image || null,
+          subdomain: this.form.subdomain || null,
+          port: this.form.port === '' ? null : Number(this.form.port),
+        })
         this.$router.push(`/projects/${created.id}`)
       } catch (err) {
         const fields = err.fields ? ' — ' + Object.entries(err.fields).map(([k, v]) => `${k}: ${v}`).join(', ') : ''

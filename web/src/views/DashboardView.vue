@@ -73,7 +73,7 @@
 
 <script>
 import ProjectCard from '../components/ProjectCard.vue'
-import { store, loadGate } from '../store.js'
+import { store } from '../store.js'
 import { api } from '../api.js'
 import { timeAgo, duration } from '../lib/format.js'
 
@@ -170,9 +170,6 @@ export default {
     // The checklist only concerns an empty harbor — don't poke GitHub on
     // every dashboard visit once projects exist.
     needsSetup: { immediate: true, handler(v) { if (v && !this.setup) this.checkSetup() } },
-  },
-  created() {
-    loadGate() // shared: the cards build their app links from it
   },
   methods: {
     async checkSetup() {

@@ -113,34 +113,22 @@
       <textarea v-model="edit.deploy_script" class="code" rows="4"></textarea>
       <p class="hint">⚠ Runs as a shell script on the server — only trusted commands.</p>
       <label>Build image</label>
-      <input v-model="edit.build_image" class="code" list="skeppa-images" placeholder="panel default" />
+      <input v-model="edit.build_image" class="code" list="skeppa-build-images" placeholder="panel default" />
       <p class="hint">
         OCI image the deploy script runs in when the podman build sandbox is enabled
         (<span class="mono">SKEPPA_SANDBOX=podman</span>). Empty = panel default. Ignored in host mode.
         Managed images from the Shipyard are suggested.
       </p>
-      <datalist id="skeppa-images">
+      <datalist id="skeppa-build-images">
         <option v-for="ref in imageRefs" :key="ref" :value="ref" />
       </datalist>
       <label>Start command</label>
       <input v-model="edit.start_command" class="code" />
-      <label>Runtime</label>
-      <select v-model="edit.runtime" class="code">
-        <option value="pm2">pm2 — host process</option>
-        <option value="container">container — rootless podman</option>
-      </select>
-      <p class="hint" v-if="edit.runtime === 'container'">
-        The start command runs in a disposable container: source read-only at
-        <span class="mono">/app</span>, <span class="mono">shared/</span> writable at
-        <span class="mono">/data</span>, the app port published on localhost. Takes effect on the
-        next deploy or restart.
-      </p>
-      <template v-if="edit.runtime === 'container'">
-        <label>Run image</label>
-        <input v-model="edit.run_image" class="code" list="skeppa-images" placeholder="same as build image" />
+      <RuntimeFields v-model:runtime="edit.runtime" v-model:run-image="edit.run_image" existing />
+      <template v-if="edit.runtime === 'pm2'">
+        <label>pm2 process name</label>
+        <input v-model="edit.pm2_name" class="code" />
       </template>
-      <label>pm2 process name</label>
-      <input v-model="edit.pm2_name" class="code" />
       <label>Working subdirectory</label>
       <input v-model="edit.cwd" class="code" />
       <label class="check-label">
@@ -153,27 +141,7 @@
         (e.g. Vite at build time); it writes <span class="mono">shared/.env</span> plus a copy in
         the working directory. Turning it off deletes those files.
       </p>
-      <div class="row">
-        <div style="flex: 1 1 160px">
-          <label>Subdomain</label>
-          <input v-model="edit.subdomain" class="code" placeholder="myapp" />
-        </div>
-        <div style="flex: 1 1 120px">
-          <label>App port</label>
-          <input v-model="edit.port" class="code" placeholder="4001" />
-        </div>
-      </div>
-      <p class="hint" v-if="routedUrl">
-        Routed: <a :href="routedUrl" target="_blank" rel="noopener" class="mono" style="font-size: 12.5px">{{ routedUrl }}</a>
-        → localhost:{{ edit.port }} · the app gets <span class="mono" style="font-size: 12px">PORT={{ edit.port }}</span>
-      </p>
-      <p class="hint" v-else-if="edit.subdomain && gate && !gate.base_domain">
-        Set a base domain under Rigging → Harbor gate to route this subdomain.
-      </p>
-      <p class="hint" v-else>
-        Optional: route <span class="mono" style="font-size: 12px">subdomain.&lt;base domain&gt;</span>
-        to this app through the harbor gate proxy.
-      </p>
+      <RoutingFields v-model:subdomain="edit.subdomain" v-model:port="edit.port" existing />
       <p v-if="saveError" class="error">{{ saveError }}</p>
       <p v-if="saved" class="hint">Saved ✔</p>
       <div class="row" style="margin-top: 22px; justify-content: space-between">
@@ -220,13 +188,16 @@ import StatusBadge from '../components/StatusBadge.vue'
 import DeployLog from '../components/DeployLog.vue'
 import EnvEditor from '../components/EnvEditor.vue'
 import Pm2Logs from '../components/Pm2Logs.vue'
+import RuntimeFields from '../components/RuntimeFields.vue'
+import RoutingFields from '../components/RoutingFields.vue'
 import { api } from '../api.js'
-import { store, liveProject, loadGate, appUrlFor } from '../store.js'
+import { liveProject, appUrlFor } from '../store.js'
+import { imageRefs, loadImageRefs } from '../lib/images.js'
 import { timeAgo, duration, uptimeSince, bytes } from '../lib/format.js'
 
 export default {
   name: 'ProjectView',
-  components: { StatusBadge, DeployLog, EnvEditor, Pm2Logs },
+  components: { StatusBadge, DeployLog, EnvEditor, Pm2Logs, RuntimeFields, RoutingFields },
   props: { id: { type: String, required: true } },
   data() {
     return {
@@ -247,18 +218,15 @@ export default {
       cloneCommand: '',
       cloneExpiresAt: null,
       copiedCommand: false,
-      imageRefs: [],
+      imageRefs, // shared list, for the build image suggestions
     }
   },
   computed: {
     live() {
       return liveProject(Number(this.id))
     },
-    gate() {
-      return store.gate
-    },
-    // The saved routing (what is actually live), unlike routedUrl below which
-    // previews whatever is currently typed in the settings form.
+    // The saved routing (what is actually live); RoutingFields previews
+    // whatever is currently typed in the form.
     appUrl() {
       return appUrlFor(this.project)
     },
@@ -280,10 +248,6 @@ export default {
       if (!this.cloneExpiresAt) return ''
       const min = Math.round((this.cloneExpiresAt - Date.now()) / 60000)
       return min > 0 ? `in ~${min} min` : 'soon — fetch a fresh one'
-    },
-    routedUrl() {
-      if (!this.edit.subdomain || !this.edit.port || !this.gate?.base_domain) return ''
-      return `https://${this.edit.subdomain}.${this.gate.base_domain}`
     },
   },
   watch: {
@@ -308,13 +272,7 @@ export default {
   async created() {
     await this.loadDeployments()
     this.selectedId = this.currentDeploymentId ?? this.deployments[0]?.id ?? null
-    loadGate()
-    // Shipyard images as datalist suggestions for the image fields.
-    api.get('/api/images')
-      .then(d => {
-        this.imageRefs = [...new Set([...d.managed.map(m => m.ref), d.default_image].filter(Boolean))]
-      })
-      .catch(() => {})
+    loadImageRefs() // Shipyard suggestions for the build image field
   },
   methods: {
     timeAgo,

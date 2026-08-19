@@ -1,8 +1,9 @@
 import { Hono } from 'hono'
 import { setSetting, deleteSetting } from '../db/settings.js'
 import { DOMAIN_RE, isValidPort } from '../lib/validate.js'
+import { getProxyInfo } from '../live/state.js'
 
-export function proxyApiRoutes({ db, proxy }) {
+export function proxyApiRoutes({ db, proxy, liveState = null }) {
   const app = new Hono()
 
   app.get('/', async c => c.json(await proxy.status()))
@@ -31,6 +32,10 @@ export function proxyApiRoutes({ db, proxy }) {
         setSetting(db, setting, String(port))
       }
     }
+
+    // The base domain is part of LiveState, so every open client's app links
+    // follow the change without refetching anything.
+    if (liveState) liveState.proxy = getProxyInfo(db)
 
     // Apply failures are not fatal to saving — they surface via last_error.
     if (cleared) await proxy.stop().catch(() => {})

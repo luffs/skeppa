@@ -145,6 +145,21 @@ test('PUT saves settings, applies, and clearing the domain stops the proxy', asy
   expect(calls.deleted).toEqual([PROXY_PROCESS])
 })
 
+test('PUT pushes the base domain into LiveState for open clients', async () => {
+  const db = makeDb()
+  const liveState = createLiveState()
+  const app = proxyApiRoutes({ db, proxy: proxyHarness(db).proxy, liveState })
+  const put = body => app.request('/', { method: 'PUT', body: JSON.stringify(body) })
+
+  await put({ base_domain: 'apps.example.com' })
+  expect(liveState.proxy).toEqual({ baseDomain: 'apps.example.com' })
+
+  // Clearing must reach clients too — hence '' rather than null, which
+  // lazy-watch would read as "key removed" and drop from the diff.
+  await put({ base_domain: '' })
+  expect(liveState.proxy).toEqual({ baseDomain: '' })
+})
+
 test('PUT rejects bad domains and ports', async () => {
   const db = makeDb()
   const app = proxyApiRoutes({ db, proxy: proxyHarness(db).proxy })

@@ -1,10 +1,20 @@
 import { LazyWatch } from 'lazy-watch'
+import { getSetting } from '../db/settings.js'
 
 // Single server-side LiveState object. All mutations go through this proxy so
 // lazy-watch batches them into diffs that the Hub broadcasts to WS clients.
 // Log lines are deliberately NOT part of LiveState (see Hub log pub/sub).
 export function createLiveState() {
-  return new LazyWatch({ projects: {}, system: {}, users: {} })
+  return new LazyWatch({ projects: {}, system: {}, users: {}, proxy: {} })
+}
+
+// The routing facts the frontend needs to build "open the app" links. The
+// full harbor gate status (caddy process, routes, errors) stays on
+// /api/proxy — it costs a pm2 call and only the settings view wants it.
+// Empty string rather than null for "no routing": in lazy-watch diffs null
+// means "key removed", so a null would never reach clients as a change.
+export function getProxyInfo(db) {
+  return { baseDomain: getSetting(db, 'proxy_base_domain') ?? '' }
 }
 
 // The user row as rendered by the frontend (crew list). Never includes the
@@ -41,6 +51,7 @@ export function projectDefaults(lastDeployment = null, info = null) {
 
 // Populate LiveState from the DB at startup.
 export function initLiveState(liveState, db) {
+  liveState.proxy = getProxyInfo(db)
   for (const user of db.query(`SELECT ${USER_INFO_COLUMNS} FROM users`).all()) {
     liveState.users[user.id] = user
   }

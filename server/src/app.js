@@ -33,7 +33,7 @@ export function createApp({ db, config, liveState, hub, runner, github, poller, 
   app.route('/api/settings', settingsRoutes({ db, config, github }))
   app.route('/api/system', systemRoutes({ db, config, poller }))
   app.route('/api/users', userRoutes({ db, liveState }))
-  app.route('/api/proxy', proxyApiRoutes({ db, proxy }))
+  app.route('/api/proxy', proxyApiRoutes({ db, proxy, liveState }))
   app.route('/api/images', imageRoutes({ db, config }))
 
   // WebSocket: session is validated before the upgrade happens.

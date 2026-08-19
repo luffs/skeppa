@@ -2,6 +2,7 @@ import { test, expect } from 'bun:test'
 import { Database } from 'bun:sqlite'
 import { fileURLToPath } from 'node:url'
 import { migrate } from '../src/db/migrate.js'
+import { setSetting } from '../src/db/settings.js'
 import { createLiveState, initLiveState } from '../src/live/state.js'
 
 function makeDb() {
@@ -33,6 +34,20 @@ test('initLiveState carries project info, head commit and deployed sha', () => {
   expect(live.headCommit).toEqual({ sha: 'headsha', message: 'wip', pushedAt: '2026-07-23T10:00:00Z' })
   expect(live.lastDeployment).toMatchObject({ status: 'failed', commitSha: 'newsha' })
   expect(live.deployedSha).toBe('oldsha') // last SUCCESSFUL deploy, not the failed one
+})
+
+// The frontend builds "open the app" links from this, so it must be in the
+// state clients receive rather than something they have to fetch.
+test('initLiveState carries the harbor gate base domain', () => {
+  const db = makeDb()
+  const off = createLiveState()
+  initLiveState(off, db)
+  expect(off.proxy).toEqual({ baseDomain: '' })
+
+  setSetting(db, 'proxy_base_domain', 'apps.example.com')
+  const on = createLiveState()
+  initLiveState(on, db)
+  expect(on.proxy).toEqual({ baseDomain: 'apps.example.com' })
 })
 
 test('initLiveState handles a fresh project without deploys or pushes', () => {
