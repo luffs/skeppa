@@ -12,6 +12,14 @@
     "build": "bun run --cwd web build",
     "start": "bun server/src/index.js",
     "test": "bun test server",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
     "seed": "bun scripts/seed.js"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.8.1",
+    "eslint-plugin-vue": "^10.10.0",
+    "globals": "^17.11.0"
   }
 }

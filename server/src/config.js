@@ -54,7 +54,7 @@ const PATH_KEYS = ['MASTER_KEY_FILE', 'DATA_DIR', 'APPS_DIR', 'CONTAINER_SOCKET'
 function readMasterKey(env, required) {
   if (!env.MASTER_KEY_FILE) return env.MASTER_KEY || ''
 
-  let key = ''
+  let key
   try {
     key = readFileSync(env.MASTER_KEY_FILE, 'utf8').trim()
   } catch (err) {

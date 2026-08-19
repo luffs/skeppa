@@ -5,7 +5,12 @@ import { getSetting } from '../db/settings.js'
 // lazy-watch batches them into diffs that the Hub broadcasts to WS clients.
 // Log lines are deliberately NOT part of LiveState (see Hub log pub/sub).
 export function createLiveState() {
-  return new LazyWatch({ projects: {}, system: {}, users: {}, proxy: {} })
+  return new LazyWatch({
+    projects: {},
+    system: {},
+    users: {},
+    proxy: {}
+  })
 }
 
 // The routing facts the frontend needs to build "open the app" links. The
