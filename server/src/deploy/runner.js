@@ -1,4 +1,5 @@
 import { rmSync } from 'node:fs'
+import { join } from 'node:path'
 import { resolveShell, scriptEnvBase } from '../lib/shell.js'
 import { projectDefaults, getProjectInfo } from '../live/state.js'
 import { projectDirs, syncEnvFiles, writeEcosystem, runtimeEnv } from './envfiles.js'
@@ -220,10 +221,15 @@ export class DeployRunner {
         })
       } else {
         await this._removeStaleContainer(project.slug)
+        // Null for the self project — which also scrubs any stale generated
+        // spec, so panel restarts fall back to a plain `pm2 restart`.
         const ecosystemPath = writeEcosystem(this.config, project)
         if (project.pm2_name === this.config.selfPm2Name) {
           log.line('▸ self-deploy detected: pm2 reload will run detached after this deploy finalizes')
-          setTimeout(() => startOrReloadDetached(ecosystemPath, appEnv), 1500)
+          // The deployed checkout's own ecosystem file: cwd resolves to the
+          // new source dir, and the spec shape matches the one the installer
+          // started the panel with — one definition, never a reload-merge.
+          setTimeout(() => startOrReloadDetached(join(dirs.source, 'ecosystem.config.cjs'), appEnv), 1500)
         } else {
           log.line(`▸ pm2 startOrReload ${project.pm2_name}`)
           await startOrReload(ecosystemPath, appEnv)

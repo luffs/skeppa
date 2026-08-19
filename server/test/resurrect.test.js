@@ -90,6 +90,17 @@ test('skips the panel itself, build-only projects and never-deployed projects', 
   expect(await resurrectApps({ db, config, pm2, log: () => {} })).toEqual([])
 })
 
+test('a stale generated ecosystem for the panel itself is scrubbed at boot', async () => {
+  const { db, config, addProject } = setup()
+  const self = addProject('skeppa') // pm2_name === config.selfPm2Name
+  const dirs = projectDirs(config, self)
+  mkdirSync(dirs.root, { recursive: true })
+  writeFileSync(dirs.ecosystem, 'module.exports = { apps: [{ interpreter: "none" }] }\n')
+
+  expect(await resurrectApps({ db, config, pm2: fakePm2([]), log: () => {} })).toEqual([])
+  expect(existsSync(dirs.ecosystem)).toBe(false)
+})
+
 test('scrubs plaintext env blocks that pre-upgrade ecosystem files carried', async () => {
   const { db, config, addProject } = setup()
   const project = addProject('app', { env: { TOKEN: 'sekret' } })

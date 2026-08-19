@@ -60,11 +60,14 @@ export function syncEnvFiles(db, config, project) {
 // Generates the pm2 ecosystem file for a project. Deliberately carries no env
 // block — decrypted ENV is injected via the pm2 CLI's environment at
 // start/reload time, so secrets never rest in this file. Returns its path, or
-// null when the project has no start command (build-only projects; any stale
-// file from an earlier start command is removed).
+// null (removing any stale file) for build-only projects and for the panel
+// itself: the self project is defined solely by the repo's own
+// ecosystem.config.cjs — a second generated spec for the same pm2 name makes
+// reloads merge the two into a broken chimera (script from one, cwd and
+// interpreter from the other).
 export function writeEcosystem(config, project) {
   const dirs = projectDirs(config, project)
-  if (!project.start_command?.trim()) {
+  if (!project.start_command?.trim() || project.pm2_name === config.selfPm2Name) {
     rmSync(dirs.ecosystem, { force: true })
     return null
   }

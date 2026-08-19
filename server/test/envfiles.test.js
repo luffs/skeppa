@@ -92,6 +92,16 @@ test('writeEcosystem returns null and removes a stale file for build-only projec
   expect(existsSync(dirs.ecosystem)).toBe(false)
 })
 
+test('writeEcosystem refuses the panel itself and scrubs a stale generated spec', () => {
+  const { config, project } = setup()
+  const dirs = projectDirs(config, project)
+  mkdirSync(dirs.root, { recursive: true })
+  writeFileSync(dirs.ecosystem, 'module.exports = { apps: [{ name: "app" }] }\n')
+
+  expect(writeEcosystem({ ...config, selfPm2Name: 'app' }, project)).toBeNull()
+  expect(existsSync(dirs.ecosystem)).toBe(false)
+})
+
 test('runtimeEnv adds the routed port and a production NODE_ENV default', () => {
   const { project } = setup({ port: 4100 })
   expect(runtimeEnv(project, { TOKEN: 'sekret' }))
