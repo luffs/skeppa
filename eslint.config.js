@@ -1,6 +1,7 @@
 import js from '@eslint/js'
 import globals from 'globals'
 import pluginVue from 'eslint-plugin-vue'
+import stylistic from '@stylistic/eslint-plugin'
 
 // Flat config for the whole workspace. Three worlds: Bun on the server
 // (server/, scripts/), the browser for the Vue app (web/src/), and Bun again
@@ -16,6 +17,37 @@ export default [
   },
 
   js.configs.recommended,
+  // Formatting. ESLint core dropped its stylistic rules, so these come from
+  // @stylistic — they are what makes `--fix` reformat anything at all. The
+  // values are the style the repo was already written in: no semicolons,
+  // single quotes, two spaces, trailing commas in multiline literals.
+  {
+    files: ['**/*.{js,cjs,vue}'],
+    plugins: { '@stylistic': stylistic },
+    rules: {
+      '@stylistic/no-multiple-empty-lines': ['error', { max: 1, maxEOF: 0, maxBOF: 0 }],
+      '@stylistic/no-trailing-spaces': 'error',
+      '@stylistic/eol-last': ['error', 'always'],
+      '@stylistic/indent': ['error', 2, { SwitchCase: 1, CallExpression: { arguments: 'off' } }],
+      '@stylistic/quotes': ['error', 'single', { avoidEscape: true, allowTemplateLiterals: 'always' }],
+      '@stylistic/semi': ['error', 'never'],
+      '@stylistic/comma-dangle': ['error', { functions: 'never', arrays: 'only-multiline', objects: 'only-multiline', imports: 'only-multiline', exports: 'only-multiline' }],
+      '@stylistic/comma-spacing': 'error',
+      '@stylistic/object-curly-spacing': ['error', 'always'],
+      '@stylistic/array-bracket-spacing': ['error', 'never'],
+      '@stylistic/arrow-parens': ['error', 'as-needed'],
+      '@stylistic/arrow-spacing': 'error',
+      '@stylistic/space-before-blocks': 'error',
+      '@stylistic/space-before-function-paren': ['error', { anonymous: 'always', named: 'never', asyncArrow: 'always' }],
+      '@stylistic/space-infix-ops': 'error',
+      '@stylistic/keyword-spacing': 'error',
+      '@stylistic/brace-style': ['error', '1tbs', { allowSingleLine: true }],
+      '@stylistic/block-spacing': 'error',
+      '@stylistic/no-multi-spaces': 'error',
+      '@stylistic/key-spacing': 'error',
+      '@stylistic/rest-spread-spacing': 'error',
+    },
+  },
 
   // Server, install/seed scripts.
   {
@@ -29,7 +61,7 @@ export default [
 
   // Vue app: browser globals + the plugin's correctness rules (essential, not
   // recommended — the latter is mostly template formatting).
-  ...pluginVue.configs['flat/essential'].map((c) => ({
+  ...pluginVue.configs['flat/essential'].map(c => ({
     ...c,
     files: ['web/src/**/*.{js,vue}'],
   })),
