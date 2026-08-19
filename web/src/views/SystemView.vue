@@ -58,10 +58,12 @@
             <div class="proc-main">
               <div class="proc-title">
                 <span class="proc-name">{{ p.name }}</span>
-                <StatusBadge :status="p.status" />
+                <StatusBadge :status="p.status" :href="p.appUrl" />
                 <span v-if="p.isPanel" class="chip blue" title="The Skeppa panel itself">panel</span>
+                <!-- No ↗ here: that arrow means "opens in a new tab" on the
+                     status badge next to it, and this navigates in-app. -->
                 <router-link v-if="p.project" :to="`/projects/${p.project.id}`" class="chip" style="cursor: pointer">
-                  {{ p.project.name }} ↗
+                  {{ p.project.name }}
                 </router-link>
                 <span v-else class="chip" title="Not deployed by Skeppa">external</span>
               </div>
@@ -92,7 +94,7 @@
 <script>
 import StatusBadge from '../components/StatusBadge.vue'
 import Pm2Logs from '../components/Pm2Logs.vue'
-import { store } from '../store.js'
+import { store, loadGate, appUrlFor } from '../store.js'
 import { api } from '../api.js'
 import { bytes, uptimeSince, timeAgo } from '../lib/format.js'
 
@@ -101,6 +103,9 @@ export default {
   components: { StatusBadge, Pm2Logs },
   data() {
     return { opened: null, busy: null, actionError: '' }
+  },
+  created() {
+    loadGate() // routed processes link to their app from the status badge
   },
   computed: {
     // Fed by the server-side poller through LiveState — renders instantly on
@@ -144,12 +149,16 @@ export default {
     // system.pm2 is keyed by process name (diff-friendly); flatten for the list.
     processes() {
       return Object.entries(this.status?.pm2 ?? {})
-        .map(([name, p]) => ({
-          ...p,
-          name,
-          project: this.projectsByPm2Name[name] ?? null,
-          isPanel: name === this.status?.selfPm2Name,
-        }))
+        .map(([name, p]) => {
+          const project = this.projectsByPm2Name[name] ?? null
+          return {
+            ...p,
+            name,
+            project,
+            appUrl: appUrlFor(project),
+            isPanel: name === this.status?.selfPm2Name,
+          }
+        })
         .sort((a, b) => a.name.localeCompare(b.name))
     },
     processSummary() {

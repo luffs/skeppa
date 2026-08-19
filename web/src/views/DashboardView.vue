@@ -10,7 +10,7 @@
 
     <div v-if="projects.length" class="harbor-layout">
       <div class="harbor-list">
-        <ProjectCard v-for="p in projects" :key="p.id" :project="p" :base-domain="baseDomain" />
+        <ProjectCard v-for="p in projects" :key="p.id" :project="p" />
       </div>
       <div class="feed-panel">
         <div class="feed-head">
@@ -73,7 +73,7 @@
 
 <script>
 import ProjectCard from '../components/ProjectCard.vue'
-import { store } from '../store.js'
+import { store, loadGate } from '../store.js'
 import { api } from '../api.js'
 import { timeAgo, duration } from '../lib/format.js'
 
@@ -90,13 +90,9 @@ export default {
   name: 'DashboardView',
   components: { ProjectCard },
   data() {
-    return { deploymentsByProject: {}, setup: null, setupError: '', gate: null }
+    return { deploymentsByProject: {}, setup: null, setupError: '' }
   },
   computed: {
-    // Lets routed projects show a link straight to the running app.
-    baseDomain() {
-      return this.gate?.base_domain ?? ''
-    },
     // Rendered straight from the LiveState mirror — no API round-trip when
     // navigating here, and rows update live as projects change.
     projects() {
@@ -175,8 +171,8 @@ export default {
     // every dashboard visit once projects exist.
     needsSetup: { immediate: true, handler(v) { if (v && !this.setup) this.checkSetup() } },
   },
-  async created() {
-    this.gate = await api.get('/api/proxy').catch(() => null)
+  created() {
+    loadGate() // shared: the cards build their app links from it
   },
   methods: {
     async checkSetup() {

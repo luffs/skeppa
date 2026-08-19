@@ -5,7 +5,7 @@
       <div>
         <div style="display: flex; align-items: center; gap: 14px; flex-wrap: wrap">
           <h1 style="margin: 0">{{ project.name }}</h1>
-          <StatusBadge :status="live?.pm2?.status" />
+          <StatusBadge :status="live?.pm2?.status" :href="appUrl" />
         </div>
         <div class="mono" style="color: var(--dim); margin-top: 6px">
           {{ project.repo_full_name }} @ {{ project.branch }}
@@ -221,7 +221,7 @@ import DeployLog from '../components/DeployLog.vue'
 import EnvEditor from '../components/EnvEditor.vue'
 import Pm2Logs from '../components/Pm2Logs.vue'
 import { api } from '../api.js'
-import { liveProject } from '../store.js'
+import { store, liveProject, loadGate, appUrlFor } from '../store.js'
 import { timeAgo, duration, uptimeSince, bytes } from '../lib/format.js'
 
 export default {
@@ -247,13 +247,20 @@ export default {
       cloneCommand: '',
       cloneExpiresAt: null,
       copiedCommand: false,
-      gate: null,
       imageRefs: [],
     }
   },
   computed: {
     live() {
       return liveProject(Number(this.id))
+    },
+    gate() {
+      return store.gate
+    },
+    // The saved routing (what is actually live), unlike routedUrl below which
+    // previews whatever is currently typed in the settings form.
+    appUrl() {
+      return appUrlFor(this.project)
     },
     // The project row comes from LiveState, so the view renders instantly on
     // navigation and follows edits made in any session.
@@ -301,7 +308,7 @@ export default {
   async created() {
     await this.loadDeployments()
     this.selectedId = this.currentDeploymentId ?? this.deployments[0]?.id ?? null
-    this.gate = await api.get('/api/proxy').catch(() => null)
+    loadGate()
     // Shipyard images as datalist suggestions for the image fields.
     api.get('/api/images')
       .then(d => {

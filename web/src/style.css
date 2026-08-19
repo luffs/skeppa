@@ -197,6 +197,20 @@ h2 { font-size: 16px; font-weight: 800; letter-spacing: 0.04em; margin: 24px 0 8
 .chip.amber { background: var(--amber-tint); color: var(--amber); }
 .chip.red { background: var(--red-tint); color: var(--red); }
 
+/* A status chip that doubles as the link to the running app: it keeps its
+   status colour and grows an arrow, so the affordance reads without a second
+   element competing with the name. */
+a.chip.linked {
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+a.chip.linked .ext { font-size: 12px; opacity: 0.75; }
+a.chip.linked:hover { filter: brightness(1.12); text-decoration: none; }
+a.chip.linked:hover .ext { opacity: 1; }
+
 .dot {
   width: 9px;
   height: 9px;
@@ -383,16 +397,6 @@ tr:last-child td { border-bottom: none; }
   margin-bottom: 8px;
 }
 .harbor-row .title-line .status { margin-left: auto; }
-/* Keeps the "open app" link tight against the name instead of a full gap away. */
-.harbor-row .title-name { display: inline-flex; align-items: center; gap: 6px; }
-.harbor-row .open-link {
-  font-size: 13px;
-  line-height: 1;
-  color: var(--dim);
-  padding: 3px 5px;
-  border-radius: 5px;
-}
-.harbor-row .open-link:hover { color: var(--accent); background: var(--row-hover); }
 .harbor-row .main { min-width: 0; }
 .harbor-row a.name { font-size: 17px; font-weight: 700; color: var(--ink); }
 .harbor-row a.name:hover { color: var(--accent); }

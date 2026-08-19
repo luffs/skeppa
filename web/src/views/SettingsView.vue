@@ -271,7 +271,7 @@
 
 <script>
 import { api } from '../api.js'
-import { store } from '../store.js'
+import { store, setGate } from '../store.js'
 import { timeAgo } from '../lib/format.js'
 import CollapseSection from '../components/CollapseSection.vue'
 
@@ -450,6 +450,7 @@ export default {
 
     async loadGate() {
       this.gate = await api.get('/api/proxy')
+      setGate(this.gate) // keep the shared copy (app links elsewhere) current
       this.gateForm = {
         base_domain: this.gate.base_domain ?? '',
         http_port: String(this.gate.http_port),
@@ -466,6 +467,7 @@ export default {
           http_port: Number(this.gateForm.http_port),
           admin_port: Number(this.gateForm.admin_port),
         })
+        setGate(this.gate)
         this.gateMessage = this.gate.base_domain
           ? (this.gate.last_error ? 'Saved — but applying failed, see the error above.' : 'Saved & applied ✔')
           : 'Harbor gate disabled.'
@@ -481,6 +483,7 @@ export default {
       this.gateMessage = ''
       try {
         this.gate = await api.post('/api/proxy/apply')
+        setGate(this.gate)
         this.gateMessage = 'Applied ✔'
       } catch (err) {
         this.gateError = err.message
