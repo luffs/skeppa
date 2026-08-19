@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs'
 import { encrypt, decrypt } from '../lib/crypto.js'
 import { slugify, validateProject, SLUG_RE, ENV_KEY_RE, PM2_ACTIONS } from '../lib/validate.js'
 import { projectDefaults, getProjectInfo } from '../live/state.js'
+import { syncManagedImages } from '../live/images.js'
 import { applyAction, deleteProcess, describe } from '../deploy/pm2.js'
 import { projectDirs, syncEnvFiles, writeEcosystem, decryptedEnv, runtimeEnv } from '../deploy/envfiles.js'
 import { createContainerClient } from '../containers/client.js'
@@ -115,6 +116,7 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
           project.cwd, project.auto_deploy, project.write_env_file, project.subdomain, project.port)
     const id = Number(lastInsertRowid)
     liveState.projects[id] = projectDefaults(null, getProjectInfo(db, id))
+    syncManagedImages(db, liveState) // a build/run image may now have a user
     if (project.subdomain) await applyProxy()
     return c.json(getProject(id), 201)
   })
@@ -165,6 +167,7 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
     if (liveState.projects[project.id]) {
       liveState.projects[project.id].info = getProjectInfo(db, project.id)
     }
+    syncManagedImages(db, liveState) // the image fields may have moved
     // Flipping the .env toggle takes effect on disk right away — especially
     // the off direction, which deletes the plaintext files.
     if (merged.write_env_file !== project.write_env_file) {
@@ -185,6 +188,7 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
     }
     db.query('DELETE FROM projects WHERE id = ?').run(project.id)
     delete liveState.projects[project.id]
+    syncManagedImages(db, liveState) // its images may be unused now
     if (project.subdomain) await applyProxy()
     // Files under APPS_DIR/<slug> are intentionally left on disk; remove manually.
     return c.json({ ok: true, note: `files in ${config.appsDir}/${project.slug} were not deleted` })

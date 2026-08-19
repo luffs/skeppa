@@ -192,7 +192,7 @@ import RuntimeFields from '../components/RuntimeFields.vue'
 import RoutingFields from '../components/RoutingFields.vue'
 import { api } from '../api.js'
 import { liveProject, appUrlFor } from '../store.js'
-import { imageRefs, loadImageRefs } from '../lib/images.js'
+import { imageRefs } from '../lib/images.js'
 import { timeAgo, duration, uptimeSince, bytes } from '../lib/format.js'
 
 export default {
@@ -218,10 +218,10 @@ export default {
       cloneCommand: '',
       cloneExpiresAt: null,
       copiedCommand: false,
-      imageRefs, // shared list, for the build image suggestions
     }
   },
   computed: {
+    imageRefs, // Shipyard suggestions for the build image field
     live() {
       return liveProject(Number(this.id))
     },
@@ -272,7 +272,6 @@ export default {
   async created() {
     await this.loadDeployments()
     this.selectedId = this.currentDeploymentId ?? this.deployments[0]?.id ?? null
-    loadImageRefs() // Shipyard suggestions for the build image field
   },
   methods: {
     timeAgo,

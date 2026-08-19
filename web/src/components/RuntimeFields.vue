@@ -29,7 +29,7 @@
 </template>
 
 <script>
-import { imageRefs, loadImageRefs } from '../lib/images.js'
+import { imageRefs } from '../lib/images.js'
 
 // Runtime picker plus the image field that only applies to containers. Shared
 // by the new-project form and the project's Rigging tab so a change to how
@@ -45,11 +45,8 @@ export default {
     listId: { type: String, default: 'skeppa-run-images' },
   },
   emits: ['update:runtime', 'update:runImage'],
-  data() {
-    return { imageRefs }
-  },
-  created() {
-    loadImageRefs()
+  computed: {
+    imageRefs,
   },
 }
 </script>

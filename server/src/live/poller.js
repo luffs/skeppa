@@ -3,10 +3,16 @@ import { statfsSync } from 'node:fs'
 import { jlist } from '../deploy/pm2.js'
 import { createContainerClient } from '../containers/client.js'
 import { appContainerName, appLiveStats } from '../containers/runtime.js'
+import { syncImages } from './images.js'
 
 // `du` over the whole apps dir is the expensive part — refresh it far less
 // often than the cheap pm2/memory/uptime stats.
 const DISK_INTERVAL_MS = 30_000
+
+// The engine's image listing is the Shipyard's slow half. Nothing changes it
+// behind the panel's back except a self-heal rebuild mid-deploy, so the same
+// slow lane as disk is plenty; every panel-side mutation syncs immediately.
+const IMAGES_INTERVAL_MS = 30_000
 
 const MB = 1024 * 1024
 
@@ -54,6 +60,7 @@ export function createPoller({ db, config, liveState, intervalMs = 5000, contain
   }
   let disk = { appsDirBytes: null, free: null, total: null }
   let diskCheckedAt = 0
+  let imagesCheckedAt = 0
   // Boot/start instants instead of uptime seconds: uptimes grow every tick by
   // definition (a guaranteed diff), while these are constants the client can
   // derive a live uptime from.
@@ -62,6 +69,11 @@ export function createPoller({ db, config, liveState, intervalMs = 5000, contain
   // When the panel itself runs under pm2 it sets pm_id/name in our env. The UI
   // uses this to warn before stopping the process it is talking to.
   const selfPm2Name = process.env.pm_id != null ? (process.env.name ?? null) : null
+
+  async function refreshImages() {
+    imagesCheckedAt = Date.now()
+    await syncImages(db, liveState, getEngine())
+  }
 
   async function tick() {
     if (ticking) return
@@ -73,6 +85,8 @@ export function createPoller({ db, config, liveState, intervalMs = 5000, contain
         diskCheckedAt = Date.now()
         disk = await diskUsage(config.appsDir)
       }
+
+      if (Date.now() - imagesCheckedAt > IMAGES_INTERVAL_MS) await refreshImages()
 
       let list = null
       let pm2Error = null
@@ -135,5 +149,6 @@ export function createPoller({ db, config, liveState, intervalMs = 5000, contain
       timer = null
     },
     tick,
+    refreshImages,
   }
 }

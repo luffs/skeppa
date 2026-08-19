@@ -9,7 +9,7 @@ export const store = reactive({
   connected: false,
   ready: false, // true once the first full snapshot has arrived
   liveUpdatedAt: null, // ms timestamp of the last snapshot/diff received
-  live: { projects: {}, system: {}, users: {}, proxy: {} },
+  live: { projects: {}, system: {}, users: {}, proxy: {}, images: {} },
 })
 
 // The app's public address, or '' when the project is not routed. The base

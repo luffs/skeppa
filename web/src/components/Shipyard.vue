@@ -6,13 +6,13 @@
     </div>
 
     <p v-if="error" class="error">{{ error }}</p>
-    <p v-if="data?.engine_error" class="hint">
-      Engine unreachable ({{ data.engine_error }}) — definitions are editable, builds and the local
+    <p v-if="images?.engineError" class="hint">
+      Engine unreachable ({{ images.engineError }}) — definitions are editable, builds and the local
       store need the engine.
     </p>
 
-    <div class="proc-list" v-if="data">
-      <div v-for="img in data.managed" :key="img.id" class="proc-card" :class="{ open: opened === img.id }">
+    <div class="proc-list" v-if="images">
+      <div v-for="img in managedImages" :key="img.id" class="proc-card" :class="{ open: opened === img.id }">
         <div class="proc-head">
           <div class="proc-main">
             <div class="proc-title">
@@ -63,7 +63,7 @@
       </div>
     </div>
 
-    <div class="row" style="margin-top: 14px" v-if="data">
+    <div class="row" style="margin-top: 14px" v-if="images">
       <input
         v-model="newName"
         class="code"
@@ -74,7 +74,7 @@
       <button class="secondary" :disabled="!newName.trim()" @click="create">+ New image</button>
     </div>
 
-    <template v-if="data && localImages.length">
+    <template v-if="images && localImages.length">
       <div class="section-head" style="margin-top: 24px">
         <span class="section-label">local image store</span>
         <button class="secondary small" :disabled="pruning" @click="prune">
@@ -127,7 +127,6 @@ import StatusBadge from './StatusBadge.vue'
 import { api } from '../api.js'
 import { store } from '../store.js'
 import { bytes, timeAgo } from '../lib/format.js'
-import { setImageRefs } from '../lib/images.js'
 
 const TEMPLATE = `FROM docker.io/oven/bun:1
 # RUN apt-get update && apt-get install -y ...
@@ -138,7 +137,6 @@ export default {
   components: { StatusBadge },
   data() {
     return {
-      data: null,
       error: '',
       opened: null,
       drafts: {},
@@ -154,8 +152,26 @@ export default {
     }
   },
   computed: {
+    // Rendered straight from the LiveState mirror — no request when opening
+    // the Shipyard, and rows follow builds, edits and the projects that use
+    // an image, whoever made the change. The server republishes this section
+    // after every mutation below, so none of them refetch anything.
+    images() {
+      return store.ready ? (store.live.images ?? null) : null
+    },
+    // LiveState keeps the definitions and the engine's store apart — joined
+    // here. `exists` stays null until a listing actually succeeded, so an
+    // unreachable engine says nothing rather than "not built" about every row.
+    managedImages() {
+      const local = this.localImages
+      const listed = this.images?.storeListed
+      return (this.images?.managed ?? []).map(img => {
+        const hit = local.find(l => l.tags.includes(img.ref))
+        return { ...img, exists: listed ? !!hit : null, size: hit?.size ?? null }
+      })
+    },
     localImages() {
-      return this.data?.local ?? []
+      return this.images?.local ?? []
     },
     localSummary() {
       const list = this.localImages
@@ -164,26 +180,12 @@ export default {
       return `${list.length} images · ~${bytes(total)}`
     },
   },
-  created() {
-    this.load()
-  },
   methods: {
     bytes,
     timeAgo,
     projectLink(slug) {
       const hit = Object.values(store.live.projects ?? {}).find(p => p.info?.slug === slug)
       return hit ? `/projects/${hit.info.id}` : '/'
-    },
-    async load() {
-      try {
-        this.data = await api.get('/api/images')
-        // This runs after every create/build/delete/pull/prune, so it is also
-        // where the shared suggestion list stops being stale.
-        setImageRefs(this.data)
-        this.error = ''
-      } catch (err) {
-        this.error = `Could not load images: ${err.message}`
-      }
     },
     toggle(img) {
       if (this.opened === img.id) {
@@ -199,7 +201,6 @@ export default {
       try {
         await api.patch(`/api/images/${img.id}`, { containerfile: this.drafts[img.id] })
         this.savedId = img.id
-        await this.load()
       } catch (err) {
         this.error = `Save failed: ${err.message}`
       } finally {
@@ -229,14 +230,12 @@ export default {
         this.buildLogs[img.id] += `\n✖ ${err.message}`
       } finally {
         this.building = null
-        await this.load()
       }
     },
     async create() {
       try {
         const created = await api.post('/api/images', { name: this.newName, containerfile: TEMPLATE })
         this.newName = ''
-        await this.load()
         this.toggle({ id: created.id, containerfile: created.containerfile })
       } catch (err) {
         const fields = err.fields ? ` — ${Object.values(err.fields).join(', ')}` : ''
@@ -247,7 +246,6 @@ export default {
       if (!confirm(`Remove image "${img.name}" (definition and built image)?`)) return
       try {
         await api.del(`/api/images/${img.id}`)
-        await this.load()
       } catch (err) {
         this.error = `Remove failed: ${err.message}`
       }
@@ -260,7 +258,6 @@ export default {
       try {
         for (const ref of img.tags) await api.post('/api/images/pull', { ref })
         this.storeNote = `Pulled ${img.tags.join(', ')} — restart or deploy the apps using it to pick the new version up.`
-        await this.load()
       } catch (err) {
         this.error = `Pull failed: ${err.message}`
       } finally {
@@ -275,7 +272,6 @@ export default {
       try {
         for (const ref of img.tags) await api.post('/api/images/remove', { ref })
         this.storeNote = `Removed ${img.tags.join(', ')}.`
-        await this.load()
       } catch (err) {
         this.error = `Remove failed: ${err.message}`
       } finally {
@@ -288,7 +284,6 @@ export default {
       try {
         const result = await api.post('/api/images/prune')
         this.storeNote = `Removed ${result.deleted} dangling layer(s), reclaimed ${bytes(result.reclaimed)}.`
-        await this.load()
       } catch (err) {
         this.error = `Prune failed: ${err.message}`
       } finally {

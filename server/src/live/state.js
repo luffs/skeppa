@@ -1,5 +1,6 @@
 import { LazyWatch } from 'lazy-watch'
 import { getSetting } from '../db/settings.js'
+import { imagesDefaults } from './images.js'
 
 // Single server-side LiveState object. All mutations go through this proxy so
 // lazy-watch batches them into diffs that the Hub broadcasts to WS clients.
@@ -9,7 +10,8 @@ export function createLiveState() {
     projects: {},
     system: {},
     users: {},
-    proxy: {}
+    proxy: {},
+    images: imagesDefaults()
   })
 }
 
@@ -77,9 +79,12 @@ export function projectDefaults(lastDeployment = null, info = null) {
   }
 }
 
-// Populate LiveState from the DB at startup.
-export function initLiveState(liveState, db) {
+// Populate LiveState from the DB at startup. The image section's engine half
+// (the local store) stays empty until the poller's first pass — it needs the
+// container engine, and boot must not wait on it.
+export function initLiveState(liveState, db, config = {}) {
   liveState.proxy = getProxyInfo(db)
+  liveState.images = imagesDefaults(db, config)
   for (const user of db.query(`SELECT ${USER_INFO_COLUMNS} FROM users`).all()) {
     liveState.users[user.id] = user
   }

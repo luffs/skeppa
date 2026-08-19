@@ -32,7 +32,7 @@ if (!db.query('SELECT 1 FROM users LIMIT 1').get()) {
 }
 
 const liveState = createLiveState()
-initLiveState(liveState, db)
+initLiveState(liveState, db, config)
 
 const github = new GitHubApp({ db, config })
 const poller = createPoller({ db, config, liveState })
