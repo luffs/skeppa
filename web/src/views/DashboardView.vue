@@ -10,7 +10,7 @@
 
     <div v-if="projects.length" class="harbor-layout">
       <div class="harbor-list">
-        <ProjectCard v-for="p in projects" :key="p.id" :project="p" />
+        <ProjectCard v-for="p in projects" :key="p.id" :project="p" :base-domain="baseDomain" />
       </div>
       <div class="feed-panel">
         <div class="feed-head">
@@ -90,9 +90,13 @@ export default {
   name: 'DashboardView',
   components: { ProjectCard },
   data() {
-    return { deploymentsByProject: {}, setup: null, setupError: '' }
+    return { deploymentsByProject: {}, setup: null, setupError: '', gate: null }
   },
   computed: {
+    // Lets routed projects show a link straight to the running app.
+    baseDomain() {
+      return this.gate?.base_domain ?? ''
+    },
     // Rendered straight from the LiveState mirror — no API round-trip when
     // navigating here, and rows update live as projects change.
     projects() {
@@ -170,6 +174,9 @@ export default {
     // The checklist only concerns an empty harbor — don't poke GitHub on
     // every dashboard visit once projects exist.
     needsSetup: { immediate: true, handler(v) { if (v && !this.setup) this.checkSetup() } },
+  },
+  async created() {
+    this.gate = await api.get('/api/proxy').catch(() => null)
   },
   methods: {
     async checkSetup() {

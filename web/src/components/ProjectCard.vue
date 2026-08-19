@@ -1,7 +1,18 @@
 <template>
   <div class="harbor-row">
     <div class="title-line">
-      <router-link :to="`/projects/${project.id}`" class="name">{{ project.name }}</router-link>
+      <span class="title-name">
+        <router-link :to="`/projects/${project.id}`" class="name">{{ project.name }}</router-link>
+        <a
+          v-if="appUrl"
+          :href="appUrl"
+          target="_blank"
+          rel="noopener"
+          class="open-link"
+          :title="`Open ${appUrl}`"
+          :aria-label="`Open ${appUrl}`"
+        >↗</a>
+      </span>
       <span v-if="undeployed" class="chip amber">commits ahead</span>
       <StatusBadge :status="pm2Status" class="status" />
     </div>
@@ -30,10 +41,19 @@ import { timeAgo, uptimeSince } from '../lib/format.js'
 export default {
   name: 'ProjectCard',
   components: { StatusBadge },
-  props: { project: { type: Object, required: true } },
+  props: {
+    project: { type: Object, required: true },
+    // Harbor gate base domain; empty when routing is off, and then there is
+    // no address to open.
+    baseDomain: { type: String, default: '' },
+  },
   computed: {
     live() {
       return liveProject(this.project.id)
+    },
+    appUrl() {
+      if (!this.project.subdomain || !this.baseDomain) return ''
+      return `https://${this.project.subdomain}.${this.baseDomain}`
     },
     pm2Status() {
       return this.live?.pm2?.status ?? 'unknown'

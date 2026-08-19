@@ -57,7 +57,7 @@
         No voyages yet — press <em>Set sail</em> or push to {{ project.branch }}.
       </p>
       <div v-else class="panel flush">
-        <div class="table-scroll">
+        <div class="table-scroll capped">
           <table style="min-width: 640px">
             <thead>
               <tr><th>Voyage</th><th>Status</th><th>Trigger</th><th>Commit</th><th>Departed</th><th>Passage</th></tr>

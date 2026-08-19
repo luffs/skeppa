@@ -294,6 +294,16 @@ button.small { padding: 5px 12px; font-size: 12px; }
 /* ---- tables ---- */
 
 .table-scroll { overflow-x: auto; }
+/* Long lists (voyages) scroll inside their panel instead of pushing the rest
+   of the page down; the header row stays put while they do. */
+.table-scroll.capped { max-height: 440px; overflow-y: auto; }
+.table-scroll.capped thead th {
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+  /* a border-bottom on a sticky th is not painted once the body scrolls */
+  box-shadow: inset 0 -1px 0 var(--line);
+}
 table { width: 100%; border-collapse: collapse; font-size: 14px; }
 th, td { text-align: left; padding: 12px 18px; }
 th {
@@ -373,6 +383,16 @@ tr:last-child td { border-bottom: none; }
   margin-bottom: 8px;
 }
 .harbor-row .title-line .status { margin-left: auto; }
+/* Keeps the "open app" link tight against the name instead of a full gap away. */
+.harbor-row .title-name { display: inline-flex; align-items: center; gap: 6px; }
+.harbor-row .open-link {
+  font-size: 13px;
+  line-height: 1;
+  color: var(--dim);
+  padding: 3px 5px;
+  border-radius: 5px;
+}
+.harbor-row .open-link:hover { color: var(--accent); background: var(--row-hover); }
 .harbor-row .main { min-width: 0; }
 .harbor-row a.name { font-size: 17px; font-weight: 700; color: var(--ink); }
 .harbor-row a.name:hover { color: var(--accent); }
