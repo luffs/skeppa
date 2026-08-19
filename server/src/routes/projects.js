@@ -15,6 +15,19 @@ const PROJECT_COLUMNS =
 
 const DEFAULT_LOG_LINES = 200
 const MAX_LOG_LINES = 2000
+const NAME_MAX = 63
+
+// Suffixes -2, -3, … until the name is free. The base is trimmed so the
+// suffix always fits: a name already at the length limit would otherwise
+// truncate back to itself and spin forever.
+function uniqueName(base, taken) {
+  let candidate = base
+  for (let n = 2; taken(candidate); n++) {
+    const suffix = `-${n}`
+    candidate = base.slice(0, NAME_MAX - suffix.length) + suffix
+  }
+  return candidate
+}
 
 export function projectRoutes({ db, config, liveState, runner, poller, github, proxy = null, containerClient = null }) {
   const app = new Hono()
@@ -84,16 +97,15 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
     }
     if (Object.keys(errors).length) return c.json({ error: 'validation failed', fields: errors }, 400)
 
-    let slug = body.slug?.trim() || slugify(project.name)
-    if (!SLUG_RE.test(slug)) return c.json({ error: 'validation failed', fields: { slug: 'invalid slug' } }, 400)
-    // Ensure uniqueness by suffixing -2, -3, ...
-    const base = slug
-    for (let n = 2; db.query('SELECT 1 FROM projects WHERE slug = ?').get(slug); n++) {
-      slug = `${base}-${n}`.slice(0, 63)
-    }
-    if (db.query('SELECT 1 FROM projects WHERE pm2_name = ?').get(project.pm2_name)) {
-      return c.json({ error: 'validation failed', fields: { pm2_name: 'pm2 name already in use' } }, 400)
-    }
+    const slugBase = body.slug?.trim() || slugify(project.name)
+    if (!SLUG_RE.test(slugBase)) return c.json({ error: 'validation failed', fields: { slug: 'invalid slug' } }, 400)
+    const slug = uniqueName(slugBase, s => db.query('SELECT 1 FROM projects WHERE slug = ?').get(s))
+    // The pm2 name follows the same rule: at creation it is a derived
+    // suggestion — the field is hidden entirely for container projects — so a
+    // collision is resolved by suffixing rather than by rejecting a field the
+    // user may not even see. PATCH still 400s, because there it is an
+    // explicit edit to an existing project.
+    project.pm2_name = uniqueName(project.pm2_name, n => db.query('SELECT 1 FROM projects WHERE pm2_name = ?').get(n))
 
     const { lastInsertRowid } = db.query(
       `INSERT INTO projects (slug, name, repo_full_name, branch, deploy_script, build_image, run_image, runtime, pm2_name, start_command, cwd, auto_deploy, write_env_file, subdomain, port)

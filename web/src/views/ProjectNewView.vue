@@ -133,7 +133,7 @@ export default {
           cwd: this.form.cwd || null,
           run_image: this.form.run_image || null,
           subdomain: this.form.subdomain || null,
-          port: this.form.port === '' ? null : Number(this.form.port),
+          port: String(this.form.port ?? '').trim() || null,
         })
         this.$router.push(`/projects/${created.id}`)
       } catch (err) {

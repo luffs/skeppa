@@ -10,17 +10,24 @@ export function proxyApiRoutes({ db, proxy, liveState = null }) {
 
   app.put('/', async c => {
     const body = await c.req.json().catch(() => ({}))
+
+    // Validate every field before writing any of them. Settings used to be
+    // committed as they were parsed, so a bad port after a good domain left
+    // the domain saved while the 400 skipped the LiveState push and the Caddy
+    // reload — the database, every open client and the running proxy then
+    // disagreed until the panel restarted.
+    const pending = [] // [key, value] — a null value means delete
     let cleared = false
 
     if ('base_domain' in body) {
       const domain = typeof body.base_domain === 'string' ? body.base_domain.trim().toLowerCase() : ''
       if (!domain) {
-        deleteSetting(db, 'proxy_base_domain')
+        pending.push(['proxy_base_domain', null])
         cleared = true
       } else if (!DOMAIN_RE.test(domain)) {
         return c.json({ error: 'validation failed', fields: { base_domain: 'not a valid domain name' } }, 400)
       } else {
-        setSetting(db, 'proxy_base_domain', domain)
+        pending.push(['proxy_base_domain', domain])
       }
     }
     for (const [field, setting] of [['http_port', 'proxy_http_port'], ['admin_port', 'proxy_admin_port']]) {
@@ -29,8 +36,13 @@ export function proxyApiRoutes({ db, proxy, liveState = null }) {
         if (!isValidPort(port)) {
           return c.json({ error: 'validation failed', fields: { [field]: 'must be a port between 1 and 65535' } }, 400)
         }
-        setSetting(db, setting, String(port))
+        pending.push([setting, String(port)])
       }
+    }
+
+    for (const [key, value] of pending) {
+      if (value === null) deleteSetting(db, key)
+      else setSetting(db, key, value)
     }
 
     // The base domain is part of LiveState, so every open client's app links

@@ -75,6 +75,51 @@ test('the form can opt into the container runtime and routing at creation time',
   })
 })
 
+// The port arrives as the user typed it, so a typo must fail validation.
+// Number()-ing it on the client turned NaN into JSON null, which reads as
+// "no port" and was saved silently.
+test('a malformed port is rejected, not silently dropped', async () => {
+  const { db, app } = setup()
+  const res = await create(app, { ...NEW_PROJECT_FORM, port: '80o0' })
+  expect(res.status).toBe(400)
+  expect((await res.json()).fields.port).toContain('between 1 and 65535')
+  expect(db.query('SELECT COUNT(*) AS n FROM projects').get().n).toBe(0)
+})
+
+test('an empty port string still means "no port"', async () => {
+  const { app } = setup()
+  const res = await create(app, { ...NEW_PROJECT_FORM, port: null })
+  expect(res.status).toBe(201)
+  expect((await res.json()).port).toBeNull()
+})
+
+// The pm2 name field is hidden for container projects, so a collision there
+// must not 400 on an invisible field — it is suffixed like the slug.
+test('a colliding pm2 name is suffixed at creation instead of rejected', async () => {
+  const { app } = setup()
+  expect((await create(app, NEW_PROJECT_FORM)).status).toBe(201)
+
+  const res = await create(app, { ...NEW_PROJECT_FORM, runtime: 'container', repo_full_name: 'luff/other' })
+  expect(res.status).toBe(201)
+  const second = await res.json()
+  expect(second.pm2_name).toBe('my-app-2')
+  expect(second.slug).toBe('my-app-2')
+})
+
+// Suffixing must terminate even when the base is already at the length limit;
+// naive truncation would produce the same string forever.
+test('suffixing a maximum-length name terminates and stays valid', async () => {
+  const { app } = setup()
+  const longName = 'a'.repeat(63)
+  expect((await create(app, { ...NEW_PROJECT_FORM, name: longName, pm2_name: longName })).status).toBe(201)
+
+  const res = await create(app, { ...NEW_PROJECT_FORM, name: longName, pm2_name: longName, repo_full_name: 'luff/other' })
+  expect(res.status).toBe(201)
+  const second = await res.json()
+  expect(second.pm2_name).toBe('a'.repeat(61) + '-2')
+  expect(second.pm2_name.length).toBeLessThanOrEqual(63)
+})
+
 test('auto_deploy false survives the round trip', async () => {
   const { app } = setup()
   const res = await create(app, { ...NEW_PROJECT_FORM, auto_deploy: false })

@@ -199,9 +199,11 @@ h2 { font-size: 16px; font-weight: 800; letter-spacing: 0.04em; margin: 24px 0 8
 
 /* A status chip that doubles as the link to the running app: it keeps its
    status colour and grows an arrow, so the affordance reads without a second
-   element competing with the name. */
+   element competing with the name. Deliberately sets no `color`: the .chip
+   rules above already outrank the global `a { color: var(--ink) }`, and any
+   colour here would outrank THEM (0,2,1 beats 0,2,0) and flatten every
+   status to one shade. */
 a.chip.linked {
-  color: inherit;
   cursor: pointer;
   display: inline-flex;
   align-items: center;

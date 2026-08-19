@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { migrate } from '../src/db/migrate.js'
-import { setSetting } from '../src/db/settings.js'
+import { setSetting, getSetting } from '../src/db/settings.js'
 import { buildCaddyConfig, createProxy, PROXY_PROCESS } from '../src/proxy/index.js'
 import { proxyApiRoutes } from '../src/routes/proxy.js'
 import { projectRoutes } from '../src/routes/projects.js'
@@ -158,6 +158,44 @@ test('PUT pushes the base domain into LiveState for open clients', async () => {
   // lazy-watch would read as "key removed" and drop from the diff.
   await put({ base_domain: '' })
   expect(liveState.proxy).toEqual({ baseDomain: '' })
+})
+
+// A rejected field must leave nothing behind: settings used to be written as
+// they were parsed, so a bad port after a good domain saved the domain but
+// skipped both the LiveState push and the Caddy reload.
+test('PUT writes nothing when a later field fails validation', async () => {
+  const db = makeDb()
+  setSetting(db, 'proxy_base_domain', 'old.example.com')
+  const liveState = createLiveState()
+  liveState.proxy = { baseDomain: 'old.example.com' }
+  const { proxy, calls } = proxyHarness(db)
+  const app = proxyApiRoutes({ db, proxy, liveState })
+
+  const res = await app.request('/', {
+    method: 'PUT',
+    body: JSON.stringify({ base_domain: 'new.example.com', http_port: 0 }),
+  })
+  expect(res.status).toBe(400)
+  expect(getSetting(db, 'proxy_base_domain')).toBe('old.example.com')
+  expect(liveState.proxy).toEqual({ baseDomain: 'old.example.com' })
+  expect(calls.fetch).toEqual([]) // no reload attempted
+  expect(calls.startOrReload).toEqual([])
+})
+
+// Same guarantee for the clear-the-domain path, which also stops the proxy.
+test('PUT does not clear the domain when a later field fails validation', async () => {
+  const db = makeDb()
+  setSetting(db, 'proxy_base_domain', 'apps.example.com')
+  const { proxy, calls } = proxyHarness(db)
+  const app = proxyApiRoutes({ db, proxy })
+
+  const res = await app.request('/', {
+    method: 'PUT',
+    body: JSON.stringify({ base_domain: '', admin_port: 70000 }),
+  })
+  expect(res.status).toBe(400)
+  expect(getSetting(db, 'proxy_base_domain')).toBe('apps.example.com')
+  expect(calls.deleted).toEqual([]) // proxy.stop() never ran
 })
 
 test('PUT rejects bad domains and ports', async () => {

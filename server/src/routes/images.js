@@ -26,8 +26,17 @@ export function imageRoutes({ db, config, containerClient = null }) {
   }
 
   const getImage = id => db.query(`SELECT * FROM images WHERE id = ?`).get(Number(id))
+  // Which projects genuinely depend on an image. run_image only counts for the
+  // container runtime — a pm2 project never reaches resolveRunImage, so a value
+  // left behind by a runtime switch is not a use, and counting it would block
+  // the delete (and list the project as a user) on behalf of something that
+  // cannot run the image. build_image counts unconditionally: the build sandbox
+  // is a panel-wide setting that can be turned on without touching the project.
   const projectsUsing = ref =>
-    db.query('SELECT slug FROM projects WHERE build_image = ? OR run_image = ?').all(ref, ref).map(r => r.slug)
+    db.query(
+      `SELECT slug FROM projects
+       WHERE build_image = ? OR (run_image = ? AND runtime = 'container')`
+    ).all(ref, ref).map(r => r.slug)
 
   app.get('/', async c => {
     const managed = db.query(`SELECT ${IMAGE_COLUMNS} FROM images ORDER BY name`).all().map(row => ({

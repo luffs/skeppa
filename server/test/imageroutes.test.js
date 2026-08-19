@@ -153,6 +153,52 @@ test('delete is refused while a project references the image', async () => {
   expect(db.query('SELECT COUNT(*) AS n FROM images').get().n).toBe(1)
 })
 
+// A pm2 project can keep a run_image from a runtime switch, but it never runs
+// it — so it must not block the delete or show up as a user of the image.
+test('a pm2 project\'s leftover run_image does not count as using the image', async () => {
+  const { db, app, engine } = setup()
+  const { id } = await (await create(app, { name: 'bun-node' })).json()
+  db.query(
+    `INSERT INTO projects (slug, name, repo_full_name, branch, pm2_name, run_image, runtime)
+     VALUES ('app', 'App', 'o/r', 'main', 'app', 'localhost/skeppa/bun-node:latest', 'pm2')`
+  ).run()
+
+  const list = await (await app.request('/')).json()
+  expect(list.managed[0].used_by).toEqual([])
+
+  const res = await app.request(`/${id}`, { method: 'DELETE' })
+  expect(res.status).toBe(200)
+  expect(engine.calls).toContainEqual(['removeImage', managedRef('bun-node')])
+})
+
+test('the same run_image on a container project still blocks the delete', async () => {
+  const { db, app } = setup()
+  const { id } = await (await create(app, { name: 'bun-node' })).json()
+  db.query(
+    `INSERT INTO projects (slug, name, repo_full_name, branch, pm2_name, run_image, runtime)
+     VALUES ('capp', 'CApp', 'o/r', 'main', 'capp', 'localhost/skeppa/bun-node:latest', 'container')`
+  ).run()
+
+  const res = await app.request(`/${id}`, { method: 'DELETE' })
+  expect(res.status).toBe(400)
+  expect((await res.json()).error).toContain('capp')
+})
+
+// build_image is not runtime-specific: the sandbox is a panel-wide switch, so
+// it counts as a use whatever the project's runtime is.
+test('build_image counts as a use regardless of runtime', async () => {
+  const { db, app } = setup()
+  const { id } = await (await create(app, { name: 'bun-node' })).json()
+  db.query(
+    `INSERT INTO projects (slug, name, repo_full_name, branch, pm2_name, build_image, runtime)
+     VALUES ('app', 'App', 'o/r', 'main', 'app', 'localhost/skeppa/bun-node:latest', 'pm2')`
+  ).run()
+
+  const res = await app.request(`/${id}`, { method: 'DELETE' })
+  expect(res.status).toBe(400)
+  expect((await res.json()).error).toContain('app')
+})
+
 test('delete removes the row and the engine image when unused', async () => {
   const { db, app, engine } = setup()
   const { id } = await (await create(app, { name: 'bun-node' })).json()

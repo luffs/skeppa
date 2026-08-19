@@ -373,7 +373,7 @@ export default {
           build_image: this.edit.build_image || null,
           run_image: this.edit.run_image || null,
           subdomain: this.edit.subdomain || null,
-          port: this.edit.port === '' ? null : Number(this.edit.port),
+          port: String(this.edit.port ?? '').trim() || null,
         })
         // LiveState carries the update to `project`; re-seed the form with the
         // server-normalized values.

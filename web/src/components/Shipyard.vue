@@ -127,6 +127,7 @@ import StatusBadge from './StatusBadge.vue'
 import { api } from '../api.js'
 import { store } from '../store.js'
 import { bytes, timeAgo } from '../lib/format.js'
+import { setImageRefs } from '../lib/images.js'
 
 const TEMPLATE = `FROM docker.io/oven/bun:1
 # RUN apt-get update && apt-get install -y ...
@@ -176,6 +177,9 @@ export default {
     async load() {
       try {
         this.data = await api.get('/api/images')
+        // This runs after every create/build/delete/pull/prune, so it is also
+        // where the shared suggestion list stops being stale.
+        setImageRefs(this.data)
         this.error = ''
       } catch (err) {
         this.error = `Could not load images: ${err.message}`
