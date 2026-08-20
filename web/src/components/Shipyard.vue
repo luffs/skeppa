@@ -124,11 +124,15 @@
         <input
           v-model="newRef"
           class="code"
+          list="skeppa-suggested-images"
           placeholder="docker.io/library/node:22-alpine"
           style="flex: 0 1 320px"
           spellcheck="false"
           @keyup.enter="addRegistryImage"
         />
+        <datalist id="skeppa-suggested-images">
+          <option v-for="ref in suggestions" :key="ref" :value="ref" />
+        </datalist>
         <button class="secondary" :disabled="!newRef.trim() || adding" @click="addRegistryImage">
           {{ adding ? 'Pulling…' : '+ Add registry image' }}
         </button>
@@ -141,7 +145,7 @@
 import StatusBadge from './StatusBadge.vue'
 import { api } from '../api.js'
 import { store } from '../store.js'
-import { managedWithStore } from '../lib/images.js'
+import { managedWithStore, suggestedImages } from '../lib/images.js'
 import { bytes, timeAgo } from '../lib/format.js'
 
 const TEMPLATE = `FROM docker.io/oven/bun:1
@@ -184,6 +188,11 @@ export default {
     },
     localImages() {
       return this.images?.local ?? []
+    },
+    // Common images and the Containerfile bases in use here, minus whatever is
+    // already in the store — a starting point for the field below the table.
+    suggestions() {
+      return suggestedImages(this.images, this.localImages.flatMap(img => img.tags))
     },
     localSummary() {
       const list = this.localImages

@@ -12,6 +12,9 @@
           {{ img.ref }}{{ img.size == null ? '' : ` — ${bytes(img.size)}` }}
         </option>
       </optgroup>
+      <optgroup label="Suggestions — not in the store" v-if="suggestions.length">
+        <option v-for="ref in suggestions" :key="ref" :value="ref">{{ ref }}</option>
+      </optgroup>
       <option :value="CUSTOM">Custom…</option>
     </select>
 
@@ -45,7 +48,7 @@
 
 <script>
 import { api } from '../api.js'
-import { liveImages, managedWithStore, registryImages, isManagedRef } from '../lib/images.js'
+import { liveImages, managedWithStore, registryImages, suggestedImages, isManagedRef } from '../lib/images.js'
 import { bytes, timeAgo } from '../lib/format.js'
 
 // Not a value any image reference can take, so it cannot collide with one.
@@ -85,8 +88,24 @@ export default {
     registry() {
       return registryImages(this.images)
     },
+    // What the store and the Shipyard actually hold.
     knownRefs() {
       return [...this.shipyard.map(i => i.ref), ...this.registry.map(i => i.ref)]
+    },
+    // Images worth naming that none of those lists offers — the Containerfile
+    // bases in use here plus a short common-image list, minus everything the
+    // select already has. Picking one lands on "not in store", which is where
+    // the Pull now button is.
+    suggestions() {
+      return suggestedImages(this.images, [
+        ...this.knownRefs,
+        this.images?.defaultImage,
+        this.fallback,
+      ])
+    },
+    // Everything the select can show: a value among these needs no free text.
+    selectableRefs() {
+      return [...this.knownRefs, ...this.suggestions]
     },
     // The reference that actually gets used, whether picked or inherited.
     resolved() {
@@ -103,7 +122,7 @@ export default {
     // Only decided once the lists have arrived: before that everything looks
     // unknown, and the field would flip to free text for no reason.
     valueUnlisted() {
-      return !!this.modelValue && !!this.images && !this.knownRefs.includes(this.modelValue)
+      return !!this.modelValue && !!this.images && !this.selectableRefs.includes(this.modelValue)
     },
     status() {
       const ref = this.resolved
