@@ -14,28 +14,23 @@
     Takes effect on the next deploy or restart.</template>
   </p>
 
-  <label>Build image <span class="soft" v-if="!existing">(optional)</span></label>
-  <input
-    :value="buildImage"
-    class="code"
-    :list="listId"
-    placeholder="panel default"
-    @input="$emit('update:buildImage', $event.target.value)"
+  <label>Build image</label>
+  <ImagePicker
+    :model-value="buildImage"
+    @update:model-value="$emit('update:buildImage', $event)"
   />
   <p class="hint">
     OCI image the deploy script runs in when the podman build sandbox is enabled
-    (<span class="mono">SKEPPA_SANDBOX=podman</span>). Empty = panel default. Ignored in host mode.
-    Managed images from the Shipyard are suggested.
+    (<span class="mono">SKEPPA_SANDBOX=podman</span>). Ignored in host mode.
   </p>
 
   <template v-if="runtime === 'container'">
-    <label>Run image <span class="soft" v-if="!existing">(optional)</span></label>
-    <input
-      :value="runImage"
-      class="code"
-      :list="listId"
-      :placeholder="existing ? 'same as build image' : 'panel default'"
-      @input="$emit('update:runImage', $event.target.value)"
+    <label>Run image</label>
+    <ImagePicker
+      :model-value="runImage"
+      :fallback="buildImage"
+      fallback-label="same as build image"
+      @update:model-value="$emit('update:runImage', $event)"
     />
   </template>
 
@@ -47,15 +42,10 @@
       @input="$emit('update:pm2Name', $event.target.value)"
     />
   </template>
-
-  <!-- One list for both image fields: the Shipyard suggestions are the same. -->
-  <datalist :id="listId">
-    <option v-for="ref in imageRefs" :key="ref" :value="ref" />
-  </datalist>
 </template>
 
 <script>
-import { imageRefs } from '../lib/images.js'
+import ImagePicker from './ImagePicker.vue'
 
 // Runtime picker plus the images and names that go with it — the build sandbox
 // image, and per runtime either the run image or the pm2 process name. Shared by
@@ -63,6 +53,7 @@ import { imageRefs } from '../lib/images.js'
 // build and run reaches both places at once.
 export default {
   name: 'RuntimeFields',
+  components: { ImagePicker },
   props: {
     runtime: { type: String, default: 'pm2' },
     buildImage: { type: String, default: '' },
@@ -70,12 +61,7 @@ export default {
     pm2Name: { type: String, default: '' },
     // Wording differs slightly for a project that already exists.
     existing: { type: Boolean, default: false },
-    // Distinct datalist ids so a view can host more than one runtime block.
-    listId: { type: String, default: 'skeppa-images' },
   },
   emits: ['update:runtime', 'update:buildImage', 'update:runImage', 'update:pm2Name'],
-  computed: {
-    imageRefs,
-  },
 }
 </script>

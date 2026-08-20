@@ -74,7 +74,7 @@
       <button class="secondary" :disabled="!newName.trim()" @click="create">+ New image</button>
     </div>
 
-    <template v-if="images && localImages.length">
+    <template v-if="images?.storeListed || localImages.length">
       <div class="section-head" style="margin-top: 24px">
         <span class="section-label">local image store</span>
         <button class="secondary small" :disabled="pruning" @click="prune">
@@ -82,7 +82,8 @@
         </button>
       </div>
       <p class="hint" v-if="storeNote">{{ storeNote }}</p>
-      <div class="table-scroll">
+      <p class="hint" v-if="!localImages.length">Nothing in the store yet.</p>
+      <div class="table-scroll" v-else>
         <table style="min-width: 620px">
           <thead>
             <tr><th>Image</th><th>Size</th><th>Used by</th><th></th></tr>
@@ -118,6 +119,20 @@
           </tbody>
         </table>
       </div>
+
+      <div class="row" style="margin-top: 14px">
+        <input
+          v-model="newRef"
+          class="code"
+          placeholder="docker.io/library/node:22-alpine"
+          style="flex: 0 1 320px"
+          spellcheck="false"
+          @keyup.enter="addRegistryImage"
+        />
+        <button class="secondary" :disabled="!newRef.trim() || adding" @click="addRegistryImage">
+          {{ adding ? 'Pulling…' : '+ Add registry image' }}
+        </button>
+      </div>
     </template>
   </div>
 </template>
@@ -126,6 +141,7 @@
 import StatusBadge from './StatusBadge.vue'
 import { api } from '../api.js'
 import { store } from '../store.js'
+import { managedWithStore } from '../lib/images.js'
 import { bytes, timeAgo } from '../lib/format.js'
 
 const TEMPLATE = `FROM docker.io/oven/bun:1
@@ -145,6 +161,8 @@ export default {
       saving: null,
       savedId: null,
       newName: '',
+      newRef: '',
+      adding: false,
       pruning: false,
       pulling: null,
       removing: null,
@@ -159,16 +177,10 @@ export default {
     images() {
       return store.ready ? (store.live.images ?? null) : null
     },
-    // LiveState keeps the definitions and the engine's store apart — joined
-    // here. `exists` stays null until a listing actually succeeded, so an
-    // unreachable engine says nothing rather than "not built" about every row.
+    // LiveState keeps the definitions and the engine's store apart; the join is
+    // shared with the image picker in the project forms.
     managedImages() {
-      const local = this.localImages
-      const listed = this.images?.storeListed
-      return (this.images?.managed ?? []).map(img => {
-        const hit = local.find(l => l.tags.includes(img.ref))
-        return { ...img, exists: listed ? !!hit : null, size: hit?.size ?? null }
-      })
+      return managedWithStore(this.images)
     },
     localImages() {
       return this.images?.local ?? []
@@ -248,6 +260,25 @@ export default {
         await api.del(`/api/images/${img.id}`)
       } catch (err) {
         this.error = `Remove failed: ${err.message}`
+      }
+    },
+    // Puts a reference the store does not have yet in place, so an image can be
+    // prepared before a project points at it — and so the project forms' picker
+    // offers it. Same endpoint as the row's Pull button; the reference is
+    // validated (and managed names rejected) server-side.
+    async addRegistryImage() {
+      const ref = this.newRef.trim()
+      this.adding = true
+      this.error = ''
+      this.storeNote = ''
+      try {
+        await api.post('/api/images/pull', { ref })
+        this.newRef = ''
+        this.storeNote = `Pulled ${ref}.`
+      } catch (err) {
+        this.error = `Pull failed: ${err.message}`
+      } finally {
+        this.adding = false
       }
     },
     // "podman pull" for every tag on the row — updates the local copy to the

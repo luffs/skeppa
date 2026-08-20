@@ -67,6 +67,9 @@ export function annotate(managed, local, storeListed) {
 
 export function imagesDefaults(db = null, config = {}) {
   return {
+    // A constant, but it rides along so the client can recognize the reserved
+    // namespace without hardcoding it on the far side of the wire.
+    managedPrefix: MANAGED_PREFIX,
     managed: db ? getManagedImages(db) : [],
     local: [],
     storeListed: false,
