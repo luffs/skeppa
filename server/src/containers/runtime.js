@@ -90,3 +90,22 @@ export async function appLiveStats(engine, name) {
     pid: state.Running ? state.Pid ?? null : null,
   }
 }
+
+// Recent container logs in the exact response shape the pm2 log routes
+// return, so one UI component fits both runtimes. A container that does not
+// exist yet reports `missing` streams instead of failing the request.
+export async function appLogResponse(engine, name, lines) {
+  const wrap = (text, missing = false) => ({
+    path: null,
+    text,
+    truncated: text ? text.split('\n').length >= lines : false,
+    missing,
+  })
+  try {
+    const { out, err } = await engine.tailLogs(name, lines)
+    return { name, lines, out: wrap(out), err: wrap(err) }
+  } catch (err) {
+    if (err.status !== 404) throw err
+    return { name, lines, out: wrap('', true), err: wrap('', true) }
+  }
+}

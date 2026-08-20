@@ -4,10 +4,11 @@ import { encrypt, decrypt } from '../lib/crypto.js'
 import { slugify, validateProject, SLUG_RE, ENV_KEY_RE, PM2_ACTIONS } from '../lib/validate.js'
 import { projectDefaults, getProjectInfo } from '../live/state.js'
 import { syncManagedImages } from '../live/images.js'
-import { applyAction, deleteProcess, describe } from '../deploy/pm2.js'
-import { projectDirs, syncEnvFiles, writeEcosystem, decryptedEnv, runtimeEnv } from '../deploy/envfiles.js'
+import { deleteProcess, describe } from '../deploy/pm2.js'
+import { projectDirs, syncEnvFiles, writeEcosystem } from '../deploy/envfiles.js'
 import { createContainerClient } from '../containers/client.js'
-import { appContainerName, recreateAppContainer } from '../containers/runtime.js'
+import { appContainerName, appLogResponse } from '../containers/runtime.js'
+import { applyProjectAction } from '../deploy/control.js'
 import { tailFile } from '../lib/tail.js'
 
 const PROJECT_COLUMNS =
@@ -312,33 +313,13 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
     const act = c.req.param('action')
     if (!PM2_ACTIONS.includes(act)) return c.json({ error: `action must be one of ${PM2_ACTIONS.join(', ')}` }, 400)
     try {
-      if (project.runtime === 'container') {
-        if (act === 'stop') {
-          await engine().stopContainer(appContainerName(project.slug))
-        } else {
-          // start/restart = recreate: containers are disposable and this is
-          // the only way stale env is replaced with freshly decrypted values.
-          const dirs = projectDirs(config, project)
-          if (!existsSync(dirs.source)) return c.json({ error: 'deploy the project first' }, 400)
-          await recreateAppContainer({
-            config, project, dirs,
-            env: runtimeEnv(project, decryptedEnv(db, config, project.id)),
-            client: engine(), db,
-          })
-        }
-      } else {
-        // start/restart re-inject the current ENV set; decrypted only for the
-        // duration of the pm2 call, never written anywhere.
-        await applyAction(act, project.pm2_name, projectDirs(config, project).ecosystem,
-          runtimeEnv(project, decryptedEnv(db, config, project.id)))
-      }
-      // Stop also turns off start-at-boot; start/restart turn it back on.
-      db.query('UPDATE projects SET auto_start = ? WHERE id = ?')
-        .run(act === 'stop' ? 0 : 1, project.id)
+      await applyProjectAction({ db, config, project, act, engine })
       poller?.tick()
       return c.json({ ok: true })
     } catch (err) {
-      return c.json({ error: err.message }, 500)
+      // The one status worth passing through is the helper's own 400
+      // ("deploy the project first"); an engine failure is our 500.
+      return c.json({ error: err.message }, err.status === 400 ? 400 : 500)
     }
   })
 
@@ -351,20 +332,7 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
     const lines = Math.min(Math.max(Number.isFinite(requested) ? requested : DEFAULT_LOG_LINES, 1), MAX_LOG_LINES)
     try {
       if (project.runtime === 'container') {
-        try {
-          const { out, err } = await engine().tailLogs(appContainerName(project.slug), lines)
-          const wrap = text => ({
-            path: null,
-            text,
-            truncated: text ? text.split('\n').length >= lines : false,
-            missing: false,
-          })
-          return c.json({ name: project.slug, lines, out: wrap(out), err: wrap(err) })
-        } catch (err) {
-          if (err.status !== 404) throw err
-          const missing = { path: null, text: '', truncated: false, missing: true }
-          return c.json({ name: project.slug, lines, out: missing, err: missing })
-        }
+        return c.json(await appLogResponse(engine(), appContainerName(project.slug), lines))
       }
       const proc = await describe(project.pm2_name)
       if (!proc) return c.json({ error: 'not running under pm2 yet' }, 404)

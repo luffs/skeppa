@@ -19,6 +19,9 @@ export const PM2_ACTIONS = ['start', 'stop', 'restart']
 // engine's JSON API, never a shell — this is a sanity check, not an escape.
 export const IMAGE_RE = /^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,255}$/
 export const RUNTIMES = ['pm2', 'container']
+// Container names as the engine accepts them. Like image refs these travel
+// over the engine's JSON API, never a shell — a sanity check, not an escape.
+export const CONTAINER_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
 
 export function isValidBranch(branch) {
   return typeof branch === 'string' && BRANCH_RE.test(branch) && !branch.includes('..')

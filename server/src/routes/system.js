@@ -1,17 +1,34 @@
 import { Hono } from 'hono'
-import { PM2_NAME_RE, PM2_ACTIONS } from '../lib/validate.js'
+import { PM2_NAME_RE, PM2_ACTIONS, CONTAINER_NAME_RE } from '../lib/validate.js'
 import { projectDirs, decryptedEnv, runtimeEnv } from '../deploy/envfiles.js'
 import { tailFile } from '../lib/tail.js'
 import * as realPm2 from '../deploy/pm2.js'
+import { createContainerClient } from '../containers/client.js'
+import { appContainerName, appLogResponse } from '../containers/runtime.js'
+import { containerName } from '../live/containers.js'
+import { applyProjectAction } from '../deploy/control.js'
 
 const DEFAULT_LINES = 200
 const MAX_LINES = 2000
 
-// Host-wide pm2 controls for the Engine room. These act on processes the pm2
-// daemon already reports — including ones Skeppa did not deploy — so the
-// running list is itself the whitelist, on top of the PM2_NAME_RE shape check.
-export function systemRoutes({ db, config, poller, pm2 = realPm2 }) {
+// Host-wide process controls for the Engine room, in two halves: pm2 below
+// and the container engine further down. Both act only on things the daemon
+// or engine already reports — including ones Skeppa did not deploy — so the
+// running list is itself the whitelist, on top of the name shape check.
+export function systemRoutes({ db, config, poller, pm2 = realPm2, containerClient = null }) {
   const app = new Hono()
+
+  // Lazy so pm2-only installs never touch the socket.
+  let engineInstance = containerClient
+  const engine = () => {
+    if (!engineInstance) {
+      if (!config.containerSocket) {
+        throw new Error('no container engine socket configured — see the build sandbox section in the README')
+      }
+      engineInstance = createContainerClient({ socketPath: config.containerSocket })
+    }
+    return engineInstance
+  }
 
   const known = async name => (await pm2.jlist()).find(p => p.name === name) ?? null
 
@@ -73,6 +90,59 @@ export function systemRoutes({ db, config, poller, pm2 = realPm2 }) {
       return c.json({ name, lines, out, err })
     } catch (err) {
       return c.json({ error: err.message }, 500)
+    }
+  })
+
+  // --- containers -----------------------------------------------------------
+
+  // The container half of the Engine room, mirroring the pm2 routes above: the
+  // engine's own container list is the whitelist (on top of the name shape
+  // check), and a container the panel owns is driven through exactly the code
+  // path the project page uses — start/restart recreate it so the env is
+  // freshly decrypted, and auto_start follows. Anything else on the engine
+  // gets a plain start/stop/restart and no bookkeeping.
+  const listed = async name => (await engine().listContainers()).some(e => containerName(e) === name)
+
+  const owner = name =>
+    db.query("SELECT * FROM projects WHERE runtime = 'container'").all()
+      .find(p => appContainerName(p.slug) === name) ?? null
+
+  app.post('/containers/:name/:action', async c => {
+    const name = c.req.param('name')
+    const act = c.req.param('action')
+    if (!CONTAINER_NAME_RE.test(name)) return c.json({ error: 'invalid container name' }, 400)
+    if (!PM2_ACTIONS.includes(act)) {
+      return c.json({ error: `action must be one of ${PM2_ACTIONS.join(', ')}` }, 400)
+    }
+    try {
+      if (!(await listed(name))) return c.json({ error: 'unknown container' }, 404)
+      const project = owner(name)
+      if (project) await applyProjectAction({ db, config, project, act, engine })
+      else if (act === 'stop') await engine().stopContainer(name)
+      else if (act === 'start') await engine().startContainer(name)
+      else await engine().restartContainer(name)
+      poller?.tick()
+      return c.json({ ok: true })
+    } catch (err) {
+      // The one status worth passing through is the helper's own 400
+      // ("deploy the project first"); an engine failure is our 500.
+      return c.json({ error: err.message }, err.status === 400 ? 400 : 500)
+    }
+  })
+
+  // Same response shape as the pm2 log route, so one UI component fits both.
+  app.get('/containers/:name/logs', async c => {
+    const name = c.req.param('name')
+    if (!CONTAINER_NAME_RE.test(name)) return c.json({ error: 'invalid container name' }, 400)
+    const requested = parseInt(c.req.query('lines') ?? '', 10)
+    const lines = Math.min(Math.max(Number.isFinite(requested) ? requested : DEFAULT_LINES, 1), MAX_LINES)
+    try {
+      if (!(await listed(name))) return c.json({ error: 'unknown container' }, 404)
+      return c.json(await appLogResponse(engine(), name, lines))
+    } catch (err) {
+      // The one status worth passing through is the helper's own 400
+      // ("deploy the project first"); an engine failure is our 500.
+      return c.json({ error: err.message }, err.status === 400 ? 400 : 500)
     }
   })
 

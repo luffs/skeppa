@@ -98,6 +98,10 @@ export function createContainerClient({ socketPath, fetchFn = fetch }) {
       }
     },
 
+    async restartContainer(id) {
+      await api('POST', `/containers/${encodeURIComponent(id)}/restart?t=10`)
+    },
+
     async stopContainer(id) {
       try {
         await api('POST', `/containers/${encodeURIComponent(id)}/stop?t=10`)
@@ -133,6 +137,13 @@ export function createContainerClient({ socketPath, fetchFn = fetch }) {
       for await (const chunk of res.body) demux.push(chunk)
       demux.flush()
       return { out: out.join('\n'), err: err.join('\n') }
+    },
+
+    // [{ Id, Names, Image, State, Status, Created, Ports, Labels }] for every
+    // container, stopped ones included — the Engine room lists them all.
+    async listContainers() {
+      const res = await api('GET', '/containers/json?all=1')
+      return await res.json()
     },
 
     async removeContainer(id) {

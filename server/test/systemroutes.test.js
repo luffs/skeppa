@@ -1,11 +1,13 @@
 import { test, expect } from 'bun:test'
 import { Database } from 'bun:sqlite'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { migrate } from '../src/db/migrate.js'
 import { systemRoutes } from '../src/routes/system.js'
+import { projectDirs } from '../src/deploy/envfiles.js'
+import { appContainerName } from '../src/containers/runtime.js'
 
 // A fake pm2 module: records what the route asked for and reports a fixed
 // process list, so the whitelist logic is exercised without a live daemon.
@@ -116,4 +118,108 @@ test('clamps the requested line count', async () => {
   const pm2 = fakePm2([proc('mageek')])
   const res = await setup(pm2).request('/pm2/mageek/logs?lines=99999')
   expect((await res.json()).lines).toBe(2000)
+})
+
+// --- containers --------------------------------------------------------------
+
+// A fake container engine: records the calls and reports a fixed listing, so
+// the whitelist and the owned/external split are exercised without a daemon.
+function fakeEngine(names) {
+  const calls = []
+  return {
+    calls,
+    listContainers: async () => names.map(n => ({ Names: [`/${n}`] })),
+    stopContainer: async id => calls.push(['stop', id]),
+    startContainer: async id => calls.push(['start', id]),
+    restartContainer: async id => calls.push(['restart', id]),
+    removeContainer: async id => calls.push(['remove', id]),
+    createContainer: async (name, spec) => (calls.push(['create', name, spec]), 'cid'),
+    tailLogs: async (id, lines) => (calls.push(['logs', id, lines]), { out: 'serving', err: '' }),
+  }
+}
+
+function containerSetup(names = ['skeppa-app-capp', 'postgres']) {
+  const db = new Database(':memory:')
+  migrate(db, fileURLToPath(new URL('../src/db/migrations', import.meta.url)))
+  db.query(
+    `INSERT INTO projects (slug, name, repo_full_name, branch, pm2_name, runtime, start_command, port)
+     VALUES ('capp', 'CApp', 'luff/capp', 'main', 'capp', 'container', 'bun run start', 4100)`
+  ).run()
+  const config = {
+    appsDir: mkdtempSync(join(tmpdir(), 'skeppa-syscontainers-')),
+    masterKey: 'd'.repeat(64),
+    containerSocket: '/sock',
+    buildImage: 'docker.io/oven/bun:1',
+  }
+  const engine = fakeEngine(names)
+  const app = systemRoutes({ db, config, poller: null, pm2: fakePm2([]), containerClient: engine })
+  const project = db.query('SELECT * FROM projects').get()
+  return { db, config, app, engine, project }
+}
+
+test('restarting a panel-owned container recreates it and restores auto_start', async () => {
+  const { db, config, app, engine, project } = containerSetup()
+  mkdirSync(projectDirs(config, project).source, { recursive: true })
+  db.query('UPDATE projects SET auto_start = 0').run()
+
+  const res = await app.request(`/containers/${appContainerName('capp')}/restart`, { method: 'POST' })
+  expect(res.status).toBe(200)
+  expect(engine.calls.map(c => c[0])).toEqual(['remove', 'create', 'start'])
+  expect(db.query('SELECT auto_start FROM projects').get().auto_start).toBe(1)
+})
+
+test('stopping a panel-owned container clears auto_start', async () => {
+  const { db, app, engine } = containerSetup()
+  const res = await app.request(`/containers/${appContainerName('capp')}/stop`, { method: 'POST' })
+  expect(res.status).toBe(200)
+  expect(engine.calls).toEqual([['stop', 'skeppa-app-capp']])
+  expect(db.query('SELECT auto_start FROM projects').get().auto_start).toBe(0)
+})
+
+test('recreating a panel-owned container before its first deploy is refused', async () => {
+  const { app, engine } = containerSetup()
+  const res = await app.request(`/containers/${appContainerName('capp')}/start`, { method: 'POST' })
+  expect(res.status).toBe(400)
+  expect(engine.calls).toEqual([])
+})
+
+test('a container Skeppa does not own gets a plain engine action', async () => {
+  const { db, app, engine } = containerSetup()
+  expect((await app.request('/containers/postgres/start', { method: 'POST' })).status).toBe(200)
+  expect((await app.request('/containers/postgres/restart', { method: 'POST' })).status).toBe(200)
+  expect(engine.calls).toEqual([['start', 'postgres'], ['restart', 'postgres']])
+  // Nobody else's lifecycle is Skeppa's business to remember.
+  expect(db.query('SELECT auto_start FROM projects').get().auto_start).toBe(1)
+})
+
+test('refuses a container the engine does not report', async () => {
+  const { app, engine } = containerSetup()
+  const res = await app.request('/containers/ghost/stop', { method: 'POST' })
+  expect(res.status).toBe(404)
+  expect(engine.calls).toEqual([])
+})
+
+test('rejects a malformed container name before touching the engine', async () => {
+  const { app, engine } = containerSetup()
+  const res = await app.request('/containers/rm%20-rf%20%2F/stop', { method: 'POST' })
+  expect(res.status).toBe(400)
+  expect(engine.calls).toEqual([])
+})
+
+test('serves container logs in the pm2 response shape', async () => {
+  const { app } = containerSetup()
+  const res = await app.request('/containers/postgres/logs?lines=50')
+  expect(res.status).toBe(200)
+  const body = await res.json()
+  expect(body).toEqual({
+    name: 'postgres',
+    lines: 50,
+    out: { path: null, text: 'serving', truncated: false, missing: false },
+    err: { path: null, text: '', truncated: false, missing: false },
+  })
+})
+
+test('refuses logs for a container the engine does not report', async () => {
+  const { app } = containerSetup()
+  expect((await app.request('/containers/ghost/logs')).status).toBe(404)
 })

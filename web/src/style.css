@@ -522,6 +522,9 @@ tr:last-child td { border-bottom: none; }
   margin-right: 5px;
 }
 
+/* Image refs are long and have no spaces to break on. */
+.proc-stats .proc-image { min-width: 0; overflow-wrap: anywhere; }
+
 .proc-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-left: auto; }
 .proc-actions button { padding: 7px 13px; font-size: 12px; }
 

@@ -87,6 +87,66 @@
           <Pm2Logs v-if="opened === p.name" :name="p.name" />
         </div>
       </div>
+
+      <!-- Only for installs that actually have a container engine: without a
+           socket there is nothing to list, and the absence is not a fault. -->
+      <template v-if="status.containerSocket">
+        <div class="section-head">
+          <span class="section-label">containers</span>
+          <span class="mono" style="font-size: 12px; color: var(--dim)" v-if="containers.length">
+            {{ containerSummary }}
+          </span>
+        </div>
+
+        <p v-if="status.containerError" class="error">container engine unavailable: {{ status.containerError }}</p>
+        <p v-else-if="!containers.length" class="hint">No containers on the engine.</p>
+        <p v-if="containerActionError" class="error">{{ containerActionError }}</p>
+
+        <div class="proc-list">
+          <div v-for="c in containers" :key="c.name" class="proc-card" :class="{ open: openedContainer === c.name }">
+            <div class="proc-head">
+              <div class="proc-main">
+                <div class="proc-title">
+                  <span class="proc-name">{{ c.name }}</span>
+                  <StatusBadge :status="c.status" :href="c.appUrl" />
+                  <router-link v-if="c.project" :to="`/projects/${c.project.id}`" class="chip" style="cursor: pointer">
+                    {{ c.project.name }}
+                  </router-link>
+                  <!-- A slug with no project left is an orphan the panel once
+                       created — worth naming, but it is nobody's app now. -->
+                  <span v-else-if="c.slug" class="chip amber" title="No project with this slug — left over from a deleted one">
+                    {{ c.slug }}
+                  </span>
+                  <span v-else class="chip" title="Not created by Skeppa">external</span>
+                </div>
+                <div class="proc-stats">
+                  <span><i>state</i>{{ c.state || '—' }}</span>
+                  <!-- A stopped container has no uptime to show, but the age
+                       of the container itself still says something. -->
+                  <span v-if="c.uptime"><i>up</i>{{ uptimeSince(c.uptime) }}</span>
+                  <span v-else><i>created</i>{{ timeAgo(c.createdAt) }}</span>
+                  <span><i>cpu</i>{{ c.cpu ?? '—' }}%</span>
+                  <span><i>mem</i>{{ bytes(c.memory) }}</span>
+                  <span><i>restarts</i>{{ c.restarts ?? '—' }}</span>
+                </div>
+                <div class="proc-stats">
+                  <span class="proc-image" :title="c.image"><i>image</i>{{ c.image || '—' }}</span>
+                  <span v-if="c.ports?.length"><i>ports</i>{{ c.ports.join(' · ') }}</span>
+                </div>
+              </div>
+              <div class="proc-actions">
+                <button class="secondary" @click="toggleContainerLogs(c.name)">
+                  {{ openedContainer === c.name ? 'Hide logs' : 'Logs' }}
+                </button>
+                <button class="secondary" :disabled="containerBusy === c.name" @click="runContainer(c, 'start')">Start</button>
+                <button class="secondary" :disabled="containerBusy === c.name" @click="runContainer(c, 'stop')">Stop</button>
+                <button class="secondary" :disabled="containerBusy === c.name" @click="runContainer(c, 'restart')">Restart</button>
+              </div>
+            </div>
+            <Pm2Logs v-if="openedContainer === c.name" :name="c.name" :url="c.logsUrl" />
+          </div>
+        </div>
+      </template>
     </div>
   </div>
 </template>
@@ -102,7 +162,14 @@ export default {
   name: 'SystemView',
   components: { StatusBadge, Pm2Logs },
   data() {
-    return { opened: null, busy: null, actionError: '' }
+    return {
+      opened: null,
+      busy: null,
+      actionError: '',
+      openedContainer: null,
+      containerBusy: null,
+      containerActionError: '',
+    }
   },
   computed: {
     // Fed by the server-side poller through LiveState — renders instantly on
@@ -158,6 +225,35 @@ export default {
         })
         .sort((a, b) => a.name.localeCompare(b.name))
     },
+    // Containers carry the panel's own slug label; projects are keyed by id,
+    // so the join needs a slug index of its own.
+    projectsBySlug() {
+      const map = {}
+      for (const p of Object.values(store.live.projects ?? {})) {
+        if (p.info?.slug) map[p.info.slug] = p.info
+      }
+      return map
+    },
+    // system.containers is keyed by container name, same as system.pm2.
+    containers() {
+      return Object.entries(this.status?.containers ?? {})
+        .map(([name, c]) => {
+          const project = this.projectsBySlug[c.slug] ?? null
+          return {
+            ...c,
+            name,
+            project,
+            appUrl: project ? appUrlFor(project) : '',
+            logsUrl: `/api/system/containers/${encodeURIComponent(name)}/logs`,
+          }
+        })
+        .sort((a, b) => a.name.localeCompare(b.name))
+    },
+    containerSummary() {
+      const running = this.containers.filter(c => c.status === 'online').length
+      const other = this.containers.length - running
+      return `${running} running${other ? ` · ${other} not running` : ''}`
+    },
     processSummary() {
       const online = this.processes.filter(p => p.status === 'online').length
       const other = this.processes.length - online
@@ -170,6 +266,24 @@ export default {
     timeAgo,
     toggleLogs(name) {
       this.opened = this.opened === name ? null : name
+    },
+    toggleContainerLogs(name) {
+      this.openedContainer = this.openedContainer === name ? null : name
+    },
+    // Restart throws a panel-owned container away and recreates it — that is
+    // the only way freshly decrypted ENV gets in — so it is confirmed like the
+    // stop beside it. Start is harmless enough to go through unasked.
+    async runContainer(container, act) {
+      if (act !== 'start' && !confirm(`Really ${act} "${container.name}"?`)) return
+      this.containerBusy = container.name
+      this.containerActionError = ''
+      try {
+        await api.post(`/api/system/containers/${encodeURIComponent(container.name)}/${act}`)
+      } catch (err) {
+        this.containerActionError = `${act} ${container.name} failed: ${err.message}`
+      } finally {
+        this.containerBusy = null
+      }
     },
     async run(proc, act) {
       if (!this.confirmAction(proc, act)) return
