@@ -241,6 +241,10 @@ label {
 label:first-child { margin-top: 0; }
 label .soft { font-weight: 400; text-transform: none; letter-spacing: 0; }
 
+/* Fields sitting side by side carry the top margin a stacked label would have
+   given them: their labels are :first-child inside the columns, so zeroed. */
+.field-row { margin-top: 16px; }
+
 .check-label {
   display: flex;
   align-items: center;

@@ -1,6 +1,6 @@
 <template>
   <div>
-    <div class="row">
+    <div class="row field-row">
       <div style="flex: 1 1 160px">
         <label>Subdomain <span class="soft" v-if="!existing">(optional)</span></label>
         <input

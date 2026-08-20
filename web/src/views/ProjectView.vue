@@ -112,23 +112,15 @@
       <label>Deploy script</label>
       <textarea v-model="edit.deploy_script" class="code" rows="4"></textarea>
       <p class="hint">⚠ Runs as a shell script on the server — only trusted commands.</p>
-      <label>Build image</label>
-      <input v-model="edit.build_image" class="code" list="skeppa-build-images" placeholder="panel default" />
-      <p class="hint">
-        OCI image the deploy script runs in when the podman build sandbox is enabled
-        (<span class="mono">SKEPPA_SANDBOX=podman</span>). Empty = panel default. Ignored in host mode.
-        Managed images from the Shipyard are suggested.
-      </p>
-      <datalist id="skeppa-build-images">
-        <option v-for="ref in imageRefs" :key="ref" :value="ref" />
-      </datalist>
       <label>Start command</label>
       <input v-model="edit.start_command" class="code" />
-      <RuntimeFields v-model:runtime="edit.runtime" v-model:run-image="edit.run_image" existing />
-      <template v-if="edit.runtime === 'pm2'">
-        <label>pm2 process name</label>
-        <input v-model="edit.pm2_name" class="code" />
-      </template>
+      <RuntimeFields
+        v-model:runtime="edit.runtime"
+        v-model:build-image="edit.build_image"
+        v-model:run-image="edit.run_image"
+        v-model:pm2-name="edit.pm2_name"
+        existing
+      />
       <label>Working subdirectory</label>
       <input v-model="edit.cwd" class="code" />
       <label class="check-label">
@@ -192,7 +184,6 @@ import RuntimeFields from '../components/RuntimeFields.vue'
 import RoutingFields from '../components/RoutingFields.vue'
 import { api } from '../api.js'
 import { liveProject, appUrlFor } from '../store.js'
-import { imageRefs } from '../lib/images.js'
 import { timeAgo, duration, uptimeSince, bytes } from '../lib/format.js'
 
 export default {
@@ -221,7 +212,6 @@ export default {
     }
   },
   computed: {
-    imageRefs, // Shipyard suggestions for the build image field
     live() {
       return liveProject(Number(this.id))
     },

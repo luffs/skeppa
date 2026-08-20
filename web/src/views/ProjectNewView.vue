@@ -20,7 +20,7 @@
       <label>Branch</label>
       <input v-model="form.branch" class="code" placeholder="main" />
 
-      <label class="check-label" style="margin-top: 12px">
+      <label class="check-label">
         <input type="checkbox" v-model="form.auto_deploy" />
         Auto deploy on push
       </label>
@@ -42,12 +42,12 @@
       <label>Working subdirectory <span class="soft">(optional, relative to repo root)</span></label>
       <input v-model="form.cwd" class="code" placeholder="apps/api" />
 
-      <RuntimeFields v-model:runtime="form.runtime" v-model:run-image="form.run_image" />
-
-      <template v-if="form.runtime === 'pm2'">
-        <label>pm2 process name</label>
-        <input v-model="form.pm2_name" class="code" />
-      </template>
+      <RuntimeFields
+        v-model:runtime="form.runtime"
+        v-model:build-image="form.build_image"
+        v-model:run-image="form.run_image"
+        v-model:pm2-name="form.pm2_name"
+      />
 
       <RoutingFields v-model:subdomain="form.subdomain" v-model:port="form.port" />
 
@@ -87,9 +87,10 @@ export default {
         cwd: '',
         auto_deploy: true,
         // Set here rather than in Rigging afterwards: these decide what the
-        // very first deploy does. Build image and the .env-file toggle have
-        // working defaults and stay in the project settings.
+        // very first deploy does. The .env-file toggle has a working default
+        // and stays in the project settings.
         runtime: 'pm2',
+        build_image: '',
         run_image: '',
         subdomain: '',
         port: '',
@@ -131,6 +132,7 @@ export default {
         const created = await api.post('/api/projects', {
           ...this.form,
           cwd: this.form.cwd || null,
+          build_image: this.form.build_image || null,
           run_image: this.form.run_image || null,
           subdomain: this.form.subdomain || null,
           port: String(this.form.port ?? '').trim() || null,
