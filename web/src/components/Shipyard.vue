@@ -149,6 +149,7 @@
 <script>
 import StatusBadge from './StatusBadge.vue'
 import { api } from '../api.js'
+import { confirmDialog } from '../lib/dialog.js'
 import { store } from '../store.js'
 import { managedWithStore, suggestedImages } from '../lib/images.js'
 import { bytes, timeAgo } from '../lib/format.js'
@@ -269,7 +270,7 @@ export default {
       }
     },
     async remove(img) {
-      if (!confirm(`Remove image "${img.name}" (definition and built image)?`)) return
+      if (!(await confirmDialog(`Remove image "${img.name}" (definition and built image)?`, { confirmLabel: 'Remove', danger: true }))) return
       try {
         await api.del(`/api/images/${img.id}`)
       } catch (err) {
@@ -311,7 +312,7 @@ export default {
     },
     // "podman rmi" — removes every tag on the row, which deletes the image.
     async removeLocal(img) {
-      if (!confirm(`Remove ${img.tags.join(', ')} from the local store?`)) return
+      if (!(await confirmDialog(`Remove ${img.tags.join(', ')} from the local store?`, { confirmLabel: 'Remove', danger: true }))) return
       this.removing = img.id
       this.storeNote = ''
       try {

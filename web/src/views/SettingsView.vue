@@ -271,6 +271,7 @@
 
 <script>
 import { api } from '../api.js'
+import { confirmDialog } from '../lib/dialog.js'
 import { store } from '../store.js'
 import { timeAgo } from '../lib/format.js'
 import CollapseSection from '../components/CollapseSection.vue'
@@ -374,7 +375,7 @@ export default {
     async createGithubApp() {
       if (
         this.status.has_private_key &&
-        !confirm('A GitHub App is already configured — creating a new one replaces its credentials here. Continue?')
+        !(await confirmDialog('A GitHub App is already configured — creating a new one replaces its credentials here. Continue?', { confirmLabel: 'Replace' }))
       ) {
         return
       }
@@ -590,7 +591,7 @@ export default {
       }
     },
     async removeUser(user) {
-      if (!confirm(`Remove ${user.username} from the crew? Their sessions end immediately.`)) return
+      if (!(await confirmDialog(`Remove ${user.username} from the crew? Their sessions end immediately.`, { confirmLabel: 'Remove', danger: true }))) return
       this.crewBusy = true
       this.crewError = ''
       this.crewMessage = ''

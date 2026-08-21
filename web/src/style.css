@@ -746,6 +746,23 @@ tr:last-child td { border-bottom: none; }
   .harbor-row .side { flex-direction: row; align-items: center; width: 100%; justify-content: space-between; margin-top: 14px; }
 }
 
+/* ---- confirm/alert dialog ---- */
+
+dialog.app-dialog {
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  background: var(--panel);
+  color: var(--ink);
+  padding: 22px 24px;
+  width: min(420px, calc(100vw - 48px));
+  box-shadow: 0 2px 0 var(--shadow);
+}
+/* ::backdrop cannot reliably see the theme tokens — a fixed dark scrim reads
+   correctly over both themes. */
+dialog.app-dialog::backdrop { background: rgba(10, 16, 23, 0.5); }
+.dialog-msg { margin: 0 0 18px; line-height: 1.55; overflow-wrap: anywhere; }
+.dialog-actions { display: flex; gap: 10px; justify-content: flex-end; }
+
 /* ---- login ---- */
 
 .login-wrap { display: grid; place-items: center; min-height: 100vh; padding: 20px; position: relative; }

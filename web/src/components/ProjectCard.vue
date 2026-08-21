@@ -25,6 +25,7 @@
 import StatusBadge from './StatusBadge.vue'
 import { liveProject, appUrlFor } from '../store.js'
 import { api } from '../api.js'
+import { alertDialog } from '../lib/dialog.js'
 import { timeAgo, uptimeSince } from '../lib/format.js'
 
 export default {
@@ -73,7 +74,7 @@ export default {
       try {
         await api.post(`/api/projects/${this.project.id}/deploy`)
       } catch (err) {
-        alert(`Deploy failed to start: ${err.message}`)
+        alertDialog(`Deploy failed to start: ${err.message}`)
       }
     },
   },

@@ -175,6 +175,7 @@ import StatusBadge from '../components/StatusBadge.vue'
 import Pm2Logs from '../components/Pm2Logs.vue'
 import { store, appUrlFor } from '../store.js'
 import { api } from '../api.js'
+import { confirmDialog } from '../lib/dialog.js'
 import { bytes, uptimeSince, timeAgo } from '../lib/format.js'
 
 // The engine counts only the restarts its own on-failure policy performed, so
@@ -312,7 +313,7 @@ export default {
     // the only way freshly decrypted ENV gets in — so it is confirmed like the
     // stop beside it. Start is harmless enough to go through unasked.
     async runContainer(container, act) {
-      if (act !== 'start' && !confirm(`Really ${act} "${container.name}"?`)) return
+      if (act !== 'start' && !(await confirmDialog(`Really ${act} "${container.name}"?`, { confirmLabel: act.charAt(0).toUpperCase() + act.slice(1) }))) return
       this.containerBusy = container.name
       this.containerActionError = ''
       try {
@@ -324,7 +325,7 @@ export default {
       }
     },
     async run(proc, act) {
-      if (!this.confirmAction(proc, act)) return
+      if (!(await this.confirmAction(proc, act))) return
       this.busy = proc.name
       this.actionError = ''
       try {
@@ -335,15 +336,18 @@ export default {
         this.busy = null
       }
     },
+    // Resolves to a boolean; start needs no asking.
     confirmAction(proc, act) {
       if (act === 'start') return true
+      const label = act.charAt(0).toUpperCase() + act.slice(1)
       if (proc.isPanel) {
-        return confirm(
-          `"${proc.name}" is the Skeppa panel itself — ${act}ing it takes this page offline` +
-            `${act === 'stop' ? ' until you start it again from the server' : ' for a moment'}. Continue?`
+        return confirmDialog(
+          `"${proc.name}" is the Skeppa panel itself — ${act === 'stop' ? 'stopping' : 'restarting'} it takes this page offline` +
+            `${act === 'stop' ? ' until you start it again from the server' : ' for a moment'}. Continue?`,
+          { confirmLabel: label, danger: true }
         )
       }
-      return confirm(`Really ${act} "${proc.name}"?`)
+      return confirmDialog(`Really ${act} "${proc.name}"?`, { confirmLabel: label })
     },
   },
 }

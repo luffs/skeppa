@@ -24,10 +24,12 @@
       <button class="secondary small" @click="logout">Log out</button>
     </nav>
     <router-view />
+    <AppDialog />
   </div>
 </template>
 
 <script>
+import AppDialog from './components/AppDialog.vue'
 import { store } from './store.js'
 import { api } from './api.js'
 import { disconnectWs } from './ws.js'
@@ -35,6 +37,7 @@ import { currentTheme, toggleTheme } from './lib/theme.js'
 
 export default {
   name: 'App',
+  components: { AppDialog },
   data() {
     return { store, theme: currentTheme() }
   },

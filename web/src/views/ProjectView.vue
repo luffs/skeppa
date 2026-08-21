@@ -183,6 +183,7 @@ import Pm2Logs from '../components/Pm2Logs.vue'
 import RuntimeFields from '../components/RuntimeFields.vue'
 import RoutingFields from '../components/RoutingFields.vue'
 import { api } from '../api.js'
+import { confirmDialog, alertDialog } from '../lib/dialog.js'
 import { liveProject, appUrlFor } from '../store.js'
 import { timeAgo, duration, uptimeSince, bytes } from '../lib/format.js'
 
@@ -333,15 +334,18 @@ export default {
       this.selectedId = id
       await this.loadDeployments()
     },
-    confirmPm2(action) {
-      if (confirm(`Really ${action} "${this.project.pm2_name}"?`)) this.pm2(action)
+    async confirmPm2(action) {
+      const label = action.charAt(0).toUpperCase() + action.slice(1)
+      if (await confirmDialog(`Really ${action} "${this.project.pm2_name}"?`, { confirmLabel: label })) {
+        this.pm2(action)
+      }
     },
     async pm2(action) {
       this.pm2Busy = true
       try {
         await api.post(`/api/projects/${this.id}/pm2/${action}`)
       } catch (err) {
-        alert(`pm2 ${action} failed: ${err.message}`)
+        alertDialog(`pm2 ${action} failed: ${err.message}`)
       } finally {
         this.pm2Busy = false
       }
@@ -384,7 +388,7 @@ export default {
       }
     },
     async remove() {
-      if (!confirm(`Delete project "${this.project.name}"? The pm2 process is removed; files on disk are kept.`)) return
+      if (!(await confirmDialog(`Delete project "${this.project.name}"? The pm2 process is removed; files on disk are kept.`, { confirmLabel: 'Delete', danger: true }))) return
       await api.del(`/api/projects/${this.id}`)
       this.$router.push('/')
     },
