@@ -504,16 +504,42 @@ tr:last-child td { border-bottom: none; }
 .proc-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .proc-name { font-family: var(--mono); font-size: 15px; font-weight: 600; }
 
+/* A grid with fixed tracks rather than a flowing row: every card is the same
+   width, so cpu and mem land at the same x on all of them and the column can
+   be read straight down the list instead of hunted for behind a pid or an
+   uptime of some other length. Label above value, value in full ink — the
+   numbers are the point, the labels only say which. */
 .proc-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(94px, 1fr));
+  gap: 10px 14px;
+  margin-top: 12px;
+  font-family: var(--mono);
+  font-size: 13px;
+}
+.proc-stats > span { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.proc-stats i {
+  font-style: normal;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  opacity: 0.75;
+  color: var(--dim);
+}
+.proc-stats b { font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+
+/* The container-only facts. Free text of wildly varying length, so they stay
+   out of the metric grid and keep the old inline shape. */
+.proc-meta {
   display: flex;
   gap: 16px;
   flex-wrap: wrap;
-  margin-top: 7px;
+  margin-top: 10px;
   font-family: var(--mono);
   font-size: 12px;
   color: var(--dim);
 }
-.proc-stats i {
+.proc-meta i {
   font-style: normal;
   font-size: 10px;
   letter-spacing: 0.1em;
@@ -521,9 +547,8 @@ tr:last-child td { border-bottom: none; }
   opacity: 0.75;
   margin-right: 5px;
 }
-
 /* Image refs are long and have no spaces to break on. */
-.proc-stats .proc-image { min-width: 0; overflow-wrap: anywhere; }
+.proc-meta .proc-image { min-width: 0; overflow-wrap: anywhere; }
 
 .proc-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-left: auto; }
 .proc-actions button { padding: 7px 13px; font-size: 12px; }

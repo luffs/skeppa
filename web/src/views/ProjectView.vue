@@ -13,7 +13,7 @@
         <div class="mono" v-if="live?.pm2?.status === 'online'" style="font-size: 12px; color: var(--dim); margin-top: 6px">
           pid {{ live.pm2.pid ?? '—' }} · up {{ uptimeSince(live.pm2.uptime) }} ·
           {{ live.pm2.cpu ?? 0 }}% cpu · {{ bytes(live.pm2.memory) }} ·
-          {{ live.pm2.restarts ?? 0 }} restart{{ live.pm2.restarts === 1 ? '' : 's' }}
+          {{ live.pm2.restarts ?? 0 }} {{ restartNoun }}
         </div>
       </div>
       <div class="row">
@@ -214,6 +214,14 @@ export default {
   computed: {
     live() {
       return liveProject(Number(this.id))
+    },
+    // pm2 counts every restart, the container engine counts only the ones its
+    // own on-failure policy performed — a crash counter. Restarting a
+    // container from the panel recreates it, so that count starts over.
+    restartNoun() {
+      const n = this.live?.pm2?.restarts ?? 0
+      if (this.project?.runtime === 'container') return n === 1 ? 'crash' : 'crashes'
+      return n === 1 ? 'restart' : 'restarts'
     },
     // The saved routing (what is actually live); RoutingFields previews
     // whatever is currently typed in the form.

@@ -68,11 +68,11 @@
                 <span v-else class="chip" title="Not deployed by Skeppa">external</span>
               </div>
               <div class="proc-stats">
-                <span><i>pid</i>{{ p.pid || '—' }}</span>
-                <span><i>up</i>{{ uptimeSince(p.uptime) }}</span>
-                <span><i>cpu</i>{{ p.cpu ?? '—' }}%</span>
-                <span><i>mem</i>{{ bytes(p.memory) }}</span>
-                <span><i>restarts</i>{{ p.restarts ?? '—' }}</span>
+                <span><i>pid</i><b>{{ p.pid || '—' }}</b></span>
+                <span><i>up</i><b>{{ uptimeSince(p.uptime) }}</b></span>
+                <span><i>cpu</i><b>{{ p.cpu == null ? '—' : `${p.cpu}%` }}</b></span>
+                <span><i>mem</i><b>{{ bytes(p.memory) }}</b></span>
+                <span><i>restarts</i><b>{{ p.restarts ?? '—' }}</b></span>
               </div>
             </div>
             <div class="proc-actions">
@@ -119,17 +119,20 @@
                   </span>
                   <span v-else class="chip" title="Not created by Skeppa">external</span>
                 </div>
+                <!-- Same five columns as the pm2 cards above, in the same
+                     order: the whole list compares straight down. -->
                 <div class="proc-stats">
-                  <span><i>state</i>{{ c.state || '—' }}</span>
+                  <span><i>pid</i><b>{{ c.pid || '—' }}</b></span>
                   <!-- A stopped container has no uptime to show, but the age
                        of the container itself still says something. -->
-                  <span v-if="c.uptime"><i>up</i>{{ uptimeSince(c.uptime) }}</span>
-                  <span v-else><i>created</i>{{ timeAgo(c.createdAt) }}</span>
-                  <span><i>cpu</i>{{ c.cpu ?? '—' }}%</span>
-                  <span><i>mem</i>{{ bytes(c.memory) }}</span>
-                  <span><i>restarts</i>{{ c.restarts ?? '—' }}</span>
+                  <span v-if="c.uptime"><i>up</i><b>{{ uptimeSince(c.uptime) }}</b></span>
+                  <span v-else><i>created</i><b>{{ timeAgo(c.createdAt) }}</b></span>
+                  <span><i>cpu</i><b>{{ c.cpu == null ? '—' : `${c.cpu}%` }}</b></span>
+                  <span><i>mem</i><b>{{ bytes(c.memory) }}</b></span>
+                  <span :title="CRASHES_HINT"><i>crashes</i><b>{{ c.restarts ?? '—' }}</b></span>
                 </div>
-                <div class="proc-stats">
+                <div class="proc-meta">
+                  <span><i>state</i>{{ c.state || '—' }}</span>
                   <span class="proc-image" :title="c.image"><i>image</i>{{ c.image || '—' }}</span>
                   <span v-if="c.ports?.length"><i>ports</i>{{ c.ports.join(' · ') }}</span>
                 </div>
@@ -158,6 +161,11 @@ import { store, appUrlFor } from '../store.js'
 import { api } from '../api.js'
 import { bytes, uptimeSince, timeAgo } from '../lib/format.js'
 
+// The engine counts only the restarts its own on-failure policy performed, so
+// this is a crash counter, not an activity log: restarting from here recreates
+// the container and the new one starts back at zero.
+const CRASHES_HINT = 'Crashes the engine restarted the container after. A restart from here recreates it, which starts the count over.'
+
 export default {
   name: 'SystemView',
   components: { StatusBadge, Pm2Logs },
@@ -169,6 +177,7 @@ export default {
       openedContainer: null,
       containerBusy: null,
       containerActionError: '',
+      CRASHES_HINT,
     }
   },
   computed: {
