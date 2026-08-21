@@ -1,5 +1,5 @@
 <template>
-  <div class="container">
+  <div class="container mid">
     <div class="page-head">
       <h1 style="margin: 0">Engine room</h1>
       <span class="mono" style="font-size: 12px; color: var(--dim)" v-if="status">
@@ -15,27 +15,39 @@
     <div v-if="status" class="stat-grid">
       <div class="stat-card">
         <div class="stat-label">Uptime</div>
+        <!-- Label over value, the same vocabulary as the process cards. -->
         <div class="stat-pair">
           <div>
+            <div class="stat-tag">panel</div>
             <div class="stat-value">{{ uptimeSince(status.panelStartedAt) }}</div>
-            <div class="stat-sub">panel</div>
           </div>
           <div>
+            <div class="stat-tag">host</div>
             <div class="stat-value">{{ uptimeSince(status.hostBootAt) }}</div>
-            <div class="stat-sub">host</div>
           </div>
         </div>
       </div>
       <div class="stat-card">
         <div class="stat-label">Memory</div>
         <div class="stat-value">{{ bytes(usedMemory) }}</div>
+        <div class="stat-meter" v-if="memoryUsedPercent != null">
+          <span :class="meterClass(memoryUsedPercent)" :style="{ width: memoryUsedPercent + '%' }"></span>
+        </div>
         <div class="stat-sub">{{ memoryPercent }}% of {{ bytes(status.memory.total) }} in use</div>
         <div class="stat-sub" v-if="loadavg">load {{ loadavg.join(' · ') }}</div>
       </div>
       <div class="stat-card">
         <div class="stat-label">Disk</div>
         <div class="stat-value">{{ bytes(status.disk?.free) }}</div>
-        <div class="stat-sub">free of {{ bytes(status.disk?.total) }}</div>
+        <div class="stat-meter" v-if="diskUsedPercent != null">
+          <span :class="meterClass(diskUsedPercent)" :style="{ width: diskUsedPercent + '%' }"></span>
+        </div>
+        <!-- Worded like the memory card so the meter under it reads as what
+             it is — used share — while the big number stays the free space. -->
+        <div class="stat-sub" v-if="diskUsedPercent != null">
+          {{ diskUsedPercent }}% of {{ bytes(status.disk.total) }} in use
+        </div>
+        <div class="stat-sub" v-else>free of {{ bytes(status.disk?.total) }}</div>
         <div class="stat-sub stat-path" :title="status.appsDir">{{ appsDirNote }}</div>
       </div>
     </div>
@@ -199,8 +211,17 @@ export default {
       return m ? m.total - m.free : null
     },
     memoryPercent() {
+      return this.memoryUsedPercent ?? '—'
+    },
+    // Used fractions for the meters. null hides the bar entirely — a full or
+    // empty bar on missing data would be a claim, not an absence.
+    memoryUsedPercent() {
       const m = this.status?.memory
-      return m?.total ? Math.round(((m.total - m.free) / m.total) * 100) : '—'
+      return m?.total ? Math.round(((m.total - m.free) / m.total) * 100) : null
+    },
+    diskUsedPercent() {
+      const d = this.status?.disk
+      return d?.total && d.free != null ? Math.round(((d.total - d.free) / d.total) * 100) : null
     },
     // `du` is unavailable on some hosts (Windows) — leave the size out entirely
     // there rather than printing a dash between the label and the path.
@@ -277,6 +298,10 @@ export default {
     bytes,
     uptimeSince,
     timeAgo,
+    // Meter color by how close to full: calm until 80%, amber to 92%, red past.
+    meterClass(usedPercent) {
+      return usedPercent >= 92 ? 'crit' : usedPercent >= 80 ? 'warn' : ''
+    },
     toggleLogs(name) {
       this.opened = this.opened === name ? null : name
     },

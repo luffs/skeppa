@@ -98,6 +98,11 @@ h2 { font-size: 16px; font-weight: 800; letter-spacing: 0.04em; margin: 24px 0 8
    intrinsic sizing entirely; max-width + auto margins still cap and center. */
 .container { width: 100%; max-width: 1180px; margin: 0 auto; padding: 36px 28px 64px; }
 .container.narrow { max-width: 680px; }
+/* Engine room and Shipyard: card lists read best around 700px, and capping
+   only the lists left them hugging the left edge under a full-width header.
+   Narrowing the whole container keeps every section the same width and lets
+   the auto margins center the page as one column. */
+.container.mid { max-width: 760px; }
 
 @keyframes skp-pulse {
   0%, 100% { opacity: 1; }
@@ -464,11 +469,16 @@ tr:last-child td { border-bottom: none; }
   .stat-grid .stat-card:first-child { grid-column: 1 / -1; }
   .harbor-layout { flex-wrap: wrap; }
 }
+/* The mid container is always narrower than three cards want, whatever the
+   viewport — same 2+1 arrangement as the media query above. */
+.container.mid .stat-grid { grid-template-columns: 1fr 1fr; }
+.container.mid .stat-grid .stat-card:first-child { grid-column: 1 / -1; }
 .stat-card {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 18px 20px;
+  box-shadow: 0 1px 0 var(--shadow); /* same footing as the process cards */
 }
 .stat-card .stat-label {
   font-size: 11px;
@@ -477,10 +487,44 @@ tr:last-child td { border-bottom: none; }
   text-transform: uppercase;
   color: var(--dim);
 }
-.stat-card .stat-value { font-family: var(--mono); font-size: 22px; font-weight: 600; margin-top: 6px; }
+.stat-card .stat-value {
+  font-family: var(--mono);
+  font-size: 22px;
+  font-weight: 600;
+  margin-top: 6px;
+  font-variant-numeric: tabular-nums;
+}
 .stat-card .stat-sub { font-family: var(--mono); font-size: 12px; color: var(--dim); margin-top: 2px; }
-.stat-pair { display: flex; gap: 28px; flex-wrap: wrap; }
+.stat-tag {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--dim);
+  opacity: 0.75;
+}
+.stat-tag + .stat-value { margin-top: 2px; }
+.stat-pair { display: flex; gap: 36px; flex-wrap: wrap; }
 .stat-path { overflow-wrap: anywhere; }
+
+/* Used-fraction meter under memory and disk. The width transition keeps the
+   5s poller updates from snapping. */
+.stat-meter {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--line-soft);
+  margin: 10px 0 8px;
+  overflow: hidden;
+}
+.stat-meter span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 0.6s ease;
+}
+.stat-meter span.warn { background: var(--amber); }
+.stat-meter span.crit { background: var(--red); }
 
 .section-head {
   display: flex;
@@ -509,10 +553,10 @@ tr:last-child td { border-bottom: none; }
    card, which pushed a column onto a second line on anything but a maximized
    window. */
 .proc-head { display: flex; flex-direction: column; padding: 16px 18px; }
-/* One line, and the name is the part that gives way: min-width lets it shrink
-   past its text and wrap inside its own column, so a long name never pushes
-   the chips off the corner or onto a ragged line of their own. */
-.proc-title { display: flex; align-items: center; gap: 10px; }
+/* Name first, chips hard right. When a long name leaves no room the chip
+   group drops to its own right-aligned line whole, rather than the name
+   breaking mid-word beside it. */
+.proc-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .proc-name {
   font-family: var(--mono);
   font-size: 15px;
@@ -533,15 +577,10 @@ tr:last-child td { border-bottom: none; }
    numbers are the point, the labels only say which. */
 .proc-stats {
   display: grid;
-  /* Capped, or a wide card would spread five readings over ten tracks and
-     leave the row half empty. The min() matters: App.vue's root is a flex
-     column, and a stretched flex row is never laid out narrower than its
-     content's min-content width — with a plain 94px the max-width pins the
-     auto-fill count at six tracks during intrinsic sizing, giving the whole
-     page a ~690px floor that clips at the right edge of narrow windows.
-     Inside min() the percentage collapses to zero in intrinsic sizing, while
-     in real layout 100% of the card is always wider than one track. */
-  max-width: 640px;
+  /* min() guards intrinsic sizing: a plain 94px floor would count toward the
+     grid's min-content width, which layouts like App.vue's flex column
+     propagate into a page-wide minimum. The percentage collapses to zero
+     there, and in real layout 100% always exceeds one track. */
   grid-template-columns: repeat(auto-fill, minmax(min(94px, 100%), 1fr));
   gap: 10px 14px;
   margin-top: 12px;
@@ -684,9 +723,6 @@ tr:last-child td { border-bottom: none; }
   .stat-card .stat-value { font-size: 19px; }
   .stat-pair { gap: 22px; }
   .proc-head { padding: 14px 16px; }
-  /* Too little width to squeeze the name into a column beside the chips —
-     here they get their own line, still hard right. */
-  .proc-title { flex-wrap: wrap; }
   /* Tighter tracks so the readings land three-and-two instead of two-two-one
      with a stranded cell. Still a fixed grid: the same column holds the same
      reading on every card, which is the whole point of the row. */

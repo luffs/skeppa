@@ -1,5 +1,5 @@
 <template>
-  <div class="container">
+  <div class="container mid">
     <div class="page-head">
       <h1 style="margin: 0">Shipyard</h1>
       <span class="mono" style="font-size: 12px; color: var(--dim)">container images</span>
