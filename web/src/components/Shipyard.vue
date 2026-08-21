@@ -13,12 +13,13 @@
 
     <div class="proc-list" v-if="images">
       <div v-for="img in managedImages" :key="img.id" class="proc-card" :class="{ open: opened === img.id }">
+        <!-- Same card as the Engine room's: name left, who wants it and how
+             the last build went pinned right, then the numbers, the full ref
+             on its own line, and the buttons. -->
         <div class="proc-head">
-          <div class="proc-main">
-            <div class="proc-title">
-              <span class="proc-name">{{ img.name }}</span>
-              <StatusBadge v-if="img.last_build_status" :status="img.last_build_status" />
-              <span v-if="img.exists === false" class="chip amber" title="Not in the engine store — rebuilt automatically when needed">not built</span>
+          <div class="proc-title">
+            <span class="proc-name">{{ img.name }}</span>
+            <span class="proc-tags">
               <router-link
                 v-for="slug in img.used_by"
                 :key="slug"
@@ -26,12 +27,16 @@
                 class="chip"
                 style="cursor: pointer"
               >{{ slug }} ↗</router-link>
-            </div>
-            <div class="proc-stats">
-              <span class="mono" style="font-size: 12px">{{ img.ref }}</span>
-              <span v-if="img.size != null"><i>size</i>{{ bytes(img.size) }}</span>
-              <span v-if="img.last_built_at"><i>built</i>{{ timeAgo(img.last_built_at) }}</span>
-            </div>
+              <span v-if="img.exists === false" class="chip amber" title="Not in the engine store — rebuilt automatically when needed">not built</span>
+              <StatusBadge v-if="img.last_build_status" :status="img.last_build_status" />
+            </span>
+          </div>
+          <div class="proc-stats" v-if="img.size != null || img.last_built_at">
+            <span v-if="img.size != null"><i>size</i><b>{{ bytes(img.size) }}</b></span>
+            <span v-if="img.last_built_at"><i>built</i><b>{{ timeAgo(img.last_built_at) }}</b></span>
+          </div>
+          <div class="proc-meta">
+            <span class="proc-image"><i>ref</i>{{ img.ref }}</span>
           </div>
           <div class="proc-actions">
             <button class="secondary" @click="toggle(img)">{{ opened === img.id ? 'Close' : 'Edit' }}</button>

@@ -91,7 +91,12 @@ a:hover { color: var(--accent); }
 h1 { font-size: 30px; font-weight: 800; letter-spacing: -0.01em; margin: 0 0 16px; }
 h2 { font-size: 16px; font-weight: 800; letter-spacing: 0.04em; margin: 24px 0 8px; }
 
-.container { max-width: 1180px; margin: 0 auto; padding: 36px 28px 64px; }
+/* width: 100% is not decoration: App.vue's root is a flex column, and a flex
+   item with `width: auto` is sized to its content's intrinsic width when that
+   exceeds the viewport — one wide row anywhere in a view silently widens the
+   whole page and clips at the right edge. An explicit width opts out of
+   intrinsic sizing entirely; max-width + auto margins still cap and center. */
+.container { width: 100%; max-width: 1180px; margin: 0 auto; padding: 36px 28px 64px; }
 .container.narrow { max-width: 680px; }
 
 @keyframes skp-pulse {
@@ -499,10 +504,27 @@ tr:last-child td { border-bottom: none; }
 }
 .proc-card.open { border-color: var(--line-strong); }
 
-.proc-head { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 16px 18px; }
-.proc-main { flex: 1 1 240px; min-width: 0; }
-.proc-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.proc-name { font-family: var(--mono); font-size: 15px; font-weight: 600; }
+/* Stacked rows, each spanning the whole card: title, numbers, container facts,
+   buttons. Sharing a row with the buttons used to cost the numbers half the
+   card, which pushed a column onto a second line on anything but a maximized
+   window. */
+.proc-head { display: flex; flex-direction: column; padding: 16px 18px; }
+/* One line, and the name is the part that gives way: min-width lets it shrink
+   past its text and wrap inside its own column, so a long name never pushes
+   the chips off the corner or onto a ragged line of their own. */
+.proc-title { display: flex; align-items: center; gap: 10px; }
+.proc-name {
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 600;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Owner and status ride the right edge, status outermost. margin-left survives
+   a wrap, so on a narrow card the pair drops to its own line still aligned
+   right instead of drifting back under the name. */
+.proc-tags { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; flex: 0 1 auto; margin-left: auto; }
 
 /* A grid with fixed tracks rather than a flowing row: every card is the same
    width, so cpu and mem land at the same x on all of them and the column can
@@ -511,7 +533,16 @@ tr:last-child td { border-bottom: none; }
    numbers are the point, the labels only say which. */
 .proc-stats {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(94px, 1fr));
+  /* Capped, or a wide card would spread five readings over ten tracks and
+     leave the row half empty. The min() matters: App.vue's root is a flex
+     column, and a stretched flex row is never laid out narrower than its
+     content's min-content width — with a plain 94px the max-width pins the
+     auto-fill count at six tracks during intrinsic sizing, giving the whole
+     page a ~690px floor that clips at the right edge of narrow windows.
+     Inside min() the percentage collapses to zero in intrinsic sizing, while
+     in real layout 100% of the card is always wider than one track. */
+  max-width: 640px;
+  grid-template-columns: repeat(auto-fill, minmax(min(94px, 100%), 1fr));
   gap: 10px 14px;
   margin-top: 12px;
   font-family: var(--mono);
@@ -550,7 +581,9 @@ tr:last-child td { border-bottom: none; }
 /* Image refs are long and have no spaces to break on. */
 .proc-meta .proc-image { min-width: 0; overflow-wrap: anywhere; }
 
-.proc-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-left: auto; }
+/* Own row, pushed to the right edge so the buttons sit under the status chip
+   rather than under the numbers. */
+.proc-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 16px 0 0 auto; }
 .proc-actions button { padding: 7px 13px; font-size: 12px; }
 
 .proc-logs { border-top: 1px solid var(--line); padding: 14px 18px 16px; }
@@ -651,6 +684,19 @@ tr:last-child td { border-bottom: none; }
   .stat-card .stat-value { font-size: 19px; }
   .stat-pair { gap: 22px; }
   .proc-head { padding: 14px 16px; }
+  /* Too little width to squeeze the name into a column beside the chips —
+     here they get their own line, still hard right. */
+  .proc-title { flex-wrap: wrap; }
+  /* Tighter tracks so the readings land three-and-two instead of two-two-one
+     with a stranded cell. Still a fixed grid: the same column holds the same
+     reading on every card, which is the whole point of the row. */
+  .proc-stats { grid-template-columns: repeat(auto-fill, minmax(min(84px, 100%), 1fr)); gap: 10px; font-size: 12px; }
+  /* Three to a row splits cpu and mem across the break, and those two are the
+     pair worth comparing. Send pid — the least interesting of the five on a
+     phone — to the end so the readings that matter share the first row. */
+  .proc-stats .stat-pid { order: 1; }
+  /* One fact per line — an image ref on its own is wider than a phone. */
+  .proc-meta { flex-direction: column; gap: 6px; margin-top: 12px; }
   .proc-actions { margin-left: 0; width: 100%; }
   .proc-actions button { flex: 1 1 auto; }
   .proc-logs { padding: 12px 14px 14px; }

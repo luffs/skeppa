@@ -55,25 +55,29 @@
       <div class="proc-list">
         <div v-for="p in processes" :key="p.name" class="proc-card" :class="{ open: opened === p.name }">
           <div class="proc-head">
-            <div class="proc-main">
-              <div class="proc-title">
-                <span class="proc-name">{{ p.name }}</span>
-                <StatusBadge :status="p.status" :href="p.appUrl" />
-                <span v-if="p.isPanel" class="chip blue" title="The Skeppa panel itself">panel</span>
+            <!-- Name and what the thing is on the left; who owns it and how it
+                 is doing pinned to the card's own right edge, status last, so
+                 the badges line up straight down the list. Every row spans the
+                 full card, so nothing squeezes the numbers. -->
+            <div class="proc-title">
+              <span class="proc-name">{{ p.name }}</span>
+              <span v-if="p.isPanel" class="chip blue" title="The Skeppa panel itself">panel</span>
+              <span class="proc-tags">
                 <!-- No ↗ here: that arrow means "opens in a new tab" on the
                      status badge next to it, and this navigates in-app. -->
                 <router-link v-if="p.project" :to="`/projects/${p.project.id}`" class="chip" style="cursor: pointer">
                   {{ p.project.name }}
                 </router-link>
                 <span v-else class="chip" title="Not deployed by Skeppa">external</span>
-              </div>
-              <div class="proc-stats">
-                <span><i>pid</i><b>{{ p.pid || '—' }}</b></span>
-                <span><i>up</i><b>{{ uptimeSince(p.uptime) }}</b></span>
-                <span><i>cpu</i><b>{{ p.cpu == null ? '—' : `${p.cpu}%` }}</b></span>
-                <span><i>mem</i><b>{{ bytes(p.memory) }}</b></span>
-                <span><i>restarts</i><b>{{ p.restarts ?? '—' }}</b></span>
-              </div>
+                <StatusBadge :status="p.status" :href="p.appUrl" />
+              </span>
+            </div>
+            <div class="proc-stats">
+              <span class="stat-pid"><i>pid</i><b>{{ p.pid || '—' }}</b></span>
+              <span><i>up</i><b>{{ uptimeSince(p.uptime) }}</b></span>
+              <span><i>cpu</i><b>{{ p.cpu == null ? '—' : `${p.cpu}%` }}</b></span>
+              <span><i>mem</i><b>{{ bytes(p.memory) }}</b></span>
+              <span><i>restarts</i><b>{{ p.restarts ?? '—' }}</b></span>
             </div>
             <div class="proc-actions">
               <button class="secondary" @click="toggleLogs(p.name)">
@@ -105,10 +109,9 @@
         <div class="proc-list">
           <div v-for="c in containers" :key="c.name" class="proc-card" :class="{ open: openedContainer === c.name }">
             <div class="proc-head">
-              <div class="proc-main">
-                <div class="proc-title">
-                  <span class="proc-name">{{ c.name }}</span>
-                  <StatusBadge :status="c.status" :href="c.appUrl" />
+              <div class="proc-title">
+                <span class="proc-name">{{ c.name }}</span>
+                <span class="proc-tags">
                   <router-link v-if="c.project" :to="`/projects/${c.project.id}`" class="chip" style="cursor: pointer">
                     {{ c.project.name }}
                   </router-link>
@@ -118,24 +121,25 @@
                     {{ c.slug }}
                   </span>
                   <span v-else class="chip" title="Not created by Skeppa">external</span>
-                </div>
-                <!-- Same five columns as the pm2 cards above, in the same
-                     order: the whole list compares straight down. -->
-                <div class="proc-stats">
-                  <span><i>pid</i><b>{{ c.pid || '—' }}</b></span>
-                  <!-- A stopped container has no uptime to show, but the age
-                       of the container itself still says something. -->
-                  <span v-if="c.uptime"><i>up</i><b>{{ uptimeSince(c.uptime) }}</b></span>
-                  <span v-else><i>created</i><b>{{ timeAgo(c.createdAt) }}</b></span>
-                  <span><i>cpu</i><b>{{ c.cpu == null ? '—' : `${c.cpu}%` }}</b></span>
-                  <span><i>mem</i><b>{{ bytes(c.memory) }}</b></span>
-                  <span :title="CRASHES_HINT"><i>crashes</i><b>{{ c.restarts ?? '—' }}</b></span>
-                </div>
-                <div class="proc-meta">
-                  <span><i>state</i>{{ c.state || '—' }}</span>
-                  <span class="proc-image" :title="c.image"><i>image</i>{{ c.image || '—' }}</span>
-                  <span v-if="c.ports?.length"><i>ports</i>{{ c.ports.join(' · ') }}</span>
-                </div>
+                  <StatusBadge :status="c.status" :href="c.appUrl" />
+                </span>
+              </div>
+              <!-- Same five columns as the pm2 cards above, in the same
+                   order: the whole list compares straight down. -->
+              <div class="proc-stats">
+                <span class="stat-pid"><i>pid</i><b>{{ c.pid || '—' }}</b></span>
+                <!-- A stopped container has no uptime to show, but the age of
+                     the container itself still says something. -->
+                <span v-if="c.uptime"><i>up</i><b>{{ uptimeSince(c.uptime) }}</b></span>
+                <span v-else><i>created</i><b>{{ timeAgo(c.createdAt) }}</b></span>
+                <span><i>cpu</i><b>{{ c.cpu == null ? '—' : `${c.cpu}%` }}</b></span>
+                <span><i>mem</i><b>{{ bytes(c.memory) }}</b></span>
+                <span :title="CRASHES_HINT"><i>crashes</i><b>{{ c.restarts ?? '—' }}</b></span>
+              </div>
+              <div class="proc-meta">
+                <span><i>state</i>{{ c.state || '—' }}</span>
+                <span class="proc-image" :title="c.image"><i>image</i>{{ c.image || '—' }}</span>
+                <span v-if="c.ports?.length"><i>ports</i>{{ c.ports.join(' · ') }}</span>
               </div>
               <div class="proc-actions">
                 <button class="secondary" @click="toggleContainerLogs(c.name)">
