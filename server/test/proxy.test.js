@@ -245,7 +245,7 @@ test('auto-assigns a port to a routed subdomain and rejects duplicate routes', a
   let res = await post({ name: 'A', subdomain: 'a' })
   expect(res.status).toBe(201)
   const a = await res.json()
-  expect(a.port).toBe(4000 + a.id)
+  expect(a.port).toBe(8100 + a.id) // harbor gate listen port (default 8100) + id
 
   res = await post({ name: 'B', subdomain: 'taken' })
   expect(res.status).toBe(400)

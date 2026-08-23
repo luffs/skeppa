@@ -48,7 +48,7 @@ test('the new-project form creates a project with sane defaults for every added 
     build_image: null, // panel default
     run_image: null,
     subdomain: null,
-    port: 4001, // auto-assigned: 4000 + id
+    port: 8101, // auto-assigned: harbor gate listen port (default 8100) + id
   })
 
   const row = db.query('SELECT * FROM projects WHERE id = ?').get(created.id)
@@ -90,7 +90,14 @@ test('an empty port string means "assign one for me"', async () => {
   const { app } = setup()
   const res = await create(app, { ...NEW_PROJECT_FORM, port: null })
   expect(res.status).toBe(201)
-  expect((await res.json()).port).toBe(4001)
+  expect((await res.json()).port).toBe(8101)
+})
+
+test('the auto port base follows the harbor gate listen port setting', async () => {
+  const { db, app } = setup()
+  db.query("INSERT INTO settings (key, value) VALUES ('proxy_http_port', '9000')").run()
+  const res = await create(app, NEW_PROJECT_FORM)
+  expect((await res.json()).port).toBe(9001)
 })
 
 test('an explicitly chosen port is kept as-is', async () => {
@@ -101,9 +108,9 @@ test('an explicitly chosen port is kept as-is', async () => {
 
 test('the auto port bumps past one claimed by hand', async () => {
   const { app } = setup()
-  await create(app, { ...NEW_PROJECT_FORM, port: 4002 }) // id 1, takes the next project's default
+  await create(app, { ...NEW_PROJECT_FORM, port: 8102 }) // id 1, takes the next project's default
   const res = await create(app, { ...NEW_PROJECT_FORM, name: 'Other', pm2_name: 'other' })
-  expect((await res.json()).port).toBe(4003) // 4000 + id 2 is taken → next free
+  expect((await res.json()).port).toBe(8103) // 8100 + id 2 is taken → next free
 })
 
 test('routing a subdomain no longer requires typing a port', async () => {
@@ -112,7 +119,7 @@ test('routing a subdomain no longer requires typing a port', async () => {
   expect(res.status).toBe(201)
   const body = await res.json()
   expect(body.subdomain).toBe('myapp')
-  expect(body.port).toBe(4001)
+  expect(body.port).toBe(8101)
 })
 
 test('clearing the port on an edit re-assigns the default', async () => {
@@ -120,7 +127,7 @@ test('clearing the port on an edit re-assigns the default', async () => {
   const { id } = await (await create(app, { ...NEW_PROJECT_FORM, port: 9000 })).json()
   const res = await app.request(`/${id}`, { method: 'PATCH', body: JSON.stringify({ port: '' }) })
   expect(res.status).toBe(200)
-  expect((await res.json()).port).toBe(4000 + id)
+  expect((await res.json()).port).toBe(8100 + id)
 })
 
 // The pm2 name field is hidden for container projects, so a collision there

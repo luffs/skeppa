@@ -10,6 +10,7 @@ import { createContainerClient } from '../containers/client.js'
 import { appContainerName, appLogResponse } from '../containers/runtime.js'
 import { applyProjectAction } from '../deploy/control.js'
 import { tailFile } from '../lib/tail.js'
+import { proxySettings } from '../proxy/index.js'
 
 const PROJECT_COLUMNS =
   'id, slug, name, repo_full_name, branch, deploy_script, build_image, run_image, runtime, pm2_name, start_command, cwd, ' +
@@ -53,16 +54,17 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
     typeof value === 'string' && value.trim() ? value.trim().toLowerCase() : null
   const normalizePort = value => (value == null || value === '' ? null : Number(value))
 
-  // A project left without a port gets PORT_BASE + id: unique by construction,
-  // stable across edits (clearing the field brings the same number back), and
-  // readable at a glance — project 7 listens on 4007. Bumps past any port
-  // someone claimed by hand.
-  const PORT_BASE = 4000
+  // A project left without a port gets <harbor gate listen port> + id: unique
+  // by construction, stable across edits (clearing the field brings the same
+  // number back), and the whole port neighborhood reads as one block — the
+  // gate on its port, project 7 right above it. The base is a seed, not an
+  // invariant: assigned ports are stored, so changing the listen port later
+  // only moves where NEW projects land. Bumps past ports claimed by hand.
   const autoPort = (db_, id) => {
     const taken = new Set(
       db_.query('SELECT port FROM projects WHERE port IS NOT NULL AND id != ?').all(id).map(r => r.port)
     )
-    let port = PORT_BASE + id
+    let port = proxySettings(db_).httpPort + id
     while (taken.has(port)) port++
     return port
   }
