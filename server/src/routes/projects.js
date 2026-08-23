@@ -52,6 +52,20 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
   const normalizeSubdomain = value =>
     typeof value === 'string' && value.trim() ? value.trim().toLowerCase() : null
   const normalizePort = value => (value == null || value === '' ? null : Number(value))
+
+  // A project left without a port gets PORT_BASE + id: unique by construction,
+  // stable across edits (clearing the field brings the same number back), and
+  // readable at a glance — project 7 listens on 4007. Bumps past any port
+  // someone claimed by hand.
+  const PORT_BASE = 4000
+  const autoPort = (db_, id) => {
+    const taken = new Set(
+      db_.query('SELECT port FROM projects WHERE port IS NOT NULL AND id != ?').all(id).map(r => r.port)
+    )
+    let port = PORT_BASE + id
+    while (taken.has(port)) port++
+    return port
+  }
   const normalizeImage = value => (typeof value === 'string' && value.trim() ? value.trim() : null)
 
   // Field errors for subdomain/port collisions with other projects.
@@ -116,6 +130,10 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
           project.build_image, project.run_image, project.runtime, project.pm2_name, project.start_command,
           project.cwd, project.auto_deploy, project.write_env_file, project.subdomain, project.port)
     const id = Number(lastInsertRowid)
+    if (project.port == null) {
+      project.port = autoPort(db, id)
+      db.query('UPDATE projects SET port = ? WHERE id = ?').run(project.port, id)
+    }
     liveState.projects[id] = projectDefaults(null, getProjectInfo(db, id))
     syncManagedImages(db, liveState) // a build/run image may now have a user
     if (project.subdomain) await applyProxy()
@@ -149,6 +167,9 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
       subdomain: 'subdomain' in body ? normalizeSubdomain(body.subdomain) : project.subdomain,
       port: 'port' in body ? normalizePort(body.port) : project.port,
     }
+    // Clearing the port (or saving a legacy project that never had one)
+    // re-assigns the default rather than leaving the project portless.
+    if (merged.port == null) merged.port = autoPort(db, project.id)
     const errors = { ...validateProject(merged), ...routingConflicts(merged, project.id) }
     if (merged.runtime === 'container' && merged.pm2_name === config.selfPm2Name) {
       errors.runtime = 'the panel itself must run under pm2'

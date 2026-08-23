@@ -232,7 +232,7 @@ test('projects accept subdomain+port and trigger a proxy apply', async () => {
   expect(applies).toHaveLength(1)
 })
 
-test('rejects a subdomain without a port and duplicate routes', async () => {
+test('auto-assigns a port to a routed subdomain and rejects duplicate routes', async () => {
   const db = makeDb()
   addProject(db, { slug: 'taken', subdomain: 'taken', port: 4001 })
   const app = projectsApp(db, { apply: async () => {} })
@@ -241,14 +241,18 @@ test('rejects a subdomain without a port and duplicate routes', async () => {
     body: JSON.stringify({ name: body.name, repo_full_name: 'luff/x', branch: 'main', ...body }),
   })
 
+  // No port typed: the route gets the project's auto port instead of a 400.
   let res = await post({ name: 'A', subdomain: 'a' })
-  expect(res.status).toBe(400)
-  expect((await res.json()).fields.port).toBeDefined()
+  expect(res.status).toBe(201)
+  const a = await res.json()
+  expect(a.port).toBe(4000 + a.id)
 
-  res = await post({ name: 'B', subdomain: 'taken', port: 4002 })
+  res = await post({ name: 'B', subdomain: 'taken' })
+  expect(res.status).toBe(400)
   expect((await res.json()).fields.subdomain).toBe('subdomain already routed')
 
   res = await post({ name: 'C', subdomain: 'c', port: 4001 })
+  expect(res.status).toBe(400)
   expect((await res.json()).fields.port).toBe('port already used by another project')
 })
 

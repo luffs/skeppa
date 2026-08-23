@@ -48,7 +48,7 @@ test('the new-project form creates a project with sane defaults for every added 
     build_image: null, // panel default
     run_image: null,
     subdomain: null,
-    port: null,
+    port: 4001, // auto-assigned: 4000 + id
   })
 
   const row = db.query('SELECT * FROM projects WHERE id = ?').get(created.id)
@@ -86,11 +86,41 @@ test('a malformed port is rejected, not silently dropped', async () => {
   expect(db.query('SELECT COUNT(*) AS n FROM projects').get().n).toBe(0)
 })
 
-test('an empty port string still means "no port"', async () => {
+test('an empty port string means "assign one for me"', async () => {
   const { app } = setup()
   const res = await create(app, { ...NEW_PROJECT_FORM, port: null })
   expect(res.status).toBe(201)
-  expect((await res.json()).port).toBeNull()
+  expect((await res.json()).port).toBe(4001)
+})
+
+test('an explicitly chosen port is kept as-is', async () => {
+  const { app } = setup()
+  const res = await create(app, { ...NEW_PROJECT_FORM, port: 8080 })
+  expect((await res.json()).port).toBe(8080)
+})
+
+test('the auto port bumps past one claimed by hand', async () => {
+  const { app } = setup()
+  await create(app, { ...NEW_PROJECT_FORM, port: 4002 }) // id 1, takes the next project's default
+  const res = await create(app, { ...NEW_PROJECT_FORM, name: 'Other', pm2_name: 'other' })
+  expect((await res.json()).port).toBe(4003) // 4000 + id 2 is taken → next free
+})
+
+test('routing a subdomain no longer requires typing a port', async () => {
+  const { app } = setup()
+  const res = await create(app, { ...NEW_PROJECT_FORM, subdomain: 'myapp' })
+  expect(res.status).toBe(201)
+  const body = await res.json()
+  expect(body.subdomain).toBe('myapp')
+  expect(body.port).toBe(4001)
+})
+
+test('clearing the port on an edit re-assigns the default', async () => {
+  const { app } = setup()
+  const { id } = await (await create(app, { ...NEW_PROJECT_FORM, port: 9000 })).json()
+  const res = await app.request(`/${id}`, { method: 'PATCH', body: JSON.stringify({ port: '' }) })
+  expect(res.status).toBe(200)
+  expect((await res.json()).port).toBe(4000 + id)
 })
 
 // The pm2 name field is hidden for container projects, so a collision there

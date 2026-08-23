@@ -11,11 +11,11 @@
         />
       </div>
       <div style="flex: 1 1 120px">
-        <label>App port</label>
+        <label>App port <span class="soft">(blank = auto)</span></label>
         <input
           :value="port"
           class="code"
-          placeholder="4001"
+          placeholder="auto"
           @input="$emit('update:port', $event.target.value)"
         />
       </div>
@@ -27,7 +27,8 @@
            deployed at that address yet. -->
       <a v-if="existing" :href="routedUrl" target="_blank" rel="noopener" class="mono" style="font-size: 12.5px">{{ routedUrl }}</a>
       <span v-else class="mono" style="font-size: 12.5px">{{ routedUrl }}</span>
-      → localhost:{{ port }} · the app gets <span class="mono" style="font-size: 12px">PORT={{ port }}</span>
+      <template v-if="port"> → localhost:{{ port }} · the app gets <span class="mono" style="font-size: 12px">PORT={{ port }}</span></template>
+      <template v-else> → the port assigned on save</template>
     </p>
     <p class="hint" v-else-if="subdomain && !baseDomain">
       Set a base domain under Rigging → Harbor gate to route this subdomain.
@@ -58,7 +59,7 @@ export default {
       return store.live.proxy?.baseDomain ?? ''
     },
     routedUrl() {
-      if (!this.subdomain || !this.port || !this.baseDomain) return ''
+      if (!this.subdomain || !this.baseDomain) return ''
       return `https://${this.subdomain}.${this.baseDomain}`
     },
   },

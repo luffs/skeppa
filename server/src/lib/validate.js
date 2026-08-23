@@ -62,6 +62,5 @@ export function validateProject({ name, repo_full_name, branch, pm2_name, cwd, d
     errors.subdomain = 'lowercase letters, digits and dashes only'
   }
   if (port != null && !isValidPort(port)) errors.port = 'must be a port between 1 and 65535'
-  if (subdomain != null && port == null && !errors.port) errors.port = 'required to route the subdomain'
   return errors
 }
