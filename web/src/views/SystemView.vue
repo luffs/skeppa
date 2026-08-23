@@ -65,7 +65,7 @@
       <p v-if="actionError" class="error">{{ actionError }}</p>
 
       <div class="proc-list">
-        <div v-for="p in processes" :key="p.name" class="proc-card" :class="{ open: opened === p.name }">
+        <div v-for="p in processes" :key="p.name" class="proc-card" :class="[stripeClass(p.status), { open: opened === p.name }]">
           <div class="proc-head">
             <!-- Name and what the thing is on the left; who owns it and how it
                  is doing pinned to the card's own right edge, status last, so
@@ -91,13 +91,17 @@
               <span><i>mem</i><b>{{ bytes(p.memory) }}</b></span>
               <span><i>restarts</i><b>{{ p.restarts ?? '—' }}</b></span>
             </div>
+            <!-- Only the actions the state can use: a Start on something
+                 running and a Stop on something stopped were noise. -->
             <div class="proc-actions">
               <button class="secondary" @click="toggleLogs(p.name)">
                 {{ opened === p.name ? 'Hide logs' : 'Logs' }}
               </button>
-              <button class="secondary" :disabled="busy === p.name" @click="run(p, 'start')">Start</button>
-              <button class="secondary" :disabled="busy === p.name" @click="run(p, 'stop')">Stop</button>
-              <button class="secondary" :disabled="busy === p.name" @click="run(p, 'restart')">Restart</button>
+              <template v-if="running(p.status)">
+                <button class="secondary" :disabled="busy === p.name" @click="run(p, 'restart')">Restart</button>
+                <button class="secondary" :disabled="busy === p.name" @click="run(p, 'stop')">Stop</button>
+              </template>
+              <button v-else class="secondary" :disabled="busy === p.name" @click="run(p, 'start')">Start</button>
             </div>
           </div>
           <Pm2Logs v-if="opened === p.name" :name="p.name" />
@@ -119,7 +123,7 @@
         <p v-if="containerActionError" class="error">{{ containerActionError }}</p>
 
         <div class="proc-list">
-          <div v-for="c in containers" :key="c.name" class="proc-card" :class="{ open: openedContainer === c.name }">
+          <div v-for="c in containers" :key="c.name" class="proc-card" :class="[stripeClass(c.status), { open: openedContainer === c.name }]">
             <div class="proc-head">
               <div class="proc-title">
                 <span class="proc-name">{{ c.name }}</span>
@@ -149,7 +153,9 @@
                 <span :title="CRASHES_HINT"><i>crashes</i><b>{{ c.restarts ?? '—' }}</b></span>
               </div>
               <div class="proc-meta">
-                <span><i>state</i>{{ c.state || '—' }}</span>
+                <!-- 'running' repeats the badge; the raw state earns its spot
+                     only when it says more — exited, created, paused. -->
+                <span v-if="c.state && c.state !== 'running'"><i>state</i>{{ c.state }}</span>
                 <span class="proc-image" :title="c.image"><i>image</i>{{ c.image || '—' }}</span>
                 <span v-if="c.ports?.length"><i>ports</i>{{ c.ports.join(' · ') }}</span>
               </div>
@@ -157,9 +163,11 @@
                 <button class="secondary" @click="toggleContainerLogs(c.name)">
                   {{ openedContainer === c.name ? 'Hide logs' : 'Logs' }}
                 </button>
-                <button class="secondary" :disabled="containerBusy === c.name" @click="runContainer(c, 'start')">Start</button>
-                <button class="secondary" :disabled="containerBusy === c.name" @click="runContainer(c, 'stop')">Stop</button>
-                <button class="secondary" :disabled="containerBusy === c.name" @click="runContainer(c, 'restart')">Restart</button>
+                <template v-if="running(c.status)">
+                  <button class="secondary" :disabled="containerBusy === c.name" @click="runContainer(c, 'restart')">Restart</button>
+                  <button class="secondary" :disabled="containerBusy === c.name" @click="runContainer(c, 'stop')">Stop</button>
+                </template>
+                <button v-else class="secondary" :disabled="containerBusy === c.name" @click="runContainer(c, 'start')">Start</button>
               </div>
             </div>
             <Pm2Logs v-if="openedContainer === c.name" :name="c.name" :url="c.logsUrl" />
@@ -299,6 +307,17 @@ export default {
     bytes,
     uptimeSince,
     timeAgo,
+    // Anything the engine or pm2 would let us stop.
+    running(status) {
+      return status === 'online' || status === 'launching' || status === 'stopping'
+    },
+    // The card's left-edge stripe: state as color, readable before the text.
+    stripeClass(status) {
+      if (status === 'online') return 'st-online'
+      if (status === 'launching' || status === 'stopping' || status === 'queued') return 'st-warm'
+      if (status === 'stopped' || status === 'errored' || status === 'failed') return 'st-bad'
+      return 'st-idle'
+    },
     // Meter color by how close to full: calm until 80%, amber to 92%, red past.
     meterClass(usedPercent) {
       return usedPercent >= 92 ? 'crit' : usedPercent >= 80 ? 'warn' : ''

@@ -548,6 +548,16 @@ tr:last-child td { border-bottom: none; }
 }
 .proc-card.open { border-color: var(--line-strong); }
 
+/* Status as a 3px stripe down the left edge — the state reads as color while
+   the eye is still on the name, without shouting. Only status-bearing cards
+   (the Engine room's) carry a stripe class; Shipyard cards keep a flat edge.
+   The transition makes a status change glide instead of blink. */
+.proc-card { transition: border-color 0.4s ease; }
+.proc-card.st-online { border-left: 3px solid var(--green); }
+.proc-card.st-warm { border-left: 3px solid var(--amber); }
+.proc-card.st-bad { border-left: 3px solid var(--red); }
+.proc-card.st-idle { border-left: 3px solid var(--line-strong); }
+
 /* Stacked rows, each spanning the whole card: title, numbers, container facts,
    buttons. Sharing a row with the buttons used to cost the numbers half the
    card, which pushed a column onto a second line on anything but a maximized
@@ -604,7 +614,7 @@ tr:last-child td { border-bottom: none; }
   display: flex;
   gap: 16px;
   flex-wrap: wrap;
-  margin-top: 10px;
+  margin-top: 8px;
   font-family: var(--mono);
   font-size: 12px;
   color: var(--dim);
