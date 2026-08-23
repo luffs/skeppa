@@ -5,6 +5,7 @@ import { createContainerClient } from '../containers/client.js'
 import { appContainerName } from '../containers/runtime.js'
 import { PROXY_PROCESS } from '../proxy/index.js'
 import { collectContainers } from './containers.js'
+import { createCrashWatch } from './crashwatch.js'
 import { roundCpu, roundMem } from './quantize.js'
 import { syncImages } from './images.js'
 
@@ -41,8 +42,10 @@ async function diskUsage(appsDir) {
   return result
 }
 
-// Refreshes projects[*].pm2 and the `system` section of LiveState. Only runs
-// while at least one WS client is connected (the Hub starts/stops it).
+// Refreshes projects[*].pm2 and the `system` section of LiveState. Always
+// running once started — the crash watch has to work with nobody looking —
+// but idles at a slow cadence until the Hub reports a connected client and
+// calls setFast.
 const EMPTY_STATS = { status: 'not started', uptime: null, memory: null, cpu: null, restarts: null, pid: null }
 
 // A container entry carries image/ports/state for the Engine room; a project's
@@ -50,9 +53,11 @@ const EMPTY_STATS = { status: 'not started', uptime: null, memory: null, cpu: nu
 const projectStats = ({ status, uptime, memory, cpu, restarts, pid }) =>
   ({ status, uptime, memory, cpu, restarts, pid })
 
-export function createPoller({ db, config, liveState, intervalMs = 5000, containerClient = null }) {
+export function createPoller({ db, config, liveState, intervalMs = 5000, idleIntervalMs = 60_000, containerClient = null, onCrashAlert = null }) {
   let timer = null
+  let timerMs = null
   let ticking = false
+  const crashWatch = onCrashAlert ? createCrashWatch({ onAlert: onCrashAlert }) : null
   let engine = containerClient
   const getEngine = () => {
     if (!engine && config.containerSocket) engine = createContainerClient({ socketPath: config.containerSocket })
@@ -104,7 +109,7 @@ export function createPoller({ db, config, liveState, intervalMs = 5000, contain
       }
       const byName = new Map((list ?? []).map(p => [p.name, p]))
 
-      for (const { id, pm2_name, slug, runtime } of db.query('SELECT id, pm2_name, slug, runtime FROM projects').all()) {
+      for (const { id, pm2_name, slug, runtime, name } of db.query('SELECT id, pm2_name, slug, runtime, name FROM projects').all()) {
         const live = liveState.projects[id]
         if (!live) continue
         if (runtime === 'container') {
@@ -122,6 +127,15 @@ export function createPoller({ db, config, liveState, intervalMs = 5000, contain
         }
         const proc = byName.get(pm2_name)
         live.pm2 = proc ? pm2Stats(proc) : { ...EMPTY_STATS }
+      }
+
+      // Feed the crash watch after both runtimes have fresh counters. pm2's
+      // restart_time counts manual restarts too, so its alerts read as
+      // "restarted", not "crashed" — which is also all the panel knows.
+      if (crashWatch) {
+        for (const [id, live] of Object.entries(liveState.projects)) {
+          crashWatch.sample(id, live.info?.name ?? `project ${id}`, live.pm2?.restarts ?? null)
+        }
       }
 
       liveState.system = {
@@ -148,15 +162,31 @@ export function createPoller({ db, config, liveState, intervalMs = 5000, contain
     }
   }
 
+  const run = ms => {
+    if (timer) clearInterval(timer)
+    timer = setInterval(tick, ms)
+    timerMs = ms
+  }
+
   return {
     start() {
       if (timer) return
       tick()
-      timer = setInterval(tick, intervalMs)
+      run(idleIntervalMs)
+    },
+    // Connected clients raise the cadence; nobody watching lowers it. The
+    // poller itself never stops once started.
+    setFast(on) {
+      const ms = on ? intervalMs : idleIntervalMs
+      if (timer && ms !== timerMs) {
+        run(ms)
+        if (on) tick()
+      }
     },
     stop() {
       if (timer) clearInterval(timer)
       timer = null
+      timerMs = null
     },
     tick,
     refreshImages,

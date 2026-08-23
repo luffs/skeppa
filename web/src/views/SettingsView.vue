@@ -266,6 +266,33 @@
         </button>
       </div>
     </CollapseSection>
+
+    <CollapseSection title="Notifications">
+      <template #meta>
+        <span v-if="status?.notify_url" class="chip green">on</span>
+      </template>
+
+      <p class="hint" style="font-size: 13.5px">
+        One webhook gets a POST when a deploy fails and when an app restarts
+        three times within ten minutes — so the panel tells you instead of
+        waiting to be looked at. An
+        <a href="https://ntfy.sh" target="_blank" rel="noopener">ntfy</a> topic URL
+        receives plain text; Discord and Slack webhook URLs are recognized and
+        get their JSON shape.
+      </p>
+
+      <label>Webhook URL</label>
+      <input v-model="notifyForm.url" class="code" placeholder="https://ntfy.sh/my-secret-topic" />
+
+      <p v-if="notifyError" class="error">{{ notifyError }}</p>
+      <p v-if="notifyMessage" class="hint">{{ notifyMessage }}</p>
+      <div class="row" style="margin-top: 20px">
+        <button :disabled="notifyBusy" @click="saveNotify">{{ notifyBusy ? 'Working…' : 'Save' }}</button>
+        <button class="secondary" :disabled="notifyBusy || !status?.notify_url" @click="testNotify">
+          Send test
+        </button>
+      </div>
+    </CollapseSection>
   </div>
 </template>
 
@@ -305,6 +332,10 @@ export default {
       fbMessage: '',
       gate: null,
       gateForm: { base_domain: '', http_port: '8100', admin_port: '2020' },
+      notifyForm: { url: '' },
+      notifyBusy: false,
+      notifyError: '',
+      notifyMessage: '',
       gateBusy: false,
       gateError: '',
       gateMessage: '',
@@ -336,6 +367,7 @@ export default {
   methods: {
     async load() {
       this.status = await api.get('/api/settings')
+      this.notifyForm.url = this.status.notify_url ?? ''
       this.form.github_app_id = this.status.github_app_id ?? ''
       this.fbText = this.status.firebase_config ? JSON.stringify(this.status.firebase_config, null, 2) : ''
     },
@@ -449,6 +481,33 @@ export default {
       }
     },
 
+    async saveNotify() {
+      this.notifyBusy = true
+      this.notifyError = ''
+      this.notifyMessage = ''
+      try {
+        await api.put('/api/settings', { notify_url: this.notifyForm.url.trim() || null })
+        await this.load()
+        this.notifyMessage = this.status.notify_url ? 'Saved ✔' : 'Notifications off.'
+      } catch (err) {
+        this.notifyError = err.message
+      } finally {
+        this.notifyBusy = false
+      }
+    },
+    async testNotify() {
+      this.notifyBusy = true
+      this.notifyError = ''
+      this.notifyMessage = ''
+      try {
+        await api.post('/api/settings/notify/test')
+        this.notifyMessage = 'Test sent — check the other end.'
+      } catch (err) {
+        this.notifyError = `Test failed: ${err.message}`
+      } finally {
+        this.notifyBusy = false
+      }
+    },
     async loadGate() {
       this.gate = await api.get('/api/proxy')
       this.gateForm = {

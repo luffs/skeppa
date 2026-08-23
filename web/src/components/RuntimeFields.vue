@@ -32,6 +32,19 @@
       fallback-label="same as build image"
       @update:model-value="$emit('update:runImage', $event)"
     />
+
+    <label>Memory limit <span class="soft">(MB, blank = unlimited)</span></label>
+    <input
+      :value="memoryMb"
+      class="code"
+      placeholder="unlimited"
+      @input="$emit('update:memoryMb', $event.target.value)"
+    />
+    <p class="hint">
+      Hard cap: past it the app is OOM-killed and restarted by the engine, so a
+      leak crashes this project instead of starving the server.<template v-if="existing">
+      Applies on the next deploy or restart.</template>
+    </p>
   </template>
 
   <template v-else>
@@ -59,9 +72,10 @@ export default {
     buildImage: { type: String, default: '' },
     runImage: { type: String, default: '' },
     pm2Name: { type: String, default: '' },
+    memoryMb: { type: [String, Number], default: '' },
     // Wording differs slightly for a project that already exists.
     existing: { type: Boolean, default: false },
   },
-  emits: ['update:runtime', 'update:buildImage', 'update:runImage', 'update:pm2Name'],
+  emits: ['update:runtime', 'update:buildImage', 'update:runImage', 'update:pm2Name', 'update:memoryMb'],
 }
 </script>

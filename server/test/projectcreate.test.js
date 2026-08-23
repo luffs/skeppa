@@ -78,6 +78,22 @@ test('the form can opt into the container runtime and routing at creation time',
 // The port arrives as the user typed it, so a typo must fail validation.
 // Number()-ing it on the client turned NaN into JSON null, which reads as
 // "no port" and was saved silently.
+test('memory limit: round-trips, empty means unlimited, garbage is rejected', async () => {
+  const { app } = setup()
+  let res = await create(app, { ...NEW_PROJECT_FORM, memory_mb: 512 })
+  expect((await res.json()).memory_mb).toBe(512)
+
+  res = await create(app, { ...NEW_PROJECT_FORM, name: 'B', pm2_name: 'b', memory_mb: '' })
+  expect((await res.json()).memory_mb).toBeNull()
+
+  res = await create(app, { ...NEW_PROJECT_FORM, name: 'C', pm2_name: 'c', memory_mb: 'lots' })
+  expect(res.status).toBe(400)
+  expect((await res.json()).fields.memory_mb).toBeDefined()
+
+  res = await create(app, { ...NEW_PROJECT_FORM, name: 'D', pm2_name: 'd', memory_mb: 4 })
+  expect(res.status).toBe(400) // below the 16 MB floor
+})
+
 test('a malformed port is rejected, not silently dropped', async () => {
   const { db, app } = setup()
   const res = await create(app, { ...NEW_PROJECT_FORM, port: '80o0' })

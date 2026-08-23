@@ -26,6 +26,7 @@ Deploys private GitHub repos onto this server via webhooks, manages encrypted EN
 - `bun run build` — build the frontend to `web/dist` (served by Hono in prod)
 - `bun scripts/install.js` — interactive server install (key file, dirs, .env, admin user, pm2 + safe `pm2 save`)
 - `bun scripts/seed.js <user> <password>` — create/reset the admin user
+- `bun scripts/backup.js [dir] [--keep N]` — snapshot `skeppa.db` via `VACUUM INTO` (default `DATA_DIR/backups`, keep 14). The master key is never included — back it up separately.
 - `bun start` — run the server (serves `web/dist` if present)
 
 ## Directory layout

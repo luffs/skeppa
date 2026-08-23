@@ -1,4 +1,5 @@
 import { Hono } from 'hono'
+import { sendNotification } from '../lib/notify.js'
 import { randomBytes } from 'node:crypto'
 import {
   getSetting, setSetting, setSecretSetting, deleteSetting,
@@ -159,7 +160,7 @@ export function githubRoutes({ db, config, github }) {
   return app
 }
 
-export function settingsRoutes({ db, config, github }) {
+export function settingsRoutes({ db, config, github, notifyFn = sendNotification }) {
   const app = new Hono()
 
   // Secrets are write-only through this API: only presence is reported back.
@@ -169,7 +170,16 @@ export function settingsRoutes({ db, config, github }) {
       has_private_key: getSetting(db, 'github_private_key') != null,
       has_webhook_secret: getSetting(db, 'github_webhook_secret') != null,
       firebase_config: getFirebaseConfig(db),
+      notify_url: getSetting(db, 'notify_url') ?? '',
     })
+  })
+
+  // One message through the configured webhook, so the URL can be verified
+  // from the form instead of by waiting for something to break.
+  app.post('/notify/test', async c => {
+    if (!(getSetting(db, 'notify_url') ?? '')) return c.json({ error: 'no webhook URL configured' }, 400)
+    const ok = await notifyFn(db, '⛵ Test notification from Skeppa — failed deploys and restart bursts will look like this.')
+    return c.json({ ok }, ok ? 200 : 502)
   })
 
   app.put('/', async c => {
@@ -187,6 +197,23 @@ export function settingsRoutes({ db, config, github }) {
     }
     if (typeof body.github_webhook_secret === 'string' && body.github_webhook_secret.trim()) {
       setSecretSetting(db, config.masterKey, 'github_webhook_secret', body.github_webhook_secret.trim())
+    }
+    if ('notify_url' in body) {
+      const raw = typeof body.notify_url === 'string' ? body.notify_url.trim() : ''
+      if (!raw) {
+        deleteSetting(db, 'notify_url')
+      } else {
+        let parsed
+        try {
+          parsed = new URL(raw)
+        } catch {
+          return c.json({ error: 'notify_url must be a valid URL' }, 400)
+        }
+        if (!/^https?:$/.test(parsed.protocol) || raw.length > 2000) {
+          return c.json({ error: 'notify_url must be an http(s) URL' }, 400)
+        }
+        setSetting(db, 'notify_url', raw)
+      }
     }
     if ('firebase_config' in body) {
       if (body.firebase_config === null) {

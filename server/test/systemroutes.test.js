@@ -164,7 +164,7 @@ test('restarting a panel-owned container recreates it and restores auto_start', 
 
   const res = await app.request(`/containers/${appContainerName('capp')}/restart`, { method: 'POST' })
   expect(res.status).toBe(200)
-  expect(engine.calls.map(c => c[0])).toEqual(['remove', 'create', 'start'])
+  expect(engine.calls.map(c => c[0])).toEqual(['logs', 'remove', 'create', 'start'])
   expect(db.query('SELECT auto_start FROM projects').get().auto_start).toBe(1)
 })
 

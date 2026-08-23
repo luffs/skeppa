@@ -1,5 +1,5 @@
-import { posix } from 'node:path'
-import { mkdirSync } from 'node:fs'
+import { posix, join } from 'node:path'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { createContainerClient } from './client.js'
 import { createContainerEnsuringImage } from './images.js'
 
@@ -19,6 +19,8 @@ export function resolveRunImage(config, project) {
   return project.run_image?.trim() || project.build_image?.trim() || config.buildImage
 }
 
+const MB = 1024 * 1024
+
 export function appContainerSpec(config, project, dirs, env) {
   const port = project.port
   return {
@@ -31,6 +33,12 @@ export function appContainerSpec(config, project, dirs, env) {
     HostConfig: {
       Binds: [`${dirs.source}:/app:ro`, `${dirs.shared}:/data`],
       RestartPolicy: { Name: 'on-failure', MaximumRetryCount: 10 },
+      // Hard cap, swap included: past the limit the app is OOM-killed and the
+      // restart policy brings it back — a leak crashes one project instead of
+      // starving the host. No limit set means no cap, as before.
+      ...(project.memory_mb
+        ? { Memory: project.memory_mb * MB, MemorySwap: project.memory_mb * MB }
+        : {}),
       ...(port
         ? { PortBindings: { [`${port}/tcp`]: [{ HostIp: '127.0.0.1', HostPort: String(port) }] } }
         : {}),
@@ -47,6 +55,7 @@ export async function recreateAppContainer({ config, project, dirs, env, onLine 
   const spec = appContainerSpec(config, project, dirs, env)
   mkdirSync(dirs.shared, { recursive: true })
 
+  await capturePreviousLogs(engine, name, dirs, onLine)
   await engine.removeContainer(name)
   const id = await createContainerEnsuringImage({ engine, name, spec, db, onLine })
   await engine.startContainer(id)
@@ -108,4 +117,35 @@ export async function appLogResponse(engine, name, lines) {
     if (err.status !== 404) throw err
     return { name, lines, out: wrap('', true), err: wrap('', true) }
   }
+}
+
+// The tail of the outgoing container's output, written next to source/ and
+// shared/ before the recreate deletes it with the container — the only
+// post-mortem there is for "it crashed and then I deployed". One file,
+// overwritten each time: the previous container, nothing older. Best-effort
+// by design; a missing container or unreadable logs must never block the
+// deploy itself.
+export async function capturePreviousLogs(engine, name, dirs, onLine = () => {}) {
+  let tail
+  try {
+    tail = await engine.tailLogs(name, 2000)
+  } catch {
+    return null // no previous container — nothing to save
+  }
+  if (!tail.out && !tail.err) return null
+  const file = join(dirs.root, 'container.prev.log')
+  try {
+    writeFileSync(file, [
+      `==== ${name} · captured ${new Date().toISOString()}, before recreate ====`,
+      '---- stdout ----',
+      tail.out,
+      '---- stderr ----',
+      tail.err,
+      '',
+    ].join('\n'))
+  } catch {
+    return null
+  }
+  onLine('previous container logs saved to container.prev.log')
+  return file
 }

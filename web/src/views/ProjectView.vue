@@ -119,6 +119,7 @@
         v-model:build-image="edit.build_image"
         v-model:run-image="edit.run_image"
         v-model:pm2-name="edit.pm2_name"
+        v-model:memory-mb="edit.memory_mb"
         existing
       />
       <label>Working subdirectory</label>
@@ -361,6 +362,7 @@ export default {
         write_env_file: !!p.write_env_file,
         subdomain: p.subdomain ?? '',
         port: p.port ?? '',
+        memory_mb: p.memory_mb ?? '',
       }
     },
     async save() {
@@ -375,6 +377,7 @@ export default {
           run_image: this.edit.run_image || null,
           subdomain: this.edit.subdomain || null,
           port: String(this.edit.port ?? '').trim() || null,
+          memory_mb: String(this.edit.memory_mb ?? '').trim() || null,
         })
         // LiveState carries the update to `project`; re-seed the form with the
         // server-normalized values.

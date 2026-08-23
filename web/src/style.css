@@ -597,6 +597,8 @@ tr:last-child td { border-bottom: none; }
   color: var(--dim);
 }
 .proc-stats b { font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+/* The mem cell's limit meter — same idiom as the stat cards', cell-sized. */
+.proc-stats .stat-meter { margin: 5px 0 0; }
 
 /* The container-only facts. Free text of wildly varying length, so they stay
    out of the metric grid and keep the old inline shape. */

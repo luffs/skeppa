@@ -1,6 +1,6 @@
 import { test, expect } from 'bun:test'
 import { Database } from 'bun:sqlite'
-import { mkdtempSync, mkdirSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -60,7 +60,10 @@ test('restart recreates the container with freshly decrypted env', async () => {
   const res = await app.request(`/${project.id}/pm2/restart`, { method: 'POST' })
   expect(res.status).toBe(200)
   const order = containerClient.calls.map(c => c[0])
-  expect(order).toEqual(['remove', 'create', 'start'])
+  // 'logs' first: the outgoing container's tail is saved before the remove.
+  expect(order).toEqual(['logs', 'remove', 'create', 'start'])
+  expect(readFileSync(join(projectDirs(config, project).root, 'container.prev.log'), 'utf8'))
+    .toContain('hello from app')
   const [, , spec] = containerClient.calls.find(c => c[0] === 'create')
   expect(spec.Env).toContain('PORT=4100')
   expect(spec.Env).toContain('NODE_ENV=production')

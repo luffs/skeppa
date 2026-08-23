@@ -9,6 +9,7 @@ import { pruneSessions } from './auth/sessions.js'
 import { createLiveState, initLiveState } from './live/state.js'
 import { Hub } from './live/hub.js'
 import { createPoller } from './live/poller.js'
+import { sendNotification } from './lib/notify.js'
 import { createProxy, proxySettings } from './proxy/index.js'
 import { GitHubApp } from './github/appClient.js'
 import { DeployRunner, recoverInterrupted } from './deploy/runner.js'
@@ -35,12 +36,22 @@ const liveState = createLiveState()
 initLiveState(liveState, db, config)
 
 const github = new GitHubApp({ db, config })
-const poller = createPoller({ db, config, liveState })
+const poller = createPoller({
+  db, config, liveState,
+  onCrashAlert: (label, count) =>
+    sendNotification(db, `⚠ ${label} restarted ${count} times in the last 10 minutes — check the Engine room`),
+})
 const hub = new Hub({
   liveState,
-  onClientsChange: n => (n > 0 ? poller.start() : poller.stop()),
+  onClientsChange: n => poller.setFast(n > 0),
 })
-const runner = new DeployRunner({ db, config, liveState, hub, github })
+// Always on: the crash watch must run with nobody looking. Clients connecting
+// only switch the cadence from idle to live.
+poller.start()
+const runner = new DeployRunner({
+  db, config, liveState, hub, github,
+  notify: text => sendNotification(db, text),
+})
 hub.getLogBacklog = id => runner.getActiveLog(id)
 
 const proxy = createProxy({ db, config })

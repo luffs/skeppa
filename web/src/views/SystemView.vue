@@ -154,7 +154,14 @@
                 <span v-if="c.uptime"><i>up</i><b>{{ uptimeSince(c.uptime) }}</b></span>
                 <span v-else><i>created</i><b>{{ timeAgo(c.createdAt) }}</b></span>
                 <span><i>cpu</i><b>{{ c.cpu == null ? '—' : `${c.cpu}%` }}</b></span>
-                <span><i>mem</i><b>{{ bytes(c.memory) }}</b></span>
+                <span>
+                  <i>mem</i><b>{{ bytes(c.memory) }}</b>
+                  <span
+                    v-if="c.memPercent != null"
+                    class="stat-meter"
+                    :title="`${c.memPercent}% of the ${c.project.memory_mb} MB limit`"
+                  ><span :class="meterClass(c.memPercent)" :style="{ width: c.memPercent + '%' }"></span></span>
+                </span>
                 <span :title="CRASHES_HINT"><i>crashes</i><b>{{ c.restarts ?? '—' }}</b></span>
                 <span><i>pid</i><b>{{ c.pid || '—' }}</b></span>
               </div>
@@ -289,12 +296,18 @@ export default {
       return Object.entries(this.status?.containers ?? {})
         .map(([name, c]) => {
           const project = this.projectsBySlug[c.slug] ?? null
+          // With a configured limit the memory reading finally has a
+          // denominator, which is what makes a meter honest.
+          const limit = project?.memory_mb
           return {
             ...c,
             name,
             project,
             appUrl: project ? appUrlFor(project) : '',
             logsUrl: `/api/system/containers/${encodeURIComponent(name)}/logs`,
+            memPercent: limit && c.memory != null
+              ? Math.min(100, Math.round((c.memory / (limit * 1024 * 1024)) * 100))
+              : null,
           }
         })
         .sort((a, b) => a.name.localeCompare(b.name))

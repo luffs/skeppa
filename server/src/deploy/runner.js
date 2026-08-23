@@ -75,12 +75,13 @@ export function recoverInterrupted(db) {
 // runs, at most one more waits; a newer enqueue replaces the waiting one
 // (which is marked cancelled).
 export class DeployRunner {
-  constructor({ db, config, liveState, hub, github, execute, containerClient = null }) {
+  constructor({ db, config, liveState, hub, github, execute, containerClient = null, notify = null }) {
     this.db = db
     this.config = config
     this.liveState = liveState
     this.hub = hub
     this.github = github
+    this.notify = notify ?? (() => {}) // fire-and-forget; never awaited
     this.containerClient = containerClient // test injection; null = real engine
     this.queues = new Map() // projectId -> { runningId, queuedId }
     this.activeLogs = new Map() // deploymentId -> LogCollector
@@ -167,6 +168,11 @@ export class DeployRunner {
     ).run(status, exitCode, finishedAt, deploymentId)
 
     const row = this.db.query('SELECT commit_sha FROM deployments WHERE id = ?').get(deploymentId)
+    if (status === 'failed') {
+      const p = this.db.query('SELECT name FROM projects WHERE id = ?').get(projectId)
+      const sha = row?.commit_sha ? ` @ ${row.commit_sha.slice(0, 7)}` : ''
+      this.notify(`✖ Deploy of ${p?.name ?? 'a deleted project'}${sha} failed (exit ${exitCode})`)
+    }
     const live = this._live(projectId)
     live.currentDeployment = null
     live.lastDeployment = { id: deploymentId, status, finishedAt, commitSha: row?.commit_sha ?? null }

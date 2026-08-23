@@ -47,6 +47,7 @@
         v-model:build-image="form.build_image"
         v-model:run-image="form.run_image"
         v-model:pm2-name="form.pm2_name"
+        v-model:memory-mb="form.memory_mb"
       />
 
       <RoutingFields v-model:subdomain="form.subdomain" v-model:port="form.port" />
@@ -92,6 +93,7 @@ export default {
         runtime: 'pm2',
         build_image: '',
         run_image: '',
+        memory_mb: '',
         subdomain: '',
         port: '',
       },
@@ -134,6 +136,7 @@ export default {
           cwd: this.form.cwd || null,
           build_image: this.form.build_image || null,
           run_image: this.form.run_image || null,
+          memory_mb: String(this.form.memory_mb ?? '').trim() || null,
           subdomain: this.form.subdomain || null,
           port: String(this.form.port ?? '').trim() || null,
         })

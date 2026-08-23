@@ -15,7 +15,7 @@
     <div class="side">
       <span class="uptime">{{ uptimeNote }}</span>
       <button class="secondary" :disabled="deploying" @click="deploy">
-        {{ deploying ? 'Under way…' : 'Set sail' }}
+        {{ deploying ? 'Under way…' : 'Deploy' }}
       </button>
     </div>
   </div>

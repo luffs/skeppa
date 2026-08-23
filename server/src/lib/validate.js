@@ -46,7 +46,7 @@ export function slugify(name) {
 }
 
 // Collects field errors for a project payload; returns {} when everything is valid.
-export function validateProject({ name, repo_full_name, branch, pm2_name, cwd, deploy_script, start_command, build_image, run_image, runtime, subdomain, port }) {
+export function validateProject({ name, repo_full_name, branch, pm2_name, cwd, deploy_script, start_command, build_image, run_image, runtime, subdomain, port, memory_mb }) {
   const errors = {}
   if (typeof name !== 'string' || !name.trim()) errors.name = 'name is required'
   if (typeof repo_full_name !== 'string' || !REPO_RE.test(repo_full_name)) errors.repo_full_name = 'must be owner/repo'
@@ -62,5 +62,8 @@ export function validateProject({ name, repo_full_name, branch, pm2_name, cwd, d
     errors.subdomain = 'lowercase letters, digits and dashes only'
   }
   if (port != null && !isValidPort(port)) errors.port = 'must be a port between 1 and 65535'
+  if (memory_mb != null && !(Number.isInteger(memory_mb) && memory_mb >= 16 && memory_mb <= 1024 * 1024)) {
+    errors.memory_mb = 'must be a whole number of megabytes, 16 or more'
+  }
   return errors
 }

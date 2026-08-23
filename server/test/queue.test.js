@@ -2,7 +2,7 @@ import { test, expect } from 'bun:test'
 import { Database } from 'bun:sqlite'
 import { fileURLToPath } from 'node:url'
 import { migrate } from '../src/db/migrate.js'
-import { DeployRunner, recoverInterrupted } from '../src/deploy/runner.js'
+import { DeployRunner, DeployError, recoverInterrupted } from '../src/deploy/runner.js'
 import { createLiveState, RECENT_DEPLOYMENTS_LIMIT } from '../src/live/state.js'
 
 const migrationsDir = fileURLToPath(new URL('../src/db/migrations', import.meta.url))
@@ -170,4 +170,36 @@ test('recoverInterrupted fails queued and running deployments on startup', () =>
   db.query(`INSERT INTO deployments (project_id, status, "trigger", finished_at) VALUES (?, 'success', 'manual', 'x')`).run(projectId)
   expect(recoverInterrupted(db)).toBe(2)
   expect(statuses(db)).toEqual(['failed', 'failed', 'success'])
+})
+
+test('a failed deploy fires the notifier; a successful one stays quiet', async () => {
+  const notes = []
+  const { execute, pending } = manualExecutor()
+  const db = new Database(':memory:')
+  migrate(db, migrationsDir)
+  db.query(`INSERT INTO projects (slug, name, repo_full_name, branch, pm2_name) VALUES ('p', 'Mageek', 'o/r', 'main', 'p')`).run()
+  const runner = new DeployRunner({
+    db,
+    config: { appsDir: '/tmp/apps', masterKey: 'a'.repeat(64), deployTimeoutMs: 1000, selfPm2Name: 'skeppa' },
+    liveState: createLiveState(),
+    hub: { sendLog() {} },
+    github: null,
+    execute,
+    notify: text => notes.push(text),
+  })
+
+  runner.enqueue(1, { trigger: 'manual' })
+  await tick()
+  pending[0].resolve()
+  await tick(); await tick()
+  expect(notes).toEqual([])
+
+  runner.enqueue(1, { trigger: 'webhook', commitSha: 'deadbeefcafe' })
+  await tick()
+  pending[1].reject(new DeployError('boom', 7))
+  await tick(); await tick()
+  expect(notes.length).toBe(1)
+  expect(notes[0]).toContain('Mageek')
+  expect(notes[0]).toContain('deadbee')
+  expect(notes[0]).toContain('exit 7')
 })

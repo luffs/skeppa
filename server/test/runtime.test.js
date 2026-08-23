@@ -2,9 +2,10 @@ import { test, expect } from 'bun:test'
 import { mkdtempSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { readFileSync } from 'node:fs'
 import {
   appContainerName, appContainerSpec, resolveRunImage,
-  recreateAppContainer, appLiveStats, cpuPercent,
+  recreateAppContainer, appLiveStats, cpuPercent, capturePreviousLogs,
 } from '../src/containers/runtime.js'
 
 const CONFIG = { containerSocket: '/sock', buildImage: 'docker.io/oven/bun:1' }
@@ -45,6 +46,33 @@ test('spec: read-only source, writable shared, localhost-only port, restart poli
   expect(spec.WorkingDir).toBe('/app/web')
   expect(spec.Env).toContain('TOKEN=sekret')
   expect(spec.Labels['skeppa.project']).toBe('app')
+})
+
+test('a memory limit becomes a hard engine cap, swap included', () => {
+  const spec = appContainerSpec(CONFIG, project({ memory_mb: 512 }), makeDirs(), {})
+  expect(spec.HostConfig.Memory).toBe(512 * 1024 * 1024)
+  expect(spec.HostConfig.MemorySwap).toBe(512 * 1024 * 1024)
+  const uncapped = appContainerSpec(CONFIG, project(), makeDirs(), {})
+  expect(uncapped.HostConfig.Memory).toBeUndefined()
+})
+
+test('capturePreviousLogs writes both streams and reports the file', async () => {
+  const dirs = makeDirs()
+  const lines = []
+  const engine = { async tailLogs() { return { out: 'listening on 4100', err: 'boom' } } }
+  const file = await capturePreviousLogs(engine, 'skeppa-app-app', dirs, l => lines.push(l))
+  const text = readFileSync(file, 'utf8')
+  expect(text).toContain('listening on 4100')
+  expect(text).toContain('boom')
+  expect(lines[0]).toContain('container.prev.log')
+})
+
+test('capturePreviousLogs is silent when there is nothing to save', async () => {
+  const dirs = makeDirs()
+  const gone = { async tailLogs() { throw Object.assign(new Error('no such container'), { status: 404 }) } }
+  expect(await capturePreviousLogs(gone, 'x', dirs)).toBe(null)
+  const empty = { async tailLogs() { return { out: '', err: '' } } }
+  expect(await capturePreviousLogs(empty, 'x', dirs)).toBe(null)
 })
 
 test('a project without a routed port publishes nothing', () => {
