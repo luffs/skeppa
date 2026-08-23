@@ -65,31 +65,36 @@
       <p v-if="actionError" class="error">{{ actionError }}</p>
 
       <div class="proc-list">
-        <div v-for="p in processes" :key="p.name" class="proc-card" :class="[stripeClass(p.status), { open: opened === p.name }]">
+        <div v-for="p in processes" :key="p.name" class="proc-card" :class="{ open: opened === p.name }">
           <div class="proc-head">
             <!-- Name and what the thing is on the left; who owns it and how it
                  is doing pinned to the card's own right edge, status last, so
                  the badges line up straight down the list. Every row spans the
                  full card, so nothing squeezes the numbers. -->
             <div class="proc-title">
+              <!-- Same dot idiom as the harbor's deploy feed and the masthead
+                   connection light: state as color right where the eye lands,
+                   pulsing while in flight. -->
+              <span class="dot" :class="statusDot(p.status)"></span>
               <span class="proc-name">{{ p.name }}</span>
               <span v-if="p.isPanel" class="chip blue" title="The Skeppa panel itself">panel</span>
+              <span v-if="p.isProxy" class="chip blue" title="The panel's own reverse proxy — routes subdomains to the apps">harbor gate</span>
               <span class="proc-tags">
                 <!-- No ↗ here: that arrow means "opens in a new tab" on the
                      status badge next to it, and this navigates in-app. -->
                 <router-link v-if="p.project" :to="`/projects/${p.project.id}`" class="chip" style="cursor: pointer">
                   {{ p.project.name }}
                 </router-link>
-                <span v-else class="chip" title="Not deployed by Skeppa">external</span>
+                <span v-else-if="!p.isProxy" class="chip" title="Not deployed by Skeppa">external</span>
                 <StatusBadge :status="p.status" :href="p.appUrl" />
               </span>
             </div>
             <div class="proc-stats">
-              <span class="stat-pid"><i>pid</i><b>{{ p.pid || '—' }}</b></span>
               <span><i>up</i><b>{{ uptimeSince(p.uptime) }}</b></span>
               <span><i>cpu</i><b>{{ p.cpu == null ? '—' : `${p.cpu}%` }}</b></span>
               <span><i>mem</i><b>{{ bytes(p.memory) }}</b></span>
               <span><i>restarts</i><b>{{ p.restarts ?? '—' }}</b></span>
+              <span><i>pid</i><b>{{ p.pid || '—' }}</b></span>
             </div>
             <!-- Only the actions the state can use: a Start on something
                  running and a Stop on something stopped were noise. -->
@@ -123,9 +128,10 @@
         <p v-if="containerActionError" class="error">{{ containerActionError }}</p>
 
         <div class="proc-list">
-          <div v-for="c in containers" :key="c.name" class="proc-card" :class="[stripeClass(c.status), { open: openedContainer === c.name }]">
+          <div v-for="c in containers" :key="c.name" class="proc-card" :class="{ open: openedContainer === c.name }">
             <div class="proc-head">
               <div class="proc-title">
+                <span class="dot" :class="statusDot(c.status)"></span>
                 <span class="proc-name">{{ c.name }}</span>
                 <span class="proc-tags">
                   <router-link v-if="c.project" :to="`/projects/${c.project.id}`" class="chip" style="cursor: pointer">
@@ -143,7 +149,6 @@
               <!-- Same five columns as the pm2 cards above, in the same
                    order: the whole list compares straight down. -->
               <div class="proc-stats">
-                <span class="stat-pid"><i>pid</i><b>{{ c.pid || '—' }}</b></span>
                 <!-- A stopped container has no uptime to show, but the age of
                      the container itself still says something. -->
                 <span v-if="c.uptime"><i>up</i><b>{{ uptimeSince(c.uptime) }}</b></span>
@@ -151,12 +156,13 @@
                 <span><i>cpu</i><b>{{ c.cpu == null ? '—' : `${c.cpu}%` }}</b></span>
                 <span><i>mem</i><b>{{ bytes(c.memory) }}</b></span>
                 <span :title="CRASHES_HINT"><i>crashes</i><b>{{ c.restarts ?? '—' }}</b></span>
+                <span><i>pid</i><b>{{ c.pid || '—' }}</b></span>
               </div>
               <div class="proc-meta">
                 <!-- 'running' repeats the badge; the raw state earns its spot
                      only when it says more — exited, created, paused. -->
                 <span v-if="c.state && c.state !== 'running'"><i>state</i>{{ c.state }}</span>
-                <span class="proc-image" :title="c.image"><i>image</i>{{ c.image || '—' }}</span>
+                <span class="proc-image" :title="c.image"><i>image</i>{{ shortImage(c.image) || '—' }}</span>
                 <span v-if="c.ports?.length"><i>ports</i>{{ c.ports.join(' · ') }}</span>
               </div>
               <div class="proc-actions">
@@ -264,6 +270,7 @@ export default {
             project,
             appUrl: appUrlFor(project),
             isPanel: name === this.status?.selfPm2Name,
+            isProxy: name === this.status?.proxyPm2Name,
           }
         })
         .sort((a, b) => a.name.localeCompare(b.name))
@@ -307,16 +314,25 @@ export default {
     bytes,
     uptimeSince,
     timeAgo,
+    // Managed images all live under the one reserved prefix with the one
+    // tag — "localhost/skeppa/bun-node:latest" carries one word of signal.
+    // Registry refs stay whole: there the ref IS the information. The full
+    // string remains in the cell's tooltip.
+    shortImage(ref) {
+      const prefix = store.live.images?.managedPrefix
+      if (!prefix || !ref?.startsWith(prefix)) return ref
+      return ref.slice(prefix.length).replace(/:latest$/, '')
+    },
     // Anything the engine or pm2 would let us stop.
     running(status) {
       return status === 'online' || status === 'launching' || status === 'stopping'
     },
-    // The card's left-edge stripe: state as color, readable before the text.
-    stripeClass(status) {
-      if (status === 'online') return 'st-online'
-      if (status === 'launching' || status === 'stopping' || status === 'queued') return 'st-warm'
-      if (status === 'stopped' || status === 'errored' || status === 'failed') return 'st-bad'
-      return 'st-idle'
+    // State as the app's usual dot colors; in-flight states pulse.
+    statusDot(status) {
+      if (status === 'online') return 'green'
+      if (status === 'launching' || status === 'stopping' || status === 'queued') return 'amber pulse'
+      if (status === 'stopped' || status === 'errored' || status === 'failed') return 'red'
+      return ''
     },
     // Meter color by how close to full: calm until 80%, amber to 92%, red past.
     meterClass(usedPercent) {

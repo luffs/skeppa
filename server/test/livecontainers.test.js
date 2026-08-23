@@ -45,12 +45,16 @@ test('maps engine state onto the status vocabulary the badge knows', () => {
   expect(stateToStatus('')).toBe('unknown')
 })
 
-test('dedupes the v4/v6 halves of one published port', () => {
+test('port labels: localhost folds away, mappings collapse, unpublished drop', () => {
   expect(portLabels({ Ports: [
+    // the v4/v6 halves of one localhost publish become one plain label
     { IP: '127.0.0.1', PrivatePort: 4100, PublicPort: 4100, Type: 'tcp' },
     { IP: '::', PrivatePort: 4100, PublicPort: 4100, Type: 'tcp' },
+    // EXPOSE without publish is unreachable from the host — not listed
     { PrivatePort: 9000, Type: 'tcp' },
-  ] })).toEqual(['127.0.0.1:4100→4100/tcp', '4100→4100/tcp', '9000/tcp'])
+    // a real mapping keeps the arrow, an unusual bind address its prefix
+    { IP: '0.0.0.0', PrivatePort: 3000, PublicPort: 8080, Type: 'tcp' },
+  ] })).toEqual(['0.0.0.0:8080→3000/tcp', '4100/tcp'])
 })
 
 test('joins the listing with per-container stats', async () => {
@@ -82,7 +86,7 @@ test('joins the listing with per-container stats', async () => {
     image: 'localhost/skeppa/bun:latest',
     state: 'running',
     createdAt: 1_700_000_000_000,
-    ports: ['127.0.0.1:4100→4100/tcp'],
+    ports: ['4100/tcp'],
     slug: 'blog',
   })
 })

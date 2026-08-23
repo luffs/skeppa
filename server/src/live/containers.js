@@ -27,14 +27,23 @@ export function stateToStatus(state) {
   return 'stopped'
 }
 
-// "127.0.0.1:4100→4100/tcp" per published port, deduped: the engine lists the
-// v4 and v6 bindings of one mapping separately.
+// The ports row answers "how do I reach it", so ceremony that is always the
+// same stays out: localhost binds carry no address (publishing on localhost
+// is the panel's own guarantee), a 1:1 mapping collapses to the one number,
+// and EXPOSEd-but-unpublished ports are dropped — they are not reachable from
+// the host, and listing them as if they were misleads. An unusual bind
+// address (0.0.0.0, a specific interface) is exactly what deserves to stand
+// out, so it keeps its prefix. Deduping folds the v4/v6 halves the engine
+// lists separately for one mapping.
 export function portLabels(entry) {
-  const labels = (entry?.Ports ?? []).map(p => {
+  const labels = (entry?.Ports ?? []).flatMap(p => {
+    if (!p.PublicPort) return []
     const proto = p.Type ?? 'tcp'
-    if (!p.PublicPort) return `${p.PrivatePort}/${proto}`
-    const host = p.IP && p.IP !== '::' ? `${p.IP}:` : ''
-    return `${host}${p.PublicPort}→${p.PrivatePort}/${proto}`
+    const mapping = p.PublicPort === p.PrivatePort
+      ? `${p.PublicPort}`
+      : `${p.PublicPort}→${p.PrivatePort}`
+    const local = !p.IP || p.IP === '127.0.0.1' || p.IP === '::1' || p.IP === '::'
+    return [`${local ? '' : `${p.IP}:`}${mapping}/${proto}`]
   })
   return [...new Set(labels)].sort()
 }

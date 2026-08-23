@@ -3,6 +3,7 @@ import { statfsSync } from 'node:fs'
 import { jlist } from '../deploy/pm2.js'
 import { createContainerClient } from '../containers/client.js'
 import { appContainerName } from '../containers/runtime.js'
+import { PROXY_PROCESS } from '../proxy/index.js'
 import { collectContainers } from './containers.js'
 import { roundCpu, roundMem } from './quantize.js'
 import { syncImages } from './images.js'
@@ -128,6 +129,9 @@ export function createPoller({ db, config, liveState, intervalMs = 5000, contain
         hostBootAt,
         panelStartedAt,
         selfPm2Name,
+        // Like images.managedPrefix: sent along so the client can recognize
+        // the panel's own proxy process without hardcoding its name.
+        proxyPm2Name: PROXY_PROCESS,
         loadavg: os.loadavg().map(n => Math.round(n * 100) / 100),
         memory: { total: os.totalmem(), free: roundMem(os.freemem()) },
         disk,
