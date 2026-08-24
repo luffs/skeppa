@@ -3,7 +3,7 @@
     <div class="page-head">
       <h1 style="margin: 0">Engine room</h1>
       <span class="mono" style="font-size: 12px" :style="{ color: connected ? 'var(--dim)' : 'var(--amber, #d29922)' }" v-if="status">
-        {{ connected ? 'live · updated' : 'reconnecting · last data' }} {{ timeAgo(liveUpdatedAt) }}
+        {{ updatedLabel }}
       </span>
     </div>
 
@@ -227,6 +227,14 @@ export default {
     },
     connected() {
       return store.connected
+    },
+    // Diffs arrive every few seconds while connected, so a seconds counter
+    // would mostly flicker between 0s and 5s — "just now" is the honest
+    // reading under 10s, and the counter takes over once things go quiet.
+    updatedLabel() {
+      if (!this.connected) return `reconnecting · last data ${timeAgo(this.liveUpdatedAt)}`
+      const fresh = this.liveUpdatedAt && store.now - this.liveUpdatedAt < 10_000
+      return `live · updated ${fresh ? 'just now' : timeAgo(this.liveUpdatedAt)}`
     },
     liveUpdatedAt() {
       return store.liveUpdatedAt
