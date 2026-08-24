@@ -7,7 +7,7 @@ import { syncManagedImages } from '../live/images.js'
 import { deleteProcess, describe } from '../deploy/pm2.js'
 import { projectDirs, syncEnvFiles, writeEcosystem } from '../deploy/envfiles.js'
 import { createContainerClient } from '../containers/client.js'
-import { appContainerName, appLogResponse } from '../containers/runtime.js'
+import { appContainerName, appLogResponse, prevLogPath } from '../containers/runtime.js'
 import { applyProjectAction } from '../deploy/control.js'
 import { tailFile } from '../lib/tail.js'
 import { proxySettings } from '../proxy/index.js'
@@ -374,6 +374,20 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
     } catch (err) {
       return c.json({ error: err.message }, 500)
     }
+  })
+
+  // The tail of the container a deploy replaced, written by
+  // capturePreviousLogs just before the recreate removes that container and
+  // its logs along with it — the only post-mortem for "it crashed and then I
+  // deployed". Static once written, so it is its own request rather than a
+  // third key on the log route the UI polls every few seconds.
+  app.get('/:id/logs/previous', async c => {
+    const project = getProject(c.req.param('id'))
+    if (!project) return c.json({ error: 'not found' }, 404)
+    const requested = parseInt(c.req.query('lines') ?? '', 10)
+    const lines = Math.min(Math.max(Number.isFinite(requested) ? requested : DEFAULT_LOG_LINES, 1), MAX_LOG_LINES)
+    const path = prevLogPath(projectDirs(config, project))
+    return c.json({ name: project.slug, lines, prev: { path, ...(await tailFile(path, { lines })) } })
   })
 
   return app

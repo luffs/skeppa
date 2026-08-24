@@ -1,6 +1,6 @@
 import { test, expect } from 'bun:test'
 import { Database } from 'bun:sqlite'
-import { mkdtempSync, mkdirSync, readFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -8,7 +8,7 @@ import { migrate } from '../src/db/migrate.js'
 import { projectRoutes } from '../src/routes/projects.js'
 import { createLiveState } from '../src/live/state.js'
 import { projectDirs } from '../src/deploy/envfiles.js'
-import { appContainerName } from '../src/containers/runtime.js'
+import { appContainerName, prevLogPath } from '../src/containers/runtime.js'
 
 function fakeEngine() {
   const calls = []
@@ -120,4 +120,46 @@ test('an unknown runtime value is rejected', async () => {
   })
   expect(res.status).toBe(400)
   expect((await res.json()).fields.runtime).toBeDefined()
+})
+
+// --- previous-container log -------------------------------------------------
+
+test('the previous-container log reports missing before a deploy has replaced one', async () => {
+  const { project, app } = setup()
+  const res = await app.request(`/${project.id}/logs/previous`)
+  expect(res.status).toBe(200)
+  const body = await res.json()
+  expect(body.prev.missing).toBe(true)
+  expect(body.prev.text).toBe('')
+})
+
+test('the previous-container log serves the post-mortem a recreate left behind', async () => {
+  const { config, project, app } = setup()
+  const dirs = projectDirs(config, project)
+  mkdirSync(dirs.root, { recursive: true })
+  writeFileSync(prevLogPath(dirs), 'boot failed\nexit 1\n')
+
+  const res = await app.request(`/${project.id}/logs/previous?lines=50`)
+  const body = await res.json()
+  expect(body.prev.missing).toBe(false)
+  expect(body.prev.text).toBe('boot failed\nexit 1')
+  expect(body.prev.path).toBe(prevLogPath(dirs))
+  expect(body.lines).toBe(50)
+})
+
+// The container is gone by the time anyone reads this, so serving it must not
+// go looking for one — that is the whole reason the file exists.
+test('the previous-container log is served without touching the engine', async () => {
+  const { config, project, app, containerClient } = setup()
+  const dirs = projectDirs(config, project)
+  mkdirSync(dirs.root, { recursive: true })
+  writeFileSync(prevLogPath(dirs), 'gone\n')
+
+  await app.request(`/${project.id}/logs/previous`)
+  expect(containerClient.calls).toEqual([])
+})
+
+test('the previous-container log 404s for an unknown project', async () => {
+  const { app } = setup()
+  expect((await app.request('/9999/logs/previous')).status).toBe(404)
 })

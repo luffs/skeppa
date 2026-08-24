@@ -119,6 +119,11 @@ export async function appLogResponse(engine, name, lines) {
   }
 }
 
+// The single-slot post-mortem file, next to source/ and shared/. Named here
+// so the code that writes it and the route that serves it cannot drift.
+export const PREV_LOG_FILE = 'container.prev.log'
+export const prevLogPath = dirs => join(dirs.root, PREV_LOG_FILE)
+
 // The tail of the outgoing container's output, written next to source/ and
 // shared/ before the recreate deletes it with the container — the only
 // post-mortem there is for "it crashed and then I deployed". One file,
@@ -133,7 +138,7 @@ export async function capturePreviousLogs(engine, name, dirs, onLine = () => {})
     return null // no previous container — nothing to save
   }
   if (!tail.out && !tail.err) return null
-  const file = join(dirs.root, 'container.prev.log')
+  const file = prevLogPath(dirs)
   try {
     writeFileSync(file, [
       `==== ${name} · captured ${new Date().toISOString()}, before recreate ====`,
@@ -151,6 +156,6 @@ export async function capturePreviousLogs(engine, name, dirs, onLine = () => {})
   // App output routinely carries secrets, and APPS_DIR is world-readable
   // under a default umask.
   try { chmodSync(file, 0o600) } catch { /* not a thing on Windows */ }
-  onLine('previous container logs saved to container.prev.log')
+  onLine(`previous container logs saved to ${PREV_LOG_FILE}`)
   return file
 }

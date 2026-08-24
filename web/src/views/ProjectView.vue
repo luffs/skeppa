@@ -90,7 +90,11 @@
     </div>
 
     <div v-else-if="tab === 'logs'" class="panel">
-      <Pm2Logs :url="`/api/projects/${project.id}/logs`" :name="project.pm2_name" />
+      <Pm2Logs
+        :url="`/api/projects/${project.id}/logs`"
+        :name="project.pm2_name"
+        :prev-url="project.runtime === 'container' ? `/api/projects/${project.id}/logs/previous` : ''"
+      />
     </div>
 
     <div v-else-if="tab === 'env'" class="panel">

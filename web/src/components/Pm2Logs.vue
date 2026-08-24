@@ -6,10 +6,13 @@
         <button :class="{ active: stream === 'err' }" @click="stream = 'err'">
           Errors<span v-if="hasErrors" class="dot red"></span>
         </button>
+        <button v-if="prevUrl" :class="{ active: stream === 'prev' }" @click="selectPrev">
+          Previous
+        </button>
       </div>
       <span class="spacer"></span>
       <span class="log-meta" v-if="meta">{{ meta }}</span>
-      <button class="secondary small" :disabled="busy" @click="load">↻</button>
+      <button class="secondary small" :disabled="working" @click="refresh">↻</button>
       <button class="secondary small" :title="auto ? 'Stop auto-refresh' : 'Auto-refresh every 5s'" @click="auto = !auto">
         {{ auto ? '⏸ Live' : '▶ Paused' }}
       </button>
@@ -40,30 +43,52 @@ export default {
     // the same response shape for both runtimes.
     url: { type: String, default: '' },
     lines: { type: Number, default: 200 },
+    // When set, a third tab reads the post-mortem log of the container a
+    // deploy replaced. Only container-runtime projects have one.
+    prevUrl: { type: String, default: '' },
   },
   data() {
-    return { data: null, stream: 'out', busy: false, error: '', auto: true, paused: false, timer: null }
+    return { data: null, prevData: null, stream: 'out', busy: false, prevBusy: false, error: '', auto: true, paused: false, timer: null }
   },
   computed: {
     current() {
+      if (this.stream === 'prev') return this.prevData ?? EMPTY
       return this.data?.[this.stream] ?? EMPTY
     },
     hasErrors() {
       return !!this.data?.err?.text
     },
+    // The two tabs fetch independently, so a live poll in flight must not
+    // make the post-mortem look idle (or block its load — see loadPrev).
+    working() {
+      return this.stream === 'prev' ? this.prevBusy : this.busy
+    },
     body() {
-      if (!this.data) return this.busy ? 'Loading…' : ''
-      if (this.current.missing) return '(no log file yet)'
+      if (!this.loaded) return this.working ? 'Loading…' : ''
+      if (this.current.missing) {
+        return this.stream === 'prev'
+          ? '(nothing yet — no deploy has replaced a container for this project)'
+          : '(no log file yet)'
+      }
       return this.current.text || '(empty)'
     },
+    // Whichever source the active tab reads, so an unloaded tab still says
+    // "Loading…" rather than borrowing the other one's state.
+    loaded() {
+      return this.stream === 'prev' ? this.prevData : this.data
+    },
     meta() {
-      if (!this.data) return ''
+      if (!this.loaded) return ''
       const count = this.current.text ? this.current.text.split('\n').length : 0
       return this.current.truncated ? `last ${count} lines` : `${count} lines`
     },
   },
   watch: {
     name: { immediate: true, handler: 'load' },
+    prevUrl() {
+      this.prevData = null
+      if (this.stream === 'prev') this.stream = 'out'
+    },
     auto(on) {
       if (on) {
         this.schedule()
@@ -105,6 +130,28 @@ export default {
       } finally {
         this.busy = false
       }
+    },
+    // The post-mortem is a static file — it changes only when a deploy
+    // replaces a container — so it loads on demand and is never polled.
+    selectPrev() {
+      this.stream = 'prev'
+      if (!this.prevData) this.loadPrev()
+    },
+    async loadPrev(force = false) {
+      if (this.prevBusy || (this.prevData && !force)) return
+      this.prevBusy = true
+      try {
+        this.prevData = (await api.get(`${this.prevUrl}?lines=${this.lines}`)).prev
+        this.error = ''
+      } catch (err) {
+        // Failing to read it must not stop the live tabs from polling.
+        this.error = `Could not read the previous container log: ${err.message}`
+      } finally {
+        this.prevBusy = false
+      }
+    },
+    refresh() {
+      return this.stream === 'prev' ? this.loadPrev(true) : this.load()
     },
     onScroll() {
       const el = this.$refs.box

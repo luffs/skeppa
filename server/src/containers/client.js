@@ -202,7 +202,7 @@ export function createContainerClient({ socketPath, fetchFn = fetch, timeouts = 
         'POST',
         `/build?t=${encodeURIComponent(tag)}&dockerfile=Containerfile${pull ? '&pull=1' : ''}`,
         tarBytes,
-        { timeoutMs: 0, type: 'application/x-tar' },
+        { timeoutMs: 0, type: 'application/x-tar' }
       )
       const decoder = new TextDecoder()
       let buf = ''
