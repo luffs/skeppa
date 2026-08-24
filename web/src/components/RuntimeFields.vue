@@ -45,6 +45,41 @@
       leak crashes this project instead of starving the server.<template v-if="existing">
       Applies on the next deploy or restart.</template>
     </p>
+
+    <label>Network profile</label>
+    <select :value="networkProfile" class="code" @change="$emit('update:networkProfile', $event.target.value)">
+      <option value="open">open — internet and LAN, as before</option>
+      <option value="restricted">restricted — only its shared networks, nothing else</option>
+    </select>
+    <p class="hint" v-if="networkProfile === 'restricted'">
+      No internet, no LAN, no host — enforced by having no route out. The app
+      port stays routable, and it reaches the containers on its shared networks.
+      With no networks listed it gets a private one of its own. The setting for
+      code you don't fully trust.<template v-if="existing"> Applies on the next
+      deploy or restart.</template>
+    </p>
+
+    <label>Shared networks <span class="soft">(names, space-separated — blank for none)</span></label>
+    <input
+      :value="networks"
+      class="code"
+      placeholder="db-net"
+      @input="$emit('update:networks', $event.target.value)"
+    />
+    <p class="hint">
+      Projects listing the same name can reach each other by container name
+      (<span class="mono">skeppa-app-&lt;slug&gt;</span>). Shared networks never
+      grant internet — that comes from the profile.
+    </p>
+
+    <label class="check-label" v-if="networkProfile === 'open' && !networks.trim()">
+      <input
+        type="checkbox"
+        :checked="hostAccess"
+        @change="$emit('update:hostAccess', $event.target.checked)"
+      />
+      Host access — reach services on the server's own 127.0.0.1
+    </label>
   </template>
 
   <template v-else>
@@ -73,9 +108,13 @@ export default {
     runImage: { type: String, default: '' },
     pm2Name: { type: String, default: '' },
     memoryMb: { type: [String, Number], default: '' },
+    networkProfile: { type: String, default: 'open' },
+    hostAccess: { type: Boolean, default: false },
+    networks: { type: String, default: '' },
     // Wording differs slightly for a project that already exists.
     existing: { type: Boolean, default: false },
   },
-  emits: ['update:runtime', 'update:buildImage', 'update:runImage', 'update:pm2Name', 'update:memoryMb'],
+  emits: ['update:runtime', 'update:buildImage', 'update:runImage', 'update:pm2Name', 'update:memoryMb',
+    'update:networkProfile', 'update:hostAccess', 'update:networks'],
 }
 </script>

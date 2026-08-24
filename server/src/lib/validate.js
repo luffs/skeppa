@@ -19,6 +19,23 @@ export const PM2_ACTIONS = ['start', 'stop', 'restart']
 // engine's JSON API, never a shell — this is a sanity check, not an escape.
 export const IMAGE_RE = /^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,255}$/
 export const RUNTIMES = ['pm2', 'container']
+
+// Network profiles for container projects: open = engine default (internet
+// as before), restricted = only its convoy networks (no internet, no LAN,
+// no host). Convoy names become engine network names, so they get the same
+// whitelist treatment as slugs.
+export const NETWORK_PROFILES = ['open', 'restricted']
+export const NETWORK_NAME_RE = /^[a-z0-9][a-z0-9-]{0,30}$/
+
+// 'db-net cache' (spaces and/or commas) -> ['db-net', 'cache'], deduped.
+// null when any token fails the whitelist - callers treat that as a
+// validation error, never as an empty list.
+export function parseNetworks(text) {
+  if (text == null || text === '') return []
+  if (typeof text !== 'string') return null
+  const names = [...new Set(text.split(/[\s,]+/).filter(Boolean))]
+  return names.every(n => NETWORK_NAME_RE.test(n)) ? names : null
+}
 // Container names as the engine accepts them. Like image refs these travel
 // over the engine's JSON API, never a shell — a sanity check, not an escape.
 export const CONTAINER_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
@@ -46,7 +63,7 @@ export function slugify(name) {
 }
 
 // Collects field errors for a project payload; returns {} when everything is valid.
-export function validateProject({ name, repo_full_name, branch, pm2_name, cwd, deploy_script, start_command, build_image, run_image, runtime, subdomain, port, memory_mb }) {
+export function validateProject({ name, repo_full_name, branch, pm2_name, cwd, deploy_script, start_command, build_image, run_image, runtime, subdomain, port, memory_mb, network_profile, host_access, networks }) {
   const errors = {}
   if (typeof name !== 'string' || !name.trim()) errors.name = 'name is required'
   if (typeof repo_full_name !== 'string' || !REPO_RE.test(repo_full_name)) errors.repo_full_name = 'must be owner/repo'
@@ -64,6 +81,18 @@ export function validateProject({ name, repo_full_name, branch, pm2_name, cwd, d
   if (port != null && !isValidPort(port)) errors.port = 'must be a port between 1 and 65535'
   if (memory_mb != null && !(Number.isInteger(memory_mb) && memory_mb >= 16 && memory_mb <= 1024 * 1024)) {
     errors.memory_mb = 'must be a whole number of megabytes, 16 or more'
+  }
+  if (network_profile != null && !NETWORK_PROFILES.includes(network_profile)) {
+    errors.network_profile = `must be one of ${NETWORK_PROFILES.join(', ')}`
+  }
+  if (networks != null && parseNetworks(networks) == null) {
+    errors.networks = 'names are lowercase letters, digits and dashes, separated by spaces'
+  }
+  // Untested combination, refused rather than silently ignored: the loopback
+  // mechanism (slirp allow_host_loopback) only exists in the engine-default
+  // network mode, which naming any network (or restricting) replaces.
+  if (host_access && (network_profile === 'restricted' || (parseNetworks(networks) ?? []).length)) {
+    errors.host_access = 'host access needs the open profile with no shared networks'
   }
   return errors
 }

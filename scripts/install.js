@@ -171,6 +171,8 @@ const configContent =
   `# KEY=VALUE; the process environment overrides these per key.\n` +
   `MASTER_KEY_FILE=${keyFile}\n` +
   `PORT=${port}\n` +
+  `# The panel binds loopback only (use your reverse proxy). Uncomment for direct LAN access:\n` +
+  `# HOST=0.0.0.0\n` +
   `NODE_ENV=production\n` +
   `DATA_DIR=${dataDir}\n` +
   `APPS_DIR=${appsDir}\n`

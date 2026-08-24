@@ -124,6 +124,9 @@
         v-model:run-image="edit.run_image"
         v-model:pm2-name="edit.pm2_name"
         v-model:memory-mb="edit.memory_mb"
+        v-model:network-profile="edit.network_profile"
+        v-model:host-access="edit.host_access"
+        v-model:networks="edit.networks"
         existing
       />
       <label>Working subdirectory</label>
@@ -367,6 +370,9 @@ export default {
         subdomain: p.subdomain ?? '',
         port: p.port ?? '',
         memory_mb: p.memory_mb ?? '',
+        network_profile: p.network_profile ?? 'open',
+        host_access: !!p.host_access,
+        networks: p.networks ?? '',
       }
     },
     async save() {

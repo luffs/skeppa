@@ -7,7 +7,7 @@ import vue from '@vitejs/plugin-vue'
 // target (e.g. a deployed VPS) would drop the Lax cookie and 401 everything.
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
-  const target = env.VITE_SKEPPA_API || 'http://localhost:3000'
+  const target = env.VITE_SKEPPA_API || 'http://127.0.0.1:3000'
   const proxy = { target, changeOrigin: true }
 
   return {

@@ -178,3 +178,47 @@ test('auto_deploy false survives the round trip', async () => {
   const res = await create(app, { ...NEW_PROJECT_FORM, auto_deploy: false })
   expect((await res.json()).auto_deploy).toBe(0)
 })
+
+// --- network profile fields ---------------------------------------------------
+
+test('network fields are stored and returned', async () => {
+  const { app } = setup()
+  const res = await app.request('/', {
+    method: 'POST',
+    body: JSON.stringify({
+      name: 'Sec App', repo_full_name: 'o/sec', runtime: 'container', start_command: 'bun start',
+      network_profile: 'restricted', networks: 'db-net', host_access: false,
+    }),
+  })
+  expect(res.status).toBe(201)
+  const body = await res.json()
+  expect(body.network_profile).toBe('restricted')
+  expect(body.networks).toBe('db-net')
+  expect(body.host_access).toBe(0)
+})
+
+test('a bad network name and a bad profile are refused', async () => {
+  const { app } = setup()
+  const res = await app.request('/', {
+    method: 'POST',
+    body: JSON.stringify({
+      name: 'Bad', repo_full_name: 'o/bad', networks: 'Nope_Caps!', network_profile: 'sideways',
+    }),
+  })
+  expect(res.status).toBe(400)
+  const body = await res.json()
+  expect(body.fields.networks).toBeDefined()
+  expect(body.fields.network_profile).toBeDefined()
+})
+
+test('host access with restricted or with networks is refused as untested', async () => {
+  const { app } = setup()
+  const res = await app.request('/', {
+    method: 'POST',
+    body: JSON.stringify({
+      name: 'H', repo_full_name: 'o/h', network_profile: 'restricted', host_access: true,
+    }),
+  })
+  expect(res.status).toBe(400)
+  expect((await res.json()).fields.host_access).toBeDefined()
+})

@@ -33,6 +33,8 @@ function fakeEngine({ createMissingImage = false } = {}) {
     },
     async startContainer(id) { calls.push(['start', id]) },
     async pullImage(ref) { calls.push(['pull', ref]) },
+    async hasNetwork(name) { calls.push(['hasNetwork', name]); return false },
+    async createNetwork(name, opts) { calls.push(['createNetwork', name, opts]) },
   }
 }
 
@@ -130,4 +132,49 @@ test('cpuPercent is defensive about missing fields', () => {
   expect(cpuPercent(null)).toBe(0)
   expect(cpuPercent({})).toBe(0)
   expect(cpuPercent({ cpu_stats: { cpu_usage: { total_usage: 100 } }, precpu_stats: { cpu_usage: { total_usage: 200 } } })).toBe(0)
+})
+
+// --- network profiles ---------------------------------------------------------
+
+// The runtime field matters: projectEngineNetworks ignores pm2 projects, so the
+// spec tests set it explicitly the way real rows carry it.
+const cproject = (over = {}) => project({ runtime: 'container', network_profile: 'open', host_access: 0, networks: '', ...over })
+
+test('an open project with no networks keeps the engine default mode', () => {
+  const spec = appContainerSpec(CONFIG, cproject(), makeDirs(), {})
+  expect(spec.HostConfig.NetworkMode).toBeUndefined()
+  expect(spec.NetworkingConfig).toBeUndefined()
+})
+
+test('host access asks slirp to expose the host loopback', () => {
+  const spec = appContainerSpec(CONFIG, cproject({ host_access: 1 }), makeDirs(), {})
+  expect(spec.HostConfig.NetworkMode).toBe('slirp4netns:allow_host_loopback=true')
+})
+
+test('restricted joins only its convoy networks', () => {
+  const spec = appContainerSpec(CONFIG, cproject({ network_profile: 'restricted', networks: 'db-net cache' }), makeDirs(), {})
+  expect(spec.HostConfig.NetworkMode).toBe('skeppa-net-db-net')
+  expect(Object.keys(spec.NetworkingConfig.EndpointsConfig)).toEqual(['skeppa-net-db-net', 'skeppa-net-cache'])
+  // the routed port still publishes — that is the whole point of the spike
+  expect(spec.HostConfig.PortBindings['4100/tcp'][0].HostIp).toBe('127.0.0.1')
+})
+
+test('restricted with no networks gets a private convoy named after the slug', () => {
+  const spec = appContainerSpec(CONFIG, cproject({ network_profile: 'restricted' }), makeDirs(), {})
+  expect(spec.HostConfig.NetworkMode).toBe('skeppa-net-app')
+  expect(Object.keys(spec.NetworkingConfig.EndpointsConfig)).toEqual(['skeppa-net-app'])
+})
+
+test('an open project with networks rides the default bridge for internet', () => {
+  const spec = appContainerSpec(CONFIG, cproject({ networks: 'db-net' }), makeDirs(), {})
+  expect(spec.HostConfig.NetworkMode).toBe('podman')
+  expect(Object.keys(spec.NetworkingConfig.EndpointsConfig)).toEqual(['podman', 'skeppa-net-db-net'])
+})
+
+test('recreate materializes missing convoy networks, never the default bridge', async () => {
+  const engine = fakeEngine()
+  const dirs = makeDirs()
+  await recreateAppContainer({ config: CONFIG, project: cproject({ networks: 'db-net' }), dirs, env: {}, client: engine })
+  expect(engine.calls.filter(c => c[0] === 'hasNetwork')).toEqual([['hasNetwork', 'skeppa-net-db-net']])
+  expect(engine.calls.filter(c => c[0] === 'createNetwork')).toEqual([['createNetwork', 'skeppa-net-db-net', { internal: true }]])
 })

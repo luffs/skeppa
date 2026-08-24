@@ -68,5 +68,6 @@ resurrectApps({ db, config }).catch(err => console.error('[resurrect] failed:', 
 const { upgradeWebSocket, websocket } = createBunWebSocket()
 const app = createApp({ db, config, liveState, hub, runner, github, poller, proxy, upgradeWebSocket })
 
-const server = Bun.serve({ port: config.port, fetch: app.fetch, websocket })
-console.log(`Skeppa listening on http://localhost:${server.port} (${config.isProd ? 'production' : 'development'})`)
+const server = Bun.serve({ hostname: config.host, port: config.port, fetch: app.fetch, websocket })
+console.log(`Skeppa listening on http://${config.host}:${server.port} (${config.isProd ? 'production' : 'development'})` +
+  (config.host === '127.0.0.1' ? ' — loopback only; set HOST=0.0.0.0 in the panel config for direct LAN access' : ''))

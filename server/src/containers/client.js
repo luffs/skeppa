@@ -259,6 +259,36 @@ export function createContainerClient({ socketPath, fetchFn = fetch, timeouts = 
       return await res.json()
     },
 
+    // true when the engine store has a network by this exact name.
+    async hasNetwork(name) {
+      try {
+        await api('GET', `/networks/${encodeURIComponent(name)}`)
+        return true
+      } catch (err) {
+        if (err.status === 404) return false
+        throw err
+      }
+    },
+
+    // internal: no route out - members reach each other and nothing else.
+    async createNetwork(name, { internal = false } = {}) {
+      await api('POST', '/networks/create', { Name: name, Driver: 'bridge', Internal: internal })
+    },
+
+    // [{ Name, Id, Internal, ... }] for the Engine room and cleanup.
+    async listNetworks() {
+      const res = await api('GET', '/networks')
+      return await res.json()
+    },
+
+    async removeNetwork(name) {
+      try {
+        await api('DELETE', `/networks/${encodeURIComponent(name)}`)
+      } catch (err) {
+        if (err.status !== 404) throw err
+      }
+    },
+
     // Pulls an image; progress arrives as a stream of JSON lines. Progress
     // spam is swallowed, a terminal {"error": ...} line becomes a throw.
     async pullImage(ref) {

@@ -14,7 +14,7 @@ import { proxySettings } from '../proxy/index.js'
 
 const PROJECT_COLUMNS =
   'id, slug, name, repo_full_name, branch, deploy_script, build_image, run_image, runtime, pm2_name, start_command, cwd, ' +
-  'auto_deploy, write_env_file, subdomain, port, memory_mb, head_sha, head_message, head_pushed_at, created_at'
+  'auto_deploy, write_env_file, subdomain, port, memory_mb, network_profile, host_access, networks, head_sha, head_message, head_pushed_at, created_at'
 
 const DEFAULT_LOG_LINES = 200
 const MAX_LOG_LINES = 2000
@@ -109,6 +109,9 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
       subdomain: normalizeSubdomain(body.subdomain),
       port: normalizeNumber(body.port),
       memory_mb: normalizeNumber(body.memory_mb),
+      network_profile: body.network_profile ?? 'open',
+      host_access: body.host_access ? 1 : 0,
+      networks: typeof body.networks === 'string' ? body.networks.trim() : '',
     }
     const errors = { ...validateProject(project), ...routingConflicts(project) }
     if (project.runtime === 'container' && project.pm2_name === config.selfPm2Name) {
@@ -127,12 +130,12 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
     project.pm2_name = uniqueName(project.pm2_name, n => db.query('SELECT 1 FROM projects WHERE pm2_name = ?').get(n))
 
     const { lastInsertRowid } = db.query(
-      `INSERT INTO projects (slug, name, repo_full_name, branch, deploy_script, build_image, run_image, runtime, pm2_name, start_command, cwd, auto_deploy, write_env_file, subdomain, port, memory_mb)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO projects (slug, name, repo_full_name, branch, deploy_script, build_image, run_image, runtime, pm2_name, start_command, cwd, auto_deploy, write_env_file, subdomain, port, memory_mb, network_profile, host_access, networks)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(slug, project.name, project.repo_full_name, project.branch, project.deploy_script,
           project.build_image, project.run_image, project.runtime, project.pm2_name, project.start_command,
           project.cwd, project.auto_deploy, project.write_env_file, project.subdomain, project.port,
-          project.memory_mb)
+          project.memory_mb, project.network_profile, project.host_access, project.networks)
     const id = Number(lastInsertRowid)
     if (project.port == null) {
       project.port = autoPort(db, id)
@@ -171,6 +174,9 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
       subdomain: 'subdomain' in body ? normalizeSubdomain(body.subdomain) : project.subdomain,
       port: 'port' in body ? normalizeNumber(body.port) : project.port,
       memory_mb: 'memory_mb' in body ? normalizeNumber(body.memory_mb) : project.memory_mb,
+      network_profile: 'network_profile' in body ? body.network_profile : (project.network_profile ?? 'open'),
+      host_access: 'host_access' in body ? (body.host_access ? 1 : 0) : project.host_access,
+      networks: 'networks' in body ? (typeof body.networks === 'string' ? body.networks.trim() : '') : project.networks,
     }
     // Clearing the port (or saving a legacy project that never had one)
     // re-assigns the default rather than leaving the project portless.
@@ -187,10 +193,12 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
 
     db.query(
       `UPDATE projects SET name = ?, repo_full_name = ?, branch = ?, deploy_script = ?, build_image = ?, run_image = ?, runtime = ?,
-         start_command = ?, pm2_name = ?, cwd = ?, auto_deploy = ?, write_env_file = ?, subdomain = ?, port = ?, memory_mb = ? WHERE id = ?`
+         start_command = ?, pm2_name = ?, cwd = ?, auto_deploy = ?, write_env_file = ?, subdomain = ?, port = ?, memory_mb = ?,
+         network_profile = ?, host_access = ?, networks = ? WHERE id = ?`
     ).run(merged.name, merged.repo_full_name, merged.branch, merged.deploy_script, merged.build_image,
           merged.run_image, merged.runtime, merged.start_command, merged.pm2_name, merged.cwd, merged.auto_deploy,
-          merged.write_env_file, merged.subdomain, merged.port, merged.memory_mb, project.id)
+          merged.write_env_file, merged.subdomain, merged.port, merged.memory_mb,
+          merged.network_profile, merged.host_access, merged.networks, project.id)
     if (liveState.projects[project.id]) {
       liveState.projects[project.id].info = getProjectInfo(db, project.id)
     }

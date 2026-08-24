@@ -48,6 +48,9 @@
         v-model:run-image="form.run_image"
         v-model:pm2-name="form.pm2_name"
         v-model:memory-mb="form.memory_mb"
+        v-model:network-profile="form.network_profile"
+        v-model:host-access="form.host_access"
+        v-model:networks="form.networks"
       />
 
       <RoutingFields v-model:subdomain="form.subdomain" v-model:port="form.port" />
@@ -94,6 +97,9 @@ export default {
         build_image: '',
         run_image: '',
         memory_mb: '',
+        network_profile: 'open',
+        host_access: false,
+        networks: '',
         subdomain: '',
         port: '',
       },

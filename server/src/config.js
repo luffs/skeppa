@@ -119,6 +119,12 @@ export function loadConfig({ requireMasterKey = true } = {}) {
 
   return {
     port: Number(env.PORT || 3000),
+    // Loopback by default: the panel is meant to sit behind the admin's
+    // reverse proxy, and binding wider exposes it on the LAN — including to
+    // open-profile containers, which reach 0.0.0.0-bound host services via
+    // the host's LAN address (rootless loopback-deny does not cover that).
+    // HOST=0.0.0.0 opts back into direct network access.
+    host: env.HOST || '127.0.0.1',
     isProd: env.NODE_ENV === 'production',
     masterKey,
     dataDir: resolve(env.DATA_DIR || join(rootDir, 'data')),

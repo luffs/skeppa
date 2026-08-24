@@ -2,6 +2,7 @@ import { posix, join } from 'node:path'
 import { mkdirSync, writeFileSync, chmodSync } from 'node:fs'
 import { createContainerClient } from './client.js'
 import { createContainerEnsuringImage } from './images.js'
+import { projectEngineNetworks, ensureProjectNetworks } from './networks.js'
 import { tailFile } from '../lib/tail.js'
 
 // App containers ("container" runtime): stateless and rebuilt on every deploy.
@@ -23,6 +24,11 @@ export function resolveRunImage(config, project) {
 const MB = 1024 * 1024
 
 export function appContainerSpec(config, project, dirs, env) {
+  // Naming any network replaces the engine-default (slirp) mode, so the
+  // profile decides egress: restricted lists only Internal convoys (no
+  // route out), open-with-convoys adds the default bridge for internet,
+  // and open-with-host-access asks slirp to expose the host's loopback.
+  const nets = projectEngineNetworks(project)
   const port = project.port
   return {
     Image: resolveRunImage(config, project),
@@ -31,8 +37,16 @@ export function appContainerSpec(config, project, dirs, env) {
     WorkingDir: posix.join('/app', (project.cwd ?? '').replaceAll('\\', '/')),
     Labels: { 'skeppa.project': project.slug },
     ...(port ? { ExposedPorts: { [`${port}/tcp`]: {} } } : {}),
+    ...(nets.length
+      ? { NetworkingConfig: { EndpointsConfig: Object.fromEntries(nets.map(n => [n, {}])) } }
+      : {}),
     HostConfig: {
       Binds: [`${dirs.source}:/app:ro`, `${dirs.shared}:/data`],
+      ...(nets.length
+        ? { NetworkMode: nets[0] }
+        : project.host_access
+          ? { NetworkMode: 'slirp4netns:allow_host_loopback=true' }
+          : {}),
       RestartPolicy: { Name: 'on-failure', MaximumRetryCount: 10 },
       // Hard cap, swap included: past the limit the app is OOM-killed and the
       // restart policy brings it back — a leak crashes one project instead of
@@ -56,6 +70,8 @@ export async function recreateAppContainer({ config, project, dirs, env, onLine 
   const spec = appContainerSpec(config, project, dirs, env)
   mkdirSync(dirs.shared, { recursive: true })
 
+  // Convoy networks the spec names must exist before the create call.
+  await ensureProjectNetworks(engine, project)
   await capturePreviousLogs(engine, name, dirs, onLine)
   await engine.removeContainer(name)
   const id = await createContainerEnsuringImage({ engine, name, spec, db, onLine })

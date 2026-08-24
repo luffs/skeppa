@@ -60,6 +60,17 @@ test('a missing MASTER_KEY_FILE is tolerated when the key is not required (seed 
   })
 })
 
+test('the panel binds loopback unless HOST widens it', () => {
+  withEnv({ MASTER_KEY: KEY }, () => {
+    expect(loadConfig().host).toBe('127.0.0.1')
+  })
+  const dir = mkdtempSync(join(tmpdir(), 'skeppa-cfg-host-'))
+  writeFileSync(join(dir, 'config'), 'HOST=0.0.0.0\n')
+  withEnv({ SKEPPA_CONFIG: join(dir, 'config'), MASTER_KEY: KEY }, () => {
+    expect(loadConfig().host).toBe('0.0.0.0')
+  })
+})
+
 test('reads panel config from the SKEPPA_CONFIG file', () => {
   const dir = mkdtempSync(join(tmpdir(), 'skeppa-cfg-'))
   const keyPath = join(dir, 'key.hex')
