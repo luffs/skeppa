@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { migrate } from '../src/db/migrate.js'
 import { systemRoutes } from '../src/routes/system.js'
 import { projectDirs } from '../src/deploy/envfiles.js'
-import { appContainerName } from '../src/containers/runtime.js'
+import { appContainerName, prevLogPath } from '../src/containers/runtime.js'
 
 // A fake pm2 module: records what the route asked for and reports a fixed
 // process list, so the whitelist logic is exercised without a live daemon.
@@ -222,4 +222,55 @@ test('serves container logs in the pm2 response shape', async () => {
 test('refuses logs for a container the engine does not report', async () => {
   const { app } = containerSetup()
   expect((await app.request('/containers/ghost/logs')).status).toBe(404)
+})
+
+// --- previous-container log -------------------------------------------------
+
+test('the Engine room serves the post-mortem for a panel-owned container', async () => {
+  const { config, app, engine, project } = containerSetup()
+  const dirs = projectDirs(config, project)
+  mkdirSync(dirs.root, { recursive: true })
+  writeFileSync(prevLogPath(dirs), 'segfault\n')
+
+  const res = await app.request(`/containers/${appContainerName('capp')}/logs/previous?lines=25`)
+  expect(res.status).toBe(200)
+  const body = await res.json()
+  expect(body.prev.text).toBe('segfault')
+  expect(body.prev.path).toBe(prevLogPath(dirs))
+  expect(body.lines).toBe(25)
+  // the container is gone by definition — reading its post-mortem must not
+  // send the engine looking for one
+  expect(engine.calls).toEqual([])
+})
+
+// Reported missing rather than 404, so the tab renders the same way it does
+// for a project that simply has not been redeployed yet.
+test('a container the panel does not own reports no post-mortem', async () => {
+  const { app } = containerSetup()
+  const res = await app.request('/containers/postgres/logs/previous')
+  expect(res.status).toBe(200)
+  const body = await res.json()
+  expect(body.prev.missing).toBe(true)
+  expect(body.prev.path).toBe(null)
+})
+
+// The path is built from the project row's slug, never from the URL, so a
+// hostile name cannot escape APPS_DIR — it simply matches no project.
+test('the post-mortem route rejects a malformed container name', async () => {
+  const { app } = containerSetup()
+  const res = await app.request('/containers/..%2F..%2Fetc/logs/previous')
+  expect(res.status).toBe(400)
+})
+
+// Removing a container without recreating it (a stopped or deleted project)
+// leaves the file behind — that is exactly when it is worth reading.
+test('the post-mortem survives the container disappearing from the engine', async () => {
+  const { config, app, project } = containerSetup(['postgres'])
+  const dirs = projectDirs(config, project)
+  mkdirSync(dirs.root, { recursive: true })
+  writeFileSync(prevLogPath(dirs), 'last words\n')
+
+  const res = await app.request(`/containers/${appContainerName('capp')}/logs/previous`)
+  expect(res.status).toBe(200)
+  expect((await res.json()).prev.text).toBe('last words')
 })

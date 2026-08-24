@@ -4,7 +4,7 @@ import { projectDirs, decryptedEnv, runtimeEnv } from '../deploy/envfiles.js'
 import { tailFile } from '../lib/tail.js'
 import * as realPm2 from '../deploy/pm2.js'
 import { createContainerClient } from '../containers/client.js'
-import { appContainerName, appLogResponse } from '../containers/runtime.js'
+import { appContainerName, appLogResponse, previousLogResponse } from '../containers/runtime.js'
 import { containerName } from '../live/containers.js'
 import { applyProjectAction } from '../deploy/control.js'
 
@@ -128,6 +128,20 @@ export function systemRoutes({ db, config, poller, pm2 = realPm2, containerClien
       // ("deploy the project first"); an engine failure is our 500.
       return c.json({ error: err.message }, err.status === 400 ? 400 : 500)
     }
+  })
+
+  // The post-mortem for the container a deploy replaced, mirroring the
+  // project page's route so the Engine room shows the same third tab. Only a
+  // container the panel owns has one; anything else on the engine reports it
+  // missing rather than 404ing, so the tab renders the same either way.
+  app.get('/containers/:name/logs/previous', async c => {
+    const name = c.req.param('name')
+    if (!CONTAINER_NAME_RE.test(name)) return c.json({ error: 'invalid container name' }, 400)
+    const requested = parseInt(c.req.query('lines') ?? '', 10)
+    const lines = Math.min(Math.max(Number.isFinite(requested) ? requested : DEFAULT_LINES, 1), MAX_LINES)
+    const project = owner(name)
+    const dirs = project ? projectDirs(config, project) : null
+    return c.json({ name, ...(await previousLogResponse(dirs, lines)) })
   })
 
   // Same response shape as the pm2 log route, so one UI component fits both.

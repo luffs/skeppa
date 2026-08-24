@@ -7,7 +7,7 @@ import { syncManagedImages } from '../live/images.js'
 import { deleteProcess, describe } from '../deploy/pm2.js'
 import { projectDirs, syncEnvFiles, writeEcosystem } from '../deploy/envfiles.js'
 import { createContainerClient } from '../containers/client.js'
-import { appContainerName, appLogResponse, prevLogPath } from '../containers/runtime.js'
+import { appContainerName, appLogResponse, previousLogResponse } from '../containers/runtime.js'
 import { applyProjectAction } from '../deploy/control.js'
 import { tailFile } from '../lib/tail.js'
 import { proxySettings } from '../proxy/index.js'
@@ -386,8 +386,7 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
     if (!project) return c.json({ error: 'not found' }, 404)
     const requested = parseInt(c.req.query('lines') ?? '', 10)
     const lines = Math.min(Math.max(Number.isFinite(requested) ? requested : DEFAULT_LOG_LINES, 1), MAX_LOG_LINES)
-    const path = prevLogPath(projectDirs(config, project))
-    return c.json({ name: project.slug, lines, prev: { path, ...(await tailFile(path, { lines })) } })
+    return c.json({ name: project.slug, ...(await previousLogResponse(projectDirs(config, project), lines)) })
   })
 
   return app

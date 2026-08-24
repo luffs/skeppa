@@ -2,6 +2,7 @@ import { posix, join } from 'node:path'
 import { mkdirSync, writeFileSync, chmodSync } from 'node:fs'
 import { createContainerClient } from './client.js'
 import { createContainerEnsuringImage } from './images.js'
+import { tailFile } from '../lib/tail.js'
 
 // App containers ("container" runtime): stateless and rebuilt on every deploy.
 // The git working copy is mounted read-only at /app, the durable shared/ dir
@@ -123,6 +124,16 @@ export async function appLogResponse(engine, name, lines) {
 // so the code that writes it and the route that serves it cannot drift.
 export const PREV_LOG_FILE = 'container.prev.log'
 export const prevLogPath = dirs => join(dirs.root, PREV_LOG_FILE)
+
+// The post-mortem in the same envelope the live log routes use, so the UI
+// can treat it as a third stream. `dirs` is null for a container the panel
+// does not own — that reports `missing` rather than failing, so the tab
+// renders exactly as it does for a project not yet redeployed.
+export async function previousLogResponse(dirs, lines) {
+  if (!dirs) return { lines, prev: { path: null, text: '', truncated: false, missing: true } }
+  const path = prevLogPath(dirs)
+  return { lines, prev: { path, ...(await tailFile(path, { lines })) } }
+}
 
 // The tail of the outgoing container's output, written next to source/ and
 // shared/ before the recreate deletes it with the container — the only

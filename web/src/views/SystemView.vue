@@ -183,7 +183,7 @@
                 <button v-else class="secondary" :disabled="containerBusy === c.name" @click="runContainer(c, 'start')">Start</button>
               </div>
             </div>
-            <Pm2Logs v-if="openedContainer === c.name" :name="c.name" :url="c.logsUrl" />
+            <Pm2Logs v-if="openedContainer === c.name" :name="c.name" :url="c.logsUrl" :prev-url="c.prevUrl" />
           </div>
         </div>
       </template>
@@ -305,6 +305,8 @@ export default {
             project,
             appUrl: project ? appUrlFor(project) : '',
             logsUrl: `/api/system/containers/${encodeURIComponent(name)}/logs`,
+            // Only a container the panel owns has a post-mortem to show.
+            prevUrl: project ? `/api/system/containers/${encodeURIComponent(name)}/logs/previous` : '',
             memPercent: limit && c.memory != null
               ? Math.min(100, Math.round((c.memory / (limit * 1024 * 1024)) * 100))
               : null,
