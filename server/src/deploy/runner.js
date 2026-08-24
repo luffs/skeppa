@@ -182,6 +182,10 @@ export class DeployRunner {
     // Success or not, the checkout and whatever the script built are on
     // disk now — the apps-dir gauge is stale either way.
     this.poller?.diskChanged()
+    // A successful deploy reloaded (pm2) or recreated (container) the
+    // process — its counter moving now is the deploy, not a crash. A
+    // failed one usually never reached that step, so its history keeps.
+    if (status === 'success') this.poller?.expectRestart(projectId)
 
     const q = this.queues.get(projectId)
     if (q) {

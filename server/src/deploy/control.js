@@ -8,7 +8,7 @@ import { appContainerName, recreateAppContainer } from '../containers/runtime.js
 // cannot drift apart — in particular the auto_start bookkeeping ("stopped
 // stays stopped" across reboots) belongs to the action, not to the caller.
 // `engine` is a getter, so pm2-only installs never touch the socket.
-export async function applyProjectAction({ db, config, project, act, engine }) {
+export async function applyProjectAction({ db, config, project, act, engine, poller = null }) {
   if (project.runtime === 'container') {
     if (act === 'stop') {
       await engine().stopContainer(appContainerName(project.slug))
@@ -36,4 +36,6 @@ export async function applyProjectAction({ db, config, project, act, engine }) {
   }
   // Stop also turns off start-at-boot; start/restart turn it back on.
   db.query('UPDATE projects SET auto_start = ? WHERE id = ?').run(act === 'stop' ? 0 : 1, project.id)
+  // Whatever the restart counter does after a panel action is not a crash.
+  poller?.expectRestart(project.id)
 }

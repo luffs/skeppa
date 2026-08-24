@@ -60,6 +60,9 @@ export function systemRoutes({ db, config, poller, pm2 = realPm2, containerClien
       if (project) {
         db.query('UPDATE projects SET auto_start = ? WHERE id = ?')
           .run(act === 'stop' ? 0 : 1, project.id)
+        // This route drives pm2 directly instead of via applyProjectAction,
+        // so it owns the same bookkeeping: a panel action is not a crash.
+        poller?.expectRestart(project.id)
       }
       poller?.tick()
       return c.json({ ok: true })
@@ -117,7 +120,7 @@ export function systemRoutes({ db, config, poller, pm2 = realPm2, containerClien
     try {
       if (!(await listed(name))) return c.json({ error: 'unknown container' }, 404)
       const project = owner(name)
-      if (project) await applyProjectAction({ db, config, project, act, engine })
+      if (project) await applyProjectAction({ db, config, project, act, engine, poller })
       else if (act === 'stop') await engine().stopContainer(name)
       else if (act === 'start') await engine().startContainer(name)
       else await engine().restartContainer(name)

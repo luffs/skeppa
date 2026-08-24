@@ -274,3 +274,26 @@ test('the post-mortem survives the container disappearing from the engine', asyn
   expect(res.status).toBe(200)
   expect((await res.json()).prev.text).toBe('last words')
 })
+
+// The Engine room's pm2 route drives pm2 directly instead of through
+// applyProjectAction, so it owns the same rebase bookkeeping itself.
+test('an Engine room pm2 action on a managed process rebases the crash watch', async () => {
+  const db = new Database(':memory:')
+  migrate(db, fileURLToPath(new URL('../src/db/migrations', import.meta.url)))
+  db.query(
+    `INSERT INTO projects (slug, name, repo_full_name, branch, pm2_name)
+     VALUES ('app', 'App', 'luff/app', 'main', 'app')`
+  ).run()
+  const projectId = db.query('SELECT id FROM projects').get().id
+  const rebases = []
+  const poller = { tick() {}, expectRestart: id => rebases.push(id) }
+  const pm2 = fakePm2([proc('app'), proc('stranger')])
+  const app = systemRoutes({ db, config: { appsDir: '/srv/apps' }, poller, pm2 })
+
+  await app.request('/pm2/app/restart', { method: 'POST' })
+  expect(rebases).toEqual([projectId])
+
+  // a process the panel does not manage has no project id to rebase
+  await app.request('/pm2/stranger/restart', { method: 'POST' })
+  expect(rebases).toEqual([projectId])
+})

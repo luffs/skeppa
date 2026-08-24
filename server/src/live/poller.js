@@ -142,9 +142,11 @@ export function createPoller({ db, config, liveState, intervalMs = 5000, idleInt
         live.pm2 = proc ? pm2Stats(proc) : { ...EMPTY_STATS }
       }
 
-      // Feed the crash watch after both runtimes have fresh counters. pm2's
-      // restart_time counts manual restarts too, so its alerts read as
-      // "restarted", not "crashed" — which is also all the panel knows.
+      // Feed the crash watch after both runtimes have fresh counters.
+      // Panel-caused restarts (deploys, the action routes) rebase the watch
+      // before the counter moves, so what is left is crashes and restarts
+      // done behind the panel's back (pm2 CLI on the server) — hence the
+      // alert says "restarted", not "crashed".
       if (crashWatch) {
         for (const [id, live] of Object.entries(liveState.projects)) {
           crashWatch.sample(id, live.info?.name ?? `project ${id}`, live.pm2?.restarts ?? null)
@@ -211,6 +213,12 @@ export function createPoller({ db, config, liveState, intervalMs = 5000, idleInt
     diskChanged() {
       duAt = 0
       tick()
+    },
+    // The panel itself (re)started this project's process, so whatever its
+    // restart counter does next is the panel's own doing, not a crash.
+    // Keys match sample(): the string project id from liveState.projects.
+    expectRestart(projectId) {
+      crashWatch?.rebase(String(projectId))
     },
   }
 }

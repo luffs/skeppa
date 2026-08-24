@@ -339,7 +339,7 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
     const act = c.req.param('action')
     if (!PM2_ACTIONS.includes(act)) return c.json({ error: `action must be one of ${PM2_ACTIONS.join(', ')}` }, 400)
     try {
-      await applyProjectAction({ db, config, project, act, engine })
+      await applyProjectAction({ db, config, project, act, engine, poller })
       poller?.tick()
       return c.json({ ok: true })
     } catch (err) {

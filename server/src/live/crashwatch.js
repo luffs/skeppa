@@ -38,5 +38,14 @@ export function createCrashWatch({ threshold = 3, windowMs = 10 * 60_000, cooldo
         onAlert(label, n)
       }
     },
+
+    // The caller is moving the counter itself — a deploy reload, a manual
+    // start/stop/restart. Forget the key entirely: the next sample becomes
+    // a fresh baseline, the same treatment a backwards counter gets. That
+    // also drops genuine history and any active cooldown, deliberately —
+    // the operator just touched the process, so the story starts over.
+    rebase(key) {
+      seen.delete(key)
+    },
   }
 }

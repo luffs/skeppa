@@ -209,10 +209,14 @@ test('a failed deploy fires the notifier; a successful one stays quiet', async (
 // checkout is on disk before the script's exit code is known.
 test('a finished deploy invalidates the disk gauge, success or not', async () => {
   const invalidations = []
+  const rebases = []
   const { execute, pending } = manualExecutor()
   const { db, runner, projectId } = (() => {
     const base = setup(execute)
-    base.runner.poller = { diskChanged: () => invalidations.push(1) }
+    base.runner.poller = {
+      diskChanged: () => invalidations.push(1),
+      expectRestart: id => rebases.push(id),
+    }
     return base
   })()
 
@@ -222,11 +226,16 @@ test('a finished deploy invalidates the disk gauge, success or not', async () =>
   pending[0].resolve()
   await tick(); await tick()
   expect(invalidations.length).toBe(1)
+  // ...and told the crash watch the restart it caused is not a crash.
+  expect(rebases).toEqual([projectId])
 
   runner.enqueue(projectId, { trigger: 'manual' })
   await tick()
   pending[1].reject(new DeployError('script blew up', 3))
   await tick(); await tick()
   expect(invalidations.length).toBe(2)
+  // A failed deploy usually never reached the reload step — keep the
+  // crash history it may be evidence of.
+  expect(rebases).toEqual([projectId])
   expect(statuses(db)).toEqual(['success', 'failed'])
 })

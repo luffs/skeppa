@@ -163,3 +163,31 @@ test('the previous-container log 404s for an unknown project', async () => {
   const { app } = setup()
   expect((await app.request('/9999/logs/previous')).status).toBe(404)
 })
+
+// --- crash-watch rebase -----------------------------------------------------
+
+// applyProjectAction is the choke point for project actions, so the rebase
+// wired there covers this route (and the Engine room's container route).
+test('a manual action tells the crash watch the restart is panel-caused', async () => {
+  const db2 = new Database(':memory:')
+  migrate(db2, fileURLToPath(new URL('../src/db/migrations', import.meta.url)))
+  const config = {
+    appsDir: mkdtempSync(join(tmpdir(), 'skeppa-rebase-')),
+    masterKey: 'c'.repeat(64),
+    selfPm2Name: 'skeppa',
+    containerSocket: '/sock',
+    buildImage: 'docker.io/oven/bun:1',
+  }
+  db2.query(
+    `INSERT INTO projects (slug, name, repo_full_name, branch, pm2_name, start_command, runtime, port)
+     VALUES ('capp', 'CApp', 'o/r', 'main', 'capp', 'bun run start', 'container', 4100)`
+  ).run()
+  const project = db2.query('SELECT * FROM projects').get()
+  const rebases = []
+  const poller = { tick() {}, expectRestart: id => rebases.push(id) }
+  const app = projectRoutes({ db: db2, config, liveState: createLiveState(), containerClient: fakeEngine(), poller })
+
+  const res = await app.request(`/${project.id}/pm2/stop`, { method: 'POST' })
+  expect(res.status).toBe(200)
+  expect(rebases).toEqual([project.id])
+})

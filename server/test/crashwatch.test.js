@@ -76,3 +76,24 @@ test('a counter reset lifts the cooldown so a new crash loop is heard', () => {
   w.sample('1', 'app', 3, 4 * MIN)
   expect(alerts.length).toBe(2) // muting a brand new process would hide this
 })
+
+test('rebase absorbs a panel-caused restart instead of counting it', () => {
+  const { w, alerts } = watch()
+  w.sample('1', 'app', 0, 0)
+  w.sample('1', 'app', 2, 1 * MIN) // two real crashes, one short of the threshold
+  w.rebase('1') // the panel deploys: the reload will bump the counter
+  w.sample('1', 'app', 3, 2 * MIN) // the +1 lands as a fresh baseline
+  w.sample('1', 'app', 4, 3 * MIN) // one ordinary restart of the new code
+  expect(alerts).toEqual([]) // neither the deploy nor the old history may alert
+})
+
+test('rebase lifts the cooldown so the redeployed process is heard again', () => {
+  const { w, alerts } = watch()
+  w.sample('1', 'app', 0, 0)
+  w.sample('1', 'app', 3, 1 * MIN)
+  expect(alerts.length).toBe(1) // alerted and muted for 30 minutes
+  w.rebase('1') // operator deploys a fix — which does not work
+  w.sample('1', 'app', 4, 2 * MIN)
+  w.sample('1', 'app', 7, 4 * MIN)
+  expect(alerts.length).toBe(2) // the stale mute must not hide the new loop
+})
