@@ -1,15 +1,15 @@
 # ⛵ Skeppa
 
-A self-hosted deploy panel that turns a git push into a running app on your own Linux server. Deploys private GitHub repos via webhooks, manages encrypted ENV variables, and runs apps with pm2.
+A self-hosted deploy panel that turns a git push into a running app on your own Linux server. Deploys private GitHub repos via webhooks, manages encrypted ENV variables, and runs each app as a pm2 process or in its own rootless-podman container — with per-project network isolation for code you don't fully trust.
 
 - Add a project by picking a private GitHub repo + branch
 - Automatic deploy on push (GitHub App webhook, HMAC-verified) or manually from the UI
 - Per-project deploy script and ENV vars (AES-256-GCM encrypted at rest)
-- Start/stop/restart apps via pm2 — or run an app in its own rootless-podman container
+- Run each app under pm2 or in a rootless-podman container — with per-project network profiles, memory caps and crash-loop alerts
 - Live deploy logs and live status over a single WebSocket ([lazy-watch](https://www.npmjs.com/package/lazy-watch) diff sync)
-- Optional extras once you're running: a throwaway-container build sandbox, managed images (Shipyard), wildcard subdomain routing (harbor gate)
+- Optional extras once you're running: a throwaway-container build sandbox, managed images (Shipyard), wildcard subdomain routing (harbor gate), webhook notifications (ntfy/Discord/Slack)
 
-Stack: Bun, Hono, SQLite (`bun:sqlite`), Vue 3 (Options API) + Vite, pm2. Plain ES6 JavaScript, no TypeScript.
+Stack: Bun, Hono, SQLite (`bun:sqlite`), Vue 3 (Options API) + Vite, pm2 + rootless podman. Plain ES6 JavaScript, no TypeScript.
 
 ## Quickstart — zero to first deploy
 
@@ -58,7 +58,8 @@ so the dump never needs them.
 
 **2. HTTPS in front** — the panel listens on `http://localhost:3000` and must only be exposed
 through an HTTPS reverse proxy (it uses cookie sessions and carries deploy secrets — never
-plain HTTP). Caddy:
+plain HTTP). It binds loopback only by default, so the reverse proxy is also the only way
+in; set `HOST=0.0.0.0` in the panel config if you really need direct LAN access. Caddy:
 
 ```caddy
 deploy.example.com {
@@ -146,83 +147,126 @@ your browser, so a panel browsed via `localhost` would register an unreachable w
 
 </details>
 
-## Build sandbox (podman)
+## Containers (rootless podman)
 
-By default the deploy script runs as a shell **on the host, as the panel user** — simple, but it
-means a malicious or compromised repo's deploy script can read anything the panel can. With
-rootless podman installed you can run every deploy script in a throwaway container instead:
+Everything in this section needs rootless podman once:
 
 ```bash
 sudo apt install podman uidmap        # or your distro's equivalent
 sudo loginctl enable-linger $(whoami) # keep user services alive without a login session
 systemctl --user enable --now podman.socket
-# then in the panel config (~/.skeppa/config):
-# SKEPPA_SANDBOX=podman
 ```
 
-Each deploy creates an ephemeral container from the project's **Build image** (panel default:
-`docker.io/oven/bun:1`, override per project or via `BUILD_IMAGE`), mounts only
-`APPS_DIR/<slug>/source` at `/work`, injects the project ENV via the engine API (in memory —
-never argv or env files) and streams the output into the deploy log. The script cannot see the
-master key, the database, other apps or the panel user's home. Rootless podman maps
-container-root to the panel user, so files the build writes (e.g. `node_modules`) have the right
-owner on the host. There is no silent fallback: if the engine is unreachable the deploy fails
-with instructions rather than running unsandboxed. The image needs `/bin/sh`; network is
-available for registry access. Rootless Docker's socket is wire-compatible — point
-`CONTAINER_SOCKET` at it if you prefer Docker.
+Rootless Docker works too — its socket is wire-compatible; point `CONTAINER_SOCKET` at it.
 
 ### Running apps in containers
 
-With the same podman setup, each project can also *run* in a container: switch **Runtime** from
-pm2 to container in the project settings. On the next deploy (or restart) the app is recreated
-as `skeppa-app-<slug>`: source mounted **read-only** at `/app`, the durable `shared/` dir
-writable at `/data`, the start command run via `/bin/sh`, the routed port published on
-`127.0.0.1` only, and ENV injected through the engine API. The app cannot read the panel, the
-master key or other apps — this is the isolation pm2 cannot give you. **Run image** overrides
-the container image (default: the build image, then the panel default).
+Switch **Runtime** from pm2 to container in the project settings. On the next deploy (or
+restart) the app is recreated as `skeppa-app-<slug>`: source mounted **read-only** at `/app`,
+the durable `shared/` dir writable at `/data`, the start command run via `/bin/sh`, the routed
+port published on `127.0.0.1` only, and ENV injected through the engine API. The app cannot
+read the panel, the master key or other apps — this is the isolation pm2 cannot give you.
+**Run image** overrides the container image (default: the build image, then the panel default).
 
 Semantics match the pm2 runtime: crash restarts are handled by the engine (`on-failure`, max
 10 retries), start/restart from the panel recreates the container with freshly decrypted ENV,
 stop keeps it stopped (also across reboots — same start-at-boot flag), and after a server
 reboot the panel recreates running apps itself. The panel and the harbor gate proxy always run
-under pm2; the panel refuses `runtime: container` for its own project.
+under pm2; the panel refuses `runtime: container` for its own project. A per-project **memory
+limit** becomes a hard engine cap — past it the app is OOM-killed and restarted, so a leak
+crashes one project instead of starving the server. The log view keeps a **Previous** tab with
+the tail of the container the last deploy replaced — the post-mortem for "it crashed and then
+I deployed".
 
 One trade-off to know: the engine stores a created container's spec — ENV included — under
 `~/.local/share/containers` (panel-user-only permissions). Exclude that directory from backups,
 like the master key.
+
+### Network profiles
+
+A container project is **open** (internet and LAN, as before) or **restricted**: no internet,
+no LAN, no host — enforced by having no route out at all — while its published port stays
+routable, so a restricted app still serves traffic through the harbor gate. **Shared networks**
+connect the containers that list the same name (they reach each other by container name, e.g.
+`skeppa-app-postgres`) and never grant internet, so the typical pairing is an open app and a
+restricted database sharing one network. A separate **host access** toggle lets an open project
+reach services on the server's own `127.0.0.1`, which rootless podman otherwise denies.
+
+### Build sandbox
+
+By default the deploy script runs as a shell **on the host, as the panel user** — simple, but
+it means a malicious or compromised repo's deploy script can read anything the panel can. With
+`SKEPPA_SANDBOX=podman` in the panel config, every deploy script runs in a throwaway container
+from the project's **Build image** instead: only `APPS_DIR/<slug>/source` is mounted (at
+`/work`), ENV travels in memory via the engine API, and the script cannot see the master key,
+the database, other apps or the panel user's home. There is no silent fallback: if the engine
+is unreachable the deploy fails with instructions rather than running unsandboxed.
+
+<details>
+<summary>Build sandbox mechanics</summary>
+
+- Build image default: `docker.io/oven/bun:1` — override per project or via `BUILD_IMAGE`.
+  The image needs `/bin/sh`; network is available for registry access.
+- Rootless podman maps container-root to the panel user, so files the build writes
+  (e.g. `node_modules`) have the right owner on the host.
+- Script output streams into the deploy log exactly as in host mode.
+
+</details>
 
 ### Shipyard — managed images
 
 Need a custom image (say bun **and** node in one)? Open **Shipyard** in the masthead: give it a
 name and a Containerfile, press Build. The image lands in the engine store as
 `localhost/skeppa/<name>:latest` and shows up as a suggestion in the projects' Build/Run image
-fields. The Containerfile lives in the panel database, which makes these images reproducible
-state: if one is missing when a container is created — pruned store, fresh server — the panel
-rebuilds it from the stored Containerfile automatically instead of trying to pull. The local
-image store (sizes, dangling layers, which project uses what) is listed alongside, with
-per-image pull/remove and a safe dangling-only prune (dangling = untagged layers left behind
-when a tag moves; removing a tagged-but-unused image is the ✕ button's job). v1 builds have an empty context: `FROM`/`RUN`/`ENV`… work, `COPY` of
-local files does not. Private registries are not supported by the panel's auto-pull —
-`podman pull` once manually as the panel user instead.
+fields. The Containerfile lives in the panel database, so these images are reproducible state:
+a missing image — pruned store, fresh server — is rebuilt from the stored Containerfile
+automatically instead of pulled. Pressing **Build** refreshes the `FROM` bases, so a moving tag
+like `oven/bun:1` picks up new upstream releases; pin an exact version in the Containerfile if
+you want updates to be an explicit, visible edit instead.
 
-Updating when a new upstream version lands (say a bun release): pressing **Build** always
-refreshes the `FROM` bases from their registries, so a moving tag like `oven/bun:1` picks the
-new version up; automatic self-heal rebuilds keep using cached bases so a pruned store restores
-fast and offline. Registry images used directly by projects have a **Pull** button in the local
-store — the panel's `podman pull`. Either way the update reaches apps on their next restart or
-deploy, and the replaced layers show up as dangling for pruning. Pin an exact version
-(`FROM docker.io/oven/bun:1.2.19`) in the Containerfile if you want updates to be an explicit,
-visible edit instead.
+<details>
+<summary>Image store, updates and self-heal in detail</summary>
+
+- The local image store (sizes, dangling layers, which project uses what) is listed alongside,
+  with per-image pull/remove and a safe dangling-only prune (dangling = untagged layers left
+  behind when a tag moves; removing a tagged-but-unused image is the ✕ button's job).
+- Manual **Build** pulls fresh `FROM` bases; automatic self-heal rebuilds use cached bases so a
+  pruned store restores fast and offline.
+- Registry images used directly by projects have a **Pull** button in the local store — the
+  panel's `podman pull`. Either way an update reaches apps on their next restart or deploy,
+  and the replaced layers show up as dangling for pruning.
+- Builds have an empty context: `FROM`/`RUN`/`ENV`… work, `COPY` of local files does not.
+- Private registries are not supported by the panel's auto-pull — `podman pull` once manually
+  as the panel user instead.
+
+</details>
 
 ## Subdomain routing (harbor gate)
 
 Give each app a subdomain instead of a port number: set a **base domain** under Settings →
-Harbor gate, then a **subdomain + port** on each project's settings. A panel-owned Caddy
+Harbor gate, then a **subdomain** on each project's settings (every project gets an
+auto-assigned port at creation — override it if you care which one). A panel-owned Caddy
 instance (pm2 process `skeppa-proxy`, plain HTTP, requires the `caddy` binary on the panel
 user's PATH) routes `subdomain.<base domain>` → `localhost:<port>`, and the routed port is
 injected into the app's environment as `PORT`. Your system Caddy forwards the wildcard to it
 with the one static block the panel shows you, and keeps owning TLS — give the wildcard a
 DNS-01 certificate or add `tls { on_demand }` to the block.
+
+## Notifications
+
+Point **Settings → Notifications** at any webhook that accepts a POST — an [ntfy](https://ntfy.sh)
+topic gets plain text, Discord and Slack webhook URLs are recognized and get their JSON shape.
+The panel notifies on failed deploys and on crash loops (repeated restarts within a few
+minutes — one alert per burst, then a cooldown). Restarts the panel itself causes — deploys,
+your own start/stop clicks — never alert, so a message always means something actually broke.
+
+## Backups
+
+`bun scripts/backup.js [dir] [--keep N]` snapshots the database via `VACUUM INTO` — safe while
+the panel is running (default destination `DATA_DIR/backups`, keeping the 14 newest); wire it
+to cron for a daily snapshot. The snapshots hold every setting and encrypted ENV value but are
+useless without the master key, which is deliberately never part of a backup — back the key
+file up separately (see Security notes).
 
 ## Deploying Skeppa with Skeppa (dogfooding)
 
@@ -254,9 +298,10 @@ supported — develop the UI/API and run real deploys on Linux.
 - Keep the master key in a `MASTER_KEY_FILE` (chmod 600, e.g. `~/.skeppa/master.key`) rather than the `MASTER_KEY` env var: the file lives outside the repo, `DATA_DIR` and `APPS_DIR`, never enters the process environment (`pm2 env`, `/proc`, pm2 dumps), and the panel warns at boot if its permissions are loose. **Back it up separately from `data/`** — a backup containing both the DB and the key decrypts everything.
 - Decrypted ENV exists only in memory: it is injected through the pm2 CLI's process environment at start/reload and into the deploy script's environment. It is never written into ecosystem files, and `.env` files on disk are a per-project opt-in (written with mode 0600).
 - pm2 spawns for apps use a minimal, sanitized environment — the panel's own env (`MASTER_KEY`, tokens) is never inherited by deployed apps.
-- Know the boundary: pm2 keeps each process's environment in daemon memory, so anyone with shell access as the panel user can read secrets via `pm2 env`/`pm2 show` — and deployed apps run as that same user. The encryption protects the DB, its backups and the file system at rest; it does not isolate apps from each other or from the panel. If you need that, use per-app users or containers.
+- Know the boundary: pm2 keeps each process's environment in daemon memory, so anyone with shell access as the panel user can read secrets via `pm2 env`/`pm2 show` — and deployed apps run as that same user. The encryption protects the DB, its backups and the file system at rest; it does not isolate apps from each other or from the panel. If you need that, switch the project's runtime to container — and give code you don't fully trust the restricted network profile.
 - Never run `pm2 save` while apps are running (see Quickstart) — the dump file would contain their env in plaintext.
 - Webhook payloads are verified with a timing-safe HMAC comparison before processing.
 - Clone tokens are short-lived installation tokens, passed per git invocation and never written to `.git/config` or logs.
 - The deploy script deliberately runs as shell — that's the product. On the host it runs **as your panel user**; enable the podman build sandbox (`SKEPPA_SANDBOX=podman`) to confine it to a throwaway container that only sees the project's source. Everything else that reaches a shell or path is whitelist-validated.
+- The panel binds `127.0.0.1` by default: unreachable from the LAN and from app containers (those you grant host access excepted) — the ways in are the reverse proxy and the machine itself.
 - Run the panel as its own non-root user; pm2 runs under the same user.
