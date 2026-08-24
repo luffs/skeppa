@@ -2,8 +2,8 @@
 // current cumulative counter for one process; the watcher alerts when it grew
 // by `threshold` within `windowMs`, then mutes that process for `cooldownMs`
 // so a crash loop sends one message, not one per poll. A counter that goes
-// BACKWARDS (a recreated container starts back at zero) only resets the
-// baseline — a fresh start is not a crash.
+// BACKWARDS (a recreated container starts back at zero) wipes everything the
+// watcher knew about that key — a fresh start is not a crash.
 export function createCrashWatch({ threshold = 3, windowMs = 10 * 60_000, cooldownMs = 30 * 60_000, onAlert }) {
   const seen = new Map() // key -> { last, events: [ms], mutedUntil }
 
@@ -19,6 +19,16 @@ export function createCrashWatch({ threshold = 3, windowMs = 10 * 60_000, cooldo
       }
       const delta = count - s.last
       s.last = count
+      if (delta < 0) {
+        // The counter restarted: a recreated container, or a pm2 process that
+        // was deleted and re-added. Every event and the cooldown describe a
+        // process that no longer exists, so they go too — kept, stale events
+        // push the next ordinary restart over the threshold, and a stale
+        // cooldown mutes a genuinely new crash loop for up to half an hour.
+        s.events = []
+        s.mutedUntil = 0
+        return
+      }
       for (let i = 0; i < Math.min(delta, 50); i++) s.events.push(now)
       s.events = s.events.filter(t => now - t <= windowMs)
       if (s.events.length >= threshold && now >= s.mutedUntil) {

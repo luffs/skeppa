@@ -1,5 +1,5 @@
 import { posix, join } from 'node:path'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync, chmodSync } from 'node:fs'
 import { createContainerClient } from './client.js'
 import { createContainerEnsuringImage } from './images.js'
 
@@ -142,10 +142,15 @@ export async function capturePreviousLogs(engine, name, dirs, onLine = () => {})
       '---- stderr ----',
       tail.err,
       '',
-    ].join('\n'))
+    ].join('\n'), { mode: 0o600 })
   } catch {
     return null
   }
+  // The mode above only applies when writeFileSync creates the file, so a
+  // log written before this existed keeps its old bits without the chmod.
+  // App output routinely carries secrets, and APPS_DIR is world-readable
+  // under a default umask.
+  try { chmodSync(file, 0o600) } catch { /* not a thing on Windows */ }
   onLine('previous container logs saved to container.prev.log')
   return file
 }

@@ -1,5 +1,5 @@
 import { test, expect } from 'bun:test'
-import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { tarArchive } from '../src/lib/tar.js'
@@ -35,12 +35,37 @@ test('rejects names longer than the ustar limit', () => {
   expect(() => tarArchive([{ name: 'x'.repeat(101), content: '' }])).toThrow(/too long/)
 })
 
-test.if(!!Bun.which('tar'))('round-trips through the system tar', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'skeppa-tar-'))
-  const archivePath = join(dir, 'ctx.tar')
-  writeFileSync(archivePath, tarArchive([{ name: 'Containerfile', content: CONTENT }]))
+// Bun.Archive (Bun 1.4+) is libarchive — a tar implementation we did not
+// write. Reading our bytes back with it is what proves they are a real
+// archive rather than merely self-consistent. This replaces a test that
+// shelled out to the system tar, which had to be installed to run at all
+// and could not be handed a Windows temp path.
+test('round-trips through an independent tar reader', async () => {
+  const archive = new Bun.Archive(tarArchive([{ name: 'Containerfile', content: CONTENT }]))
+  const files = await archive.files()
+  expect([...files.keys()]).toEqual(['Containerfile'])
+  expect(files.get('Containerfile').size).toBe(CONTENT.length)
+  expect(await files.get('Containerfile').text()).toBe(CONTENT)
+})
 
-  const proc = Bun.spawn([Bun.which('tar'), '-xf', archivePath, '-C', dir], { stderr: 'pipe' })
-  expect(await proc.exited).toBe(0)
+// The block arithmetic that concatenates entries only runs when there is more
+// than one, and images.js sends a single Containerfile today — so nothing else
+// would notice if a second entry started at the wrong offset.
+test('round-trips a multi-entry context', async () => {
+  const second = 'exec "$@"'
+  const archive = new Bun.Archive(tarArchive([
+    { name: 'Containerfile', content: CONTENT },
+    { name: 'entrypoint.sh', content: second },
+  ]))
+  const files = await archive.files()
+  expect([...files.keys()]).toEqual(['Containerfile', 'entrypoint.sh'])
+  expect(await files.get('Containerfile').text()).toBe(CONTENT)
+  expect(await files.get('entrypoint.sh').text()).toBe(second)
+})
+
+test('extracts to disk as a regular readable file', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'skeppa-tar-'))
+  const archive = new Bun.Archive(tarArchive([{ name: 'Containerfile', content: CONTENT }]))
+  expect(await archive.extract(dir)).toBe(1)
   expect(readFileSync(join(dir, 'Containerfile'), 'utf8')).toBe(CONTENT)
 })

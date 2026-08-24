@@ -47,3 +47,24 @@ test('a failing webhook is reported as false, never thrown', async () => {
   expect(await sendNotification(db, 'x', { fetchFn: capture(500).fetchFn })).toBe(false)
   expect(await sendNotification(db, 'x', { fetchFn: async () => { throw new Error('refused') } })).toBe(false)
 })
+
+test('legacy discordapp.com webhooks get the Discord shape too', async () => {
+  const { calls, fetchFn } = capture()
+  await sendNotification(makeDb('https://discordapp.com/api/webhooks/1/abc'), 'boom', { fetchFn })
+  expect(JSON.parse(calls[0].body)).toEqual({ content: 'boom' })
+  expect(calls[0].headers['Content-Type']).toBe('application/json')
+})
+
+test('a host that merely starts with discord.com is not Discord', async () => {
+  const { calls, fetchFn } = capture()
+  const db = makeDb('https://discord.com.example.net/api/webhooks/1/abc')
+  await sendNotification(db, 'boom', { fetchFn })
+  expect(calls[0].body).toBe('boom')
+  expect(calls[0].headers['Content-Type']).toBe('text/plain')
+})
+
+test('an unparseable stored URL is swallowed, not thrown at the caller', async () => {
+  const { calls, fetchFn } = capture()
+  expect(await sendNotification(makeDb('not-a-url'), 'x', { fetchFn })).toBe(false)
+  expect(calls).toEqual([])
+})

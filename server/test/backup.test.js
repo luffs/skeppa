@@ -51,3 +51,12 @@ test('pruning keeps the newest N snapshots and ignores strangers', () => {
     'skeppa-2026-01-03T00-00-00.db',
   ])
 })
+
+test('pruning to zero keeps everything rather than deleting everything', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'skeppa-backup-zero-'))
+  writeFileSync(join(dir, 'skeppa-2026-01-01T00-00-00.db'), '')
+  writeFileSync(join(dir, 'skeppa-2026-01-02T00-00-00.db'), '')
+
+  expect(pruneBackups(dir, 0)).toEqual([])
+  expect(readdirSync(dir).length).toBe(2)
+})

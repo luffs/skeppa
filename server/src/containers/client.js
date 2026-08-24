@@ -49,14 +49,41 @@ export function createLogDemuxer(onLine) {
   }
 }
 
-export function createContainerClient({ socketPath, fetchFn = fetch }) {
-  async function api(method, path, body = null) {
-    const res = await fetchFn(`http://engine${path}`, {
-      method,
-      unix: socketPath,
-      headers: body ? { 'Content-Type': 'application/json' } : undefined,
-      body: body ? JSON.stringify(body) : undefined,
-    })
+// Timeouts are per call because this API mixes two kinds of request: control
+// calls that should answer in milliseconds, and calls that block by design —
+// waiting on a container to exit, following its logs, a pull, a build. One
+// global value would either sever the second kind or leave the first able to
+// hang forever, and a hung control call is what wedges the poller: `ticking`
+// never clears, so every lane including the crash watch stops sampling with
+// nothing logged. `timeoutMs: 0` is the opt-out for the blocking calls.
+const TIMEOUT = {
+  control: 30_000, // create/inspect/stats/list/remove — engine-local bookkeeping
+  lifecycle: 60_000, // stop/restart carry their own t=10 grace period on top
+  sweep: 120_000, // prune and image removal churn through layers
+}
+
+export function createContainerClient({ socketPath, fetchFn = fetch, timeouts = {} }) {
+  const T = { ...TIMEOUT, ...timeouts }
+  async function api(method, path, body = null, { timeoutMs = T.control, type = null } = {}) {
+    let res
+    try {
+      res = await fetchFn(`http://engine${path}`, {
+        method,
+        unix: socketPath,
+        headers: body ? { 'Content-Type': type ?? 'application/json' } : undefined,
+        body: body ? (body instanceof Uint8Array ? body : JSON.stringify(body)) : undefined,
+        signal: timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined,
+      })
+    } catch (err) {
+      // A bare TimeoutError names neither the socket nor the call it came
+      // from, so a wedged engine would read as a panel bug in the log.
+      if (err?.name === 'TimeoutError' || err?.name === 'AbortError') {
+        const e = new Error(`container engine: ${method} ${path} timed out after ${timeoutMs}ms`)
+        e.timeout = true
+        throw e
+      }
+      throw err
+    }
     if (!res.ok) {
       let detail = ''
       try {
@@ -86,7 +113,7 @@ export function createContainerClient({ socketPath, fetchFn = fetch }) {
 
     // Blocks until the container exits; returns its exit code.
     async waitContainer(id) {
-      const res = await api('POST', `/containers/${encodeURIComponent(id)}/wait`)
+      const res = await api('POST', `/containers/${encodeURIComponent(id)}/wait`, null, { timeoutMs: 0 })
       return (await res.json()).StatusCode ?? -1
     },
 
@@ -99,12 +126,12 @@ export function createContainerClient({ socketPath, fetchFn = fetch }) {
     },
 
     async restartContainer(id) {
-      await api('POST', `/containers/${encodeURIComponent(id)}/restart?t=10`)
+      await api('POST', `/containers/${encodeURIComponent(id)}/restart?t=10`, null, { timeoutMs: T.lifecycle })
     },
 
     async stopContainer(id) {
       try {
-        await api('POST', `/containers/${encodeURIComponent(id)}/stop?t=10`)
+        await api('POST', `/containers/${encodeURIComponent(id)}/stop?t=10`, null, { timeoutMs: T.lifecycle })
       } catch (err) {
         if (err.status !== 304) throw err // 304 = already stopped
       }
@@ -157,7 +184,7 @@ export function createContainerClient({ socketPath, fetchFn = fetch }) {
     // Streams multiplexed stdout+stderr as whole lines until the container
     // exits (or the stream breaks — callers treat logs as best-effort).
     async streamLogs(id, onLine) {
-      const res = await api('GET', `/containers/${encodeURIComponent(id)}/logs?follow=true&stdout=true&stderr=true`)
+      const res = await api('GET', `/containers/${encodeURIComponent(id)}/logs?follow=true&stdout=true&stderr=true`, null, { timeoutMs: 0 })
       const demux = createLogDemuxer(onLine)
       for await (const chunk of res.body) demux.push(chunk)
       demux.flush()
@@ -169,23 +196,14 @@ export function createContainerClient({ socketPath, fetchFn = fetch }) {
     // pull: refresh FROM bases from their registries instead of using cached
     // copies (the engine's default is pull-if-missing).
     async buildImage(tag, tarBytes, onLine = () => {}, { pull = false } = {}) {
-      const res = await fetchFn(`http://engine/build?t=${encodeURIComponent(tag)}&dockerfile=Containerfile${pull ? '&pull=1' : ''}`, {
-        method: 'POST',
-        unix: socketPath,
-        headers: { 'Content-Type': 'application/x-tar' },
-        body: tarBytes,
-      })
-      if (!res.ok) {
-        let detail = ''
-        try {
-          detail = (await res.json()).message ?? ''
-        } catch {
-          // non-JSON error body
-        }
-        const err = new Error(`container engine: POST /build → ${res.status}${detail ? ` (${detail})` : ''}`)
-        err.status = res.status
-        throw err
-      }
+      // A build legitimately runs for minutes, so it is one of the calls that
+      // must not carry a timer. The tar context goes up as a raw body.
+      const res = await api(
+        'POST',
+        `/build?t=${encodeURIComponent(tag)}&dockerfile=Containerfile${pull ? '&pull=1' : ''}`,
+        tarBytes,
+        { timeoutMs: 0, type: 'application/x-tar' },
+      )
       const decoder = new TextDecoder()
       let buf = ''
       let carry = '' // "stream" fragments do not align with line breaks
@@ -229,7 +247,7 @@ export function createContainerClient({ socketPath, fetchFn = fetch }) {
 
     async removeImage(ref) {
       try {
-        await api('DELETE', `/images/${encodeURIComponent(ref)}`)
+        await api('DELETE', `/images/${encodeURIComponent(ref)}`, null, { timeoutMs: T.sweep })
       } catch (err) {
         if (err.status !== 404) throw err
       }
@@ -237,14 +255,14 @@ export function createContainerClient({ socketPath, fetchFn = fetch }) {
 
     // Removes dangling (untagged) layers only — the engine's default filter.
     async pruneImages() {
-      const res = await api('POST', '/images/prune')
+      const res = await api('POST', '/images/prune', null, { timeoutMs: T.sweep })
       return await res.json()
     },
 
     // Pulls an image; progress arrives as a stream of JSON lines. Progress
     // spam is swallowed, a terminal {"error": ...} line becomes a throw.
     async pullImage(ref) {
-      const res = await api('POST', `/images/create?fromImage=${encodeURIComponent(ref)}`)
+      const res = await api('POST', `/images/create?fromImage=${encodeURIComponent(ref)}`, null, { timeoutMs: 0 })
       const decoder = new TextDecoder()
       let buf = ''
       let pullError = null

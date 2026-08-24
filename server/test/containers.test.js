@@ -231,3 +231,65 @@ test('pullImage surfaces a terminal error line from the progress stream', async 
   })
   await expect(client.pullImage('nope:latest')).rejects.toThrow('manifest unknown')
 })
+
+// --- timeouts ---------------------------------------------------------------
+
+test('an ordinary control call is armed with a timer', async () => {
+  let signal
+  const client = createContainerClient({
+    socketPath: '/s',
+    fetchFn: async (url, init) => (signal = init.signal, json(200, [])),
+  })
+  await client.listContainers()
+  expect(signal).toBeInstanceOf(AbortSignal)
+})
+
+test('calls that block by design carry no timer at all', async () => {
+  const seen = []
+  const stream = () => new Response(new ReadableStream({ start: c => c.close() }), { status: 200 })
+  const client = createContainerClient({
+    socketPath: '/s',
+    fetchFn: async (url, init) => {
+      seen.push(init.signal)
+      return url.includes('/wait') ? json(200, { StatusCode: 0 }) : stream()
+    },
+  })
+  // waiting on a container, following its logs, a pull and a build all run
+  // for as long as the work takes — a timer on any of them severs real work
+  await client.waitContainer('abc')
+  await client.streamLogs('abc', () => {})
+  await client.pullImage('oven/bun:latest')
+  await client.buildImage('t', new Uint8Array(0))
+  expect(seen.length).toBe(4)
+  expect(seen.every(s => s === undefined)).toBe(true)
+})
+
+test('a control call that never answers is aborted, and says which one', async () => {
+  const client = createContainerClient({
+    socketPath: '/s',
+    timeouts: { control: 10 },
+    // an engine that accepts the request and then goes quiet forever
+    fetchFn: (url, init) => new Promise((resolve, reject) => {
+      init.signal.addEventListener('abort', () => reject(init.signal.reason))
+    }),
+  })
+  try {
+    await client.listContainers()
+    throw new Error('should have thrown')
+  } catch (err) {
+    expect(err.timeout).toBe(true)
+    expect(err.message).toContain('GET /containers/json?all=1')
+    expect(err.message).toContain('timed out')
+  }
+})
+
+test('a wedged stats call cannot stall the poller forever', async () => {
+  const client = createContainerClient({
+    socketPath: '/s',
+    timeouts: { control: 10 },
+    fetchFn: (url, init) => new Promise((resolve, reject) => {
+      init.signal.addEventListener('abort', () => reject(init.signal.reason))
+    }),
+  })
+  await expect(client.statsContainer('abc')).rejects.toThrow('timed out')
+})

@@ -25,6 +25,8 @@ export function backupDatabase(dbPath, destDir, now = new Date()) {
 // Timestamped names sort lexically, so pruning is a sort and a slice.
 // Returns the file names it removed.
 export function pruneBackups(destDir, keep) {
+  // A zero would slice from the front and delete every snapshot there is.
+  if (!keep) return []
   const stale = readdirSync(destDir)
     .filter(f => /^skeppa-\d{4}-\d{2}-\d{2}T.*\.db$/.test(f))
     .sort()

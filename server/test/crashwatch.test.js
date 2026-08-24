@@ -57,3 +57,22 @@ test('processes are tracked separately', () => {
   w.sample('1', 'a', 3, 2 * MIN)
   expect(alerts).toEqual([['a', 3]])
 })
+
+test('a counter reset drops the crash history behind it', () => {
+  const { w, alerts } = watch()
+  w.sample('1', 'app', 0, 0)
+  w.sample('1', 'app', 2, 1 * MIN) // two crashes, one short of the threshold
+  w.sample('1', 'app', 0, 2 * MIN) // deploy recreated the container
+  w.sample('1', 'app', 1, 3 * MIN) // one ordinary restart of the new one
+  expect(alerts).toEqual([]) // crashes from the old container must not count
+})
+
+test('a counter reset lifts the cooldown so a new crash loop is heard', () => {
+  const { w, alerts } = watch()
+  w.sample('1', 'app', 0, 0)
+  w.sample('1', 'app', 3, 1 * MIN)
+  expect(alerts.length).toBe(1) // alerted, and now muted for 30 minutes
+  w.sample('1', 'app', 0, 2 * MIN) // redeployed to fix it — and it still crashes
+  w.sample('1', 'app', 3, 4 * MIN)
+  expect(alerts.length).toBe(2) // muting a brand new process would hide this
+})

@@ -486,9 +486,13 @@ export default {
       this.notifyError = ''
       this.notifyMessage = ''
       try {
-        await api.put('/api/settings', { notify_url: this.notifyForm.url.trim() || null })
-        await this.load()
-        this.notifyMessage = this.status.notify_url ? 'Saved ✔' : 'Notifications off.'
+        const url = this.notifyForm.url.trim()
+        await api.put('/api/settings', { notify_url: url || null })
+        // The server stored exactly what we sent, so mirror it locally rather
+        // than refetching every unrelated setting to learn one field.
+        this.status.notify_url = url
+        this.notifyForm.url = url
+        this.notifyMessage = url ? 'Saved ✔' : 'Notifications off.'
       } catch (err) {
         this.notifyError = err.message
       } finally {
