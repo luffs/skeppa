@@ -1,6 +1,11 @@
-export function timeAgo(iso) {
+import { store } from '../store.js'
+
+// Relative labels default to the store's ticking clock, which is what makes
+// them live: any computed or template calling them reads store.now and
+// re-renders as time passes. Pass `now` explicitly for a fixed instant.
+export function timeAgo(iso, now = store.now) {
   if (!iso) return '—'
-  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000)
+  const s = Math.max(0, (now - new Date(iso).getTime()) / 1000)
   if (s < 60) return `${Math.floor(s)}s ago`
   if (s < 3600) return `${Math.floor(s / 60)}m ago`
   if (s < 86400) return `${Math.floor(s / 3600)}h ago`
@@ -14,9 +19,9 @@ export function duration(startIso, endIso) {
   return `${Math.floor(s / 60)}m ${Math.floor(s % 60)}s`
 }
 
-export function uptimeSince(ms) {
+export function uptimeSince(ms, now = store.now) {
   if (!ms) return '—'
-  const s = Math.max(0, (Date.now() - ms) / 1000)
+  const s = Math.max(0, (now - ms) / 1000)
   if (s < 3600) return `${Math.floor(s / 60)}m`
   if (s < 86400) return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`
   return `${Math.floor(s / 86400)}d ${Math.floor((s % 86400) / 3600)}h`

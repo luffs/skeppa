@@ -2,8 +2,8 @@
   <div class="container mid">
     <div class="page-head">
       <h1 style="margin: 0">Engine room</h1>
-      <span class="mono" style="font-size: 12px; color: var(--dim)" v-if="status">
-        live · updated {{ timeAgo(liveUpdatedAt) }}
+      <span class="mono" style="font-size: 12px" :style="{ color: connected ? 'var(--dim)' : 'var(--amber, #d29922)' }" v-if="status">
+        {{ connected ? 'live · updated' : 'reconnecting · last data' }} {{ timeAgo(liveUpdatedAt) }}
       </span>
     </div>
 
@@ -224,6 +224,9 @@ export default {
     status() {
       const s = store.live.system
       return s?.appsDir ? s : null
+    },
+    connected() {
+      return store.connected
     },
     liveUpdatedAt() {
       return store.liveUpdatedAt

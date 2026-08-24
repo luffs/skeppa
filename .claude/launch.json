@@ -2,16 +2,10 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "server",
+      "name": "skeppa",
       "runtimeExecutable": "bun",
-      "runtimeArgs": ["run", "dev:server"],
+      "runtimeArgs": ["start"],
       "port": 3000
-    },
-    {
-      "name": "web",
-      "runtimeExecutable": "bun",
-      "runtimeArgs": ["run", "dev:web"],
-      "port": 5173
     }
   ]
 }

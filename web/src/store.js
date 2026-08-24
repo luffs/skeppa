@@ -10,7 +10,18 @@ export const store = reactive({
   ready: false, // true once the first full snapshot has arrived
   liveUpdatedAt: null, // ms timestamp of the last snapshot/diff received
   live: { projects: {}, system: {}, users: {}, proxy: {}, images: {} },
+  // The wall clock, ticked once a second so relative labels (timeAgo,
+  // uptimeSince) are reactive: computeds re-evaluate each tick but the DOM
+  // only patches when the rendered string actually changes, so "14s ago"
+  // moves every second while "2m ago" costs nothing for a minute. Data
+  // diffs cannot do this job — quantization suppresses them on purpose
+  // when nothing meaningful changed.
+  now: Date.now(),
 })
+
+// Recomputed from Date.now() each tick, so browser throttling of hidden
+// tabs self-corrects the moment the tab is visible again.
+setInterval(() => { store.now = Date.now() }, 1000)
 
 // The app's public address, or '' when the project is not routed. The base
 // domain rides along in LiveState, so links appear (and follow edits) without
