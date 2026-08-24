@@ -203,3 +203,30 @@ test('a failed deploy fires the notifier; a successful one stays quiet', async (
   expect(notes[0]).toContain('deadbee')
   expect(notes[0]).toContain('exit 7')
 })
+
+// The apps-dir disk gauge is invalidated by the one event that changes the
+// tree the panel owns: a deploy landing — failed ones included, since the
+// checkout is on disk before the script's exit code is known.
+test('a finished deploy invalidates the disk gauge, success or not', async () => {
+  const invalidations = []
+  const { execute, pending } = manualExecutor()
+  const { db, runner, projectId } = (() => {
+    const base = setup(execute)
+    base.runner.poller = { diskChanged: () => invalidations.push(1) }
+    return base
+  })()
+
+  runner.enqueue(projectId, { trigger: 'manual' })
+  await tick()
+  expect(invalidations.length).toBe(0) // still running — nothing landed yet
+  pending[0].resolve()
+  await tick(); await tick()
+  expect(invalidations.length).toBe(1)
+
+  runner.enqueue(projectId, { trigger: 'manual' })
+  await tick()
+  pending[1].reject(new DeployError('script blew up', 3))
+  await tick(); await tick()
+  expect(invalidations.length).toBe(2)
+  expect(statuses(db)).toEqual(['success', 'failed'])
+})

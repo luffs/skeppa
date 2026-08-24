@@ -75,7 +75,7 @@ export function recoverInterrupted(db) {
 // runs, at most one more waits; a newer enqueue replaces the waiting one
 // (which is marked cancelled).
 export class DeployRunner {
-  constructor({ db, config, liveState, hub, github, execute, containerClient = null, notify = null }) {
+  constructor({ db, config, liveState, hub, github, execute, containerClient = null, notify = null, poller = null }) {
     this.db = db
     this.config = config
     this.liveState = liveState
@@ -83,6 +83,7 @@ export class DeployRunner {
     this.github = github
     this.notify = notify ?? (() => {}) // fire-and-forget; never awaited
     this.containerClient = containerClient // test injection; null = real engine
+    this.poller = poller // told when a deploy changed the apps dir
     this.queues = new Map() // projectId -> { runningId, queuedId }
     this.activeLogs = new Map() // deploymentId -> LogCollector
     this._execute = execute || ((project, deploymentId, log) => this._deploy(project, deploymentId, log))
@@ -178,6 +179,9 @@ export class DeployRunner {
     live.lastDeployment = { id: deploymentId, status, finishedAt, commitSha: row?.commit_sha ?? null }
     if (status === 'success' && row?.commit_sha) live.deployedSha = row.commit_sha
     this._refreshRecent(projectId)
+    // Success or not, the checkout and whatever the script built are on
+    // disk now — the apps-dir gauge is stale either way.
+    this.poller?.diskChanged()
 
     const q = this.queues.get(projectId)
     if (q) {

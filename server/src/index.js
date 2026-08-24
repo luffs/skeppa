@@ -49,7 +49,7 @@ const hub = new Hub({
 // only switch the cadence from idle to live.
 poller.start()
 const runner = new DeployRunner({
-  db, config, liveState, hub, github,
+  db, config, liveState, hub, github, poller,
   notify: text => sendNotification(db, text),
 })
 hub.getLogBacklog = id => runner.getActiveLog(id)
