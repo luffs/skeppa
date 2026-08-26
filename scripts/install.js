@@ -231,7 +231,14 @@ if (db.query('SELECT 1 FROM users LIMIT 1').get()) {
 
 // --- pm2 --------------------------------------------------------------------
 
-if (!Bun.which('pm2')) {
+// pm2 is Node software — bun installs it fine but cannot run it: its CLI
+// (and the daemon that supervises every app) starts via a node shebang.
+if (!Bun.which('node')) {
+  console.log('→ pm2 needs Node, and no node binary is on PATH. As an admin, once:')
+  console.log('    sudo apt install nodejs   (or your distro equivalent)')
+  console.log('  then re-run this installer, or start the panel with:')
+  console.log('    pm2 start ecosystem.config.cjs && pm2 save && pm2 startup')
+} else if (!Bun.which('pm2')) {
   console.log('→ pm2 not found — install it (bun install -g pm2) and start the panel with:')
   console.log('    pm2 start ecosystem.config.cjs && pm2 save && pm2 startup')
 } else if (askYesNo('Start the panel under pm2 now?', true)) {

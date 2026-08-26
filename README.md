@@ -19,12 +19,14 @@ You need a Linux server and a domain; the rest takes about ten minutes.
 
 ```bash
 curl -fsSL https://bun.sh/install | bash    # Bun ≥ 1.1 — skip if installed
+sudo apt install nodejs                     # pm2 runs on Node — skip if `node -v` works (admin, once)
 bun install -g pm2                          # pm2 — skip if installed
 git clone <this repo> ~/skeppa && cd ~/skeppa
 bun scripts/install.js
 ```
 
-No sudo needed — everything (checkout, config, data, apps) defaults to the panel user's home.
+Beyond that one system Node install, no sudo is needed — everything (checkout, config,
+data, apps) defaults to the panel user's home.
 
 The interactive installer does the rest: creates the master-key file (chmod 600 — an existing
 key is never overwritten) and the data/apps directories, writes the panel config to
