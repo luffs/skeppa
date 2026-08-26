@@ -1,4 +1,5 @@
 import { posix } from 'node:path'
+import { userInfo } from 'node:os'
 import { createContainerClient } from '../containers/client.js'
 import { createContainerEnsuringImage } from '../containers/images.js'
 
@@ -17,9 +18,9 @@ export function buildContainerName(slug) {
 function engineHint(err, socketPath) {
   const hint = new Error(
     `container engine unreachable at ${socketPath}: ${err.message}\n` +
-    `Is the rootless podman socket up for the panel user?\n` +
-    `  sudo loginctl enable-linger $(whoami)\n` +
-    `  systemctl --user enable --now podman.socket`
+    `Is the rootless podman socket up for the panel user? As an admin, run:\n` +
+    `  sudo loginctl enable-linger ${userInfo().username}\n` +
+    `  sudo systemctl --user -M ${userInfo().username}@ enable --now podman.socket`
   )
   return hint
 }

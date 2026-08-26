@@ -149,13 +149,19 @@ your browser, so a panel browsed via `localhost` would register an unreachable w
 
 ## Containers (rootless podman)
 
-Everything in this section needs rootless podman once:
+Everything in this section needs rootless podman set up once, all as an admin user — the
+panel user deliberately has no sudo, and may well have no login at all:
 
 ```bash
-sudo apt install podman uidmap        # or your distro's equivalent
-sudo loginctl enable-linger $(whoami) # keep user services alive without a login session
-systemctl --user enable --now podman.socket
+sudo apt install podman uidmap      # or your distro's equivalent
+sudo loginctl enable-linger skeppa  # your panel user — starts its user manager, keeps it alive
+sudo systemctl --user -M skeppa@ enable --now podman.socket
 ```
+
+The `-M skeppa@` form needs systemd ≥ 248 (Debian 12 qualifies). On older systems run the
+last step in a panel-user shell instead: `sudo su - skeppa`, then
+`export XDG_RUNTIME_DIR=/run/user/$(id -u)` first — without it `systemctl --user` cannot
+find the bus, which is also why running it straight from `su` fails.
 
 Rootless Docker works too — its socket is wire-compatible; point `CONTAINER_SOCKET` at it.
 

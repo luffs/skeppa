@@ -9,7 +9,7 @@
 // Only imports dependency-free modules so it works straight after clone.
 import { existsSync, mkdirSync, writeFileSync, readFileSync, statSync, chmodSync, copyFileSync, renameSync } from 'node:fs'
 import { join, resolve, dirname } from 'node:path'
-import { homedir } from 'node:os'
+import { homedir, userInfo } from 'node:os'
 import { randomBytes } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { rootDir, configFilePath, parseKeyValues } from '../server/src/config.js'
@@ -158,7 +158,7 @@ try {
 } catch (err) {
   appsDirReady = false
   console.log(`✖ could not create ${appsDir} (${err.code}) — run this and re-check:`)
-  console.log(`    sudo mkdir -p ${appsDir} && sudo chown $(whoami) ${appsDir}`)
+  console.log(`    sudo mkdir -p ${appsDir} && sudo chown ${userInfo().username} ${appsDir}`)
 }
 
 // --- config file --------------------------------------------------------------
