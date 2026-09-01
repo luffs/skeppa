@@ -6,7 +6,7 @@
       <StatusBadge :status="pm2Status" :href="appUrl" class="status" />
     </div>
     <div class="main">
-      <div class="repo-line">{{ project.repo_full_name }} @ {{ project.branch }}</div>
+      <div class="repo-line">{{ repoLabel }} @ {{ project.branch }}</div>
       <div class="last-line">
         <span class="dot" :class="lastDot"></span>
         <span>{{ lastLine }}</span>
@@ -33,6 +33,10 @@ export default {
   components: { StatusBadge },
   props: { project: { type: Object, required: true } },
   computed: {
+    // Plain-git projects have no owner/repo — show the URL, sans scheme.
+    repoLabel() {
+      return this.project.repo_full_name || (this.project.git_url ?? '').replace(/^https:[/][/]/, '')
+    },
     live() {
       return liveProject(this.project.id)
     },

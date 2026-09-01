@@ -44,3 +44,22 @@ test('clone-command 404s for unknown projects', async () => {
   const res = await app.request('/99/clone-command', { method: 'POST' })
   expect(res.status).toBe(404)
 })
+
+test('a plain-git project gets its URL back — no token involved', async () => {
+  const db = new Database(':memory:')
+  migrate(db, fileURLToPath(new URL('../src/db/migrations', import.meta.url)))
+  db.query(
+    `INSERT INTO projects (slug, name, repo_full_name, git_url, branch, pm2_name)
+     VALUES ('ext', 'Ext', '', 'https://codeberg.org/luff/skeppa.git', 'main', 'ext')`
+  ).run()
+  const liveState = createLiveState()
+  liveState.projects[1] = projectDefaults()
+  const github = { getInstallationTokenInfo: async () => { throw new Error('must not be called') } }
+  const app = projectRoutes({ db, config: {}, liveState, runner: {}, github })
+
+  const res = await app.request('/1/clone-command', { method: 'POST' })
+  expect(res.status).toBe(200)
+  const body = await res.json()
+  expect(body.command).toBe('git clone --branch main https://codeberg.org/luff/skeppa.git')
+  expect(body.expiresAt).toBe(null)
+})

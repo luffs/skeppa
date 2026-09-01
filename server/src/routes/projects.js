@@ -5,6 +5,7 @@ import { slugify, validateProject, SLUG_RE, ENV_KEY_RE, PM2_ACTIONS } from '../l
 import { projectDefaults, getProjectInfo } from '../live/state.js'
 import { syncManagedImages } from '../live/images.js'
 import { deleteProcess, describe } from '../deploy/pm2.js'
+import { lsRemoteHead } from '../deploy/git.js'
 import { projectDirs, syncEnvFiles, writeEcosystem } from '../deploy/envfiles.js'
 import { createContainerClient } from '../containers/client.js'
 import { appContainerName, appLogResponse, previousLogResponse } from '../containers/runtime.js'
@@ -13,7 +14,7 @@ import { tailFile } from '../lib/tail.js'
 import { proxySettings } from '../proxy/index.js'
 
 const PROJECT_COLUMNS =
-  'id, slug, name, repo_full_name, branch, deploy_script, build_image, run_image, runtime, pm2_name, start_command, cwd, ' +
+  'id, slug, name, repo_full_name, git_url, branch, deploy_script, build_image, run_image, runtime, pm2_name, start_command, cwd, ' +
   'auto_deploy, write_env_file, subdomain, port, memory_mb, network_profile, host_access, networks, head_sha, head_message, head_pushed_at, created_at'
 
 const DEFAULT_LOG_LINES = 200
@@ -95,7 +96,8 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
     const body = await c.req.json().catch(() => ({}))
     const project = {
       name: body.name?.trim(),
-      repo_full_name: body.repo_full_name,
+      repo_full_name: body.repo_full_name ?? '',
+      git_url: typeof body.git_url === 'string' ? body.git_url.trim() : '',
       branch: body.branch || 'main',
       deploy_script: body.deploy_script ?? '',
       build_image: normalizeImage(body.build_image),
@@ -113,6 +115,9 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
       host_access: body.host_access ? 1 : 0,
       networks: typeof body.networks === 'string' ? body.networks.trim() : '',
     }
+    // No webhook will ever fire for a plain-git project — keep the flag
+    // honest instead of letting it promise something that cannot happen.
+    if (project.git_url) project.auto_deploy = 0
     const errors = { ...validateProject(project), ...routingConflicts(project) }
     if (project.runtime === 'container' && project.pm2_name === config.selfPm2Name) {
       errors.runtime = 'the panel itself must run under pm2'
@@ -130,9 +135,9 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
     project.pm2_name = uniqueName(project.pm2_name, n => db.query('SELECT 1 FROM projects WHERE pm2_name = ?').get(n))
 
     const { lastInsertRowid } = db.query(
-      `INSERT INTO projects (slug, name, repo_full_name, branch, deploy_script, build_image, run_image, runtime, pm2_name, start_command, cwd, auto_deploy, write_env_file, subdomain, port, memory_mb, network_profile, host_access, networks)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(slug, project.name, project.repo_full_name, project.branch, project.deploy_script,
+      `INSERT INTO projects (slug, name, repo_full_name, git_url, branch, deploy_script, build_image, run_image, runtime, pm2_name, start_command, cwd, auto_deploy, write_env_file, subdomain, port, memory_mb, network_profile, host_access, networks)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(slug, project.name, project.repo_full_name, project.git_url, project.branch, project.deploy_script,
           project.build_image, project.run_image, project.runtime, project.pm2_name, project.start_command,
           project.cwd, project.auto_deploy, project.write_env_file, project.subdomain, project.port,
           project.memory_mb, project.network_profile, project.host_access, project.networks)
@@ -161,6 +166,7 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
     const merged = {
       name: body.name?.trim() ?? project.name,
       repo_full_name: body.repo_full_name ?? project.repo_full_name,
+      git_url: 'git_url' in body ? (typeof body.git_url === 'string' ? body.git_url.trim() : '') : (project.git_url ?? ''),
       branch: body.branch ?? project.branch,
       deploy_script: body.deploy_script ?? project.deploy_script,
       build_image: 'build_image' in body ? normalizeImage(body.build_image) : project.build_image,
@@ -181,6 +187,7 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
     // Clearing the port (or saving a legacy project that never had one)
     // re-assigns the default rather than leaving the project portless.
     if (merged.port == null) merged.port = autoPort(db, project.id)
+    if (merged.git_url) merged.auto_deploy = 0 // no webhook for plain-git projects
     const errors = { ...validateProject(merged), ...routingConflicts(merged, project.id) }
     if (merged.runtime === 'container' && merged.pm2_name === config.selfPm2Name) {
       errors.runtime = 'the panel itself must run under pm2'
@@ -194,11 +201,11 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
     db.query(
       `UPDATE projects SET name = ?, repo_full_name = ?, branch = ?, deploy_script = ?, build_image = ?, run_image = ?, runtime = ?,
          start_command = ?, pm2_name = ?, cwd = ?, auto_deploy = ?, write_env_file = ?, subdomain = ?, port = ?, memory_mb = ?,
-         network_profile = ?, host_access = ?, networks = ? WHERE id = ?`
+         network_profile = ?, host_access = ?, networks = ?, git_url = ? WHERE id = ?`
     ).run(merged.name, merged.repo_full_name, merged.branch, merged.deploy_script, merged.build_image,
           merged.run_image, merged.runtime, merged.start_command, merged.pm2_name, merged.cwd, merged.auto_deploy,
           merged.write_env_file, merged.subdomain, merged.port, merged.memory_mb,
-          merged.network_profile, merged.host_access, merged.networks, project.id)
+          merged.network_profile, merged.host_access, merged.networks, merged.git_url, project.id)
     if (liveState.projects[project.id]) {
       liveState.projects[project.id].info = getProjectInfo(db, project.id)
     }
@@ -297,7 +304,9 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
     const project = getProject(c.req.param('id'))
     if (!project) return c.json({ error: 'not found' }, 404)
     try {
-      const head = await github.getBranchHead(project.repo_full_name, project.branch)
+      const head = project.git_url
+        ? await lsRemoteHead(project.git_url, project.branch)
+        : await github.getBranchHead(project.repo_full_name, project.branch)
       if (head.sha) {
         db.query('UPDATE projects SET head_sha = ?, head_message = ?, head_pushed_at = ? WHERE id = ?')
           .run(head.sha, head.message, head.pushedAt, project.id)
@@ -317,6 +326,10 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
   app.post('/:id/clone-command', async c => {
     const project = getProject(c.req.param('id'))
     if (!project) return c.json({ error: 'not found' }, 404)
+    // A plain-git project needs no token — the URL is the command.
+    if (project.git_url) {
+      return c.json({ command: `git clone --branch ${project.branch} ${project.git_url}`, expiresAt: null })
+    }
     try {
       const { token, expiresAt } = await github.getInstallationTokenInfo()
       const command =

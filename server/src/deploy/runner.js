@@ -203,13 +203,17 @@ export class DeployRunner {
   async _deploy(project, deploymentId, log) {
     const dirs = projectDirs(this.config, project)
 
-    log.line('▸ fetching GitHub installation token')
-    const token = await this.github.getInstallationToken()
+    let token = null
+    if (!project.git_url) {
+      log.line('▸ fetching GitHub installation token')
+      token = await this.github.getInstallationToken()
+    }
 
-    log.line(`▸ syncing ${project.repo_full_name} @ ${project.branch}`)
+    log.line(`▸ syncing ${project.git_url || project.repo_full_name} @ ${project.branch}`)
     const { sha, message } = await syncRepo({
       dir: dirs.source,
       repoFullName: project.repo_full_name,
+      gitUrl: project.git_url || null,
       branch: project.branch,
       token,
       onLine: log.line,

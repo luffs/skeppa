@@ -8,7 +8,7 @@
           <StatusBadge :status="live?.pm2?.status" :href="appUrl" />
         </div>
         <div class="mono" style="color: var(--dim); margin-top: 6px">
-          {{ project.repo_full_name }} @ {{ project.branch }}
+          {{ project.repo_full_name || project.git_url }} @ {{ project.branch }}
         </div>
         <div class="mono" v-if="live?.pm2?.status === 'online'" style="font-size: 12px; color: var(--dim); margin-top: 6px">
           pid {{ live.pm2.pid ?? '—' }} · up {{ uptimeSince(live.pm2.uptime) }} ·
@@ -23,7 +23,7 @@
           title="Ask GitHub for the latest commit on the branch"
           @click="checkHead"
         >
-          {{ checking ? 'Checking…' : '↻ Check GitHub' }}
+          {{ checking ? 'Checking…' : project.git_url ? '↻ Check remote' : '↻ Check GitHub' }}
         </button>
         <button class="secondary" :disabled="pm2Busy" @click="pm2('start')">Start</button>
         <button class="secondary" :disabled="pm2Busy" @click="confirmPm2('stop')">Stop</button>
@@ -38,8 +38,9 @@
       <span class="chip amber">commits ahead</span>
       <span class="commit">
         <span class="sha">{{ live.headCommit.sha.slice(0, 7) }}</span>
-        {{ live.headCommit.message }} — pushed {{ timeAgo(live.headCommit.pushedAt) }}<template
-          v-if="!project.auto_deploy"> · auto deploy is off</template>
+        {{ live.headCommit.message }}<template v-if="live.headCommit.pushedAt"> — pushed
+        {{ timeAgo(live.headCommit.pushedAt) }}</template><template
+          v-if="!project.auto_deploy && !project.git_url"> · auto deploy is off</template>
       </span>
     </div>
     <p class="hint" v-else-if="checkResult" style="margin-top: 12px">{{ checkResult }}</p>
@@ -104,15 +105,24 @@
     <div v-else-if="tab === 'settings'" class="panel" style="max-width: 680px">
       <label>Name</label>
       <input v-model="edit.name" />
-      <label>Repository (owner/repo)</label>
-      <input v-model="edit.repo_full_name" class="code" />
+      <template v-if="project.git_url">
+        <label>Git URL</label>
+        <input v-model="edit.git_url" class="code" />
+        <p class="hint">External repository — no webhook; use the ↻ Check remote button up top to look for new commits.</p>
+      </template>
+      <template v-else>
+        <label>Repository (owner/repo)</label>
+        <input v-model="edit.repo_full_name" class="code" />
+      </template>
       <label>Branch</label>
       <input v-model="edit.branch" class="code" />
-      <label class="check-label">
-        <input type="checkbox" v-model="edit.auto_deploy" />
-        Auto deploy on push to {{ edit.branch || project.branch }}
-      </label>
-      <p class="hint">When off, pushes only show up as "commits ahead" — deploy manually.</p>
+      <template v-if="!project.git_url">
+        <label class="check-label">
+          <input type="checkbox" v-model="edit.auto_deploy" />
+          Auto deploy on push to {{ edit.branch || project.branch }}
+        </label>
+        <p class="hint">When off, pushes only show up as "commits ahead" — deploy manually.</p>
+      </template>
       <label>Deploy script</label>
       <textarea v-model="edit.deploy_script" class="code" rows="4"></textarea>
       <p class="hint">⚠ Runs as a shell script on the server — only trusted commands.</p>
@@ -151,7 +161,8 @@
 
       <div style="margin-top: 24px; border-top: 1px solid var(--line); padding-top: 16px">
         <h2 style="margin: 0 0 8px">Clone manually</h2>
-        <p class="hint">
+        <p class="hint" v-if="project.git_url">The repository is public — the command is just the URL.</p>
+        <p class="hint" v-else>
           Generates a git clone command with a short-lived GitHub App installation token, to run on
           another server. The token expires after about an hour, grants access to every repo the app
           is installed on, and ends up in the clone's <span class="mono">.git/config</span> — after
@@ -370,6 +381,7 @@ export default {
         subdomain: p.subdomain ?? '',
         port: p.port ?? '',
         memory_mb: p.memory_mb ?? '',
+        git_url: p.git_url ?? '',
         network_profile: p.network_profile ?? 'open',
         host_access: !!p.host_access,
         networks: p.networks ?? '',

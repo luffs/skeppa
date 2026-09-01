@@ -2,7 +2,7 @@
 
 A self-hosted deploy panel that turns a git push into a running app on your own Linux server. Deploys private GitHub repos via webhooks, manages encrypted ENV variables, and runs each app as a pm2 process or in its own rootless-podman container — with per-project network isolation for code you don't fully trust.
 
-- Add a project by picking a private GitHub repo + branch
+- Add a project by picking a private GitHub repo + branch — or any public git URL (GitLab, Codeberg, anywhere), updated with a manual check instead of a webhook
 - Automatic deploy on push (GitHub App webhook, HMAC-verified) or manually from the UI
 - Per-project deploy script and ENV vars (AES-256-GCM encrypted at rest)
 - Run each app under pm2 or in a rootless-podman container — with per-project network profiles, memory caps and crash-loop alerts

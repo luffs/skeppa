@@ -20,6 +20,12 @@ export const PM2_ACTIONS = ['start', 'stop', 'restart']
 export const IMAGE_RE = /^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,255}$/
 export const RUNTIMES = ['pm2', 'container']
 
+// Plain-git projects: a public https clone URL, any host. Userinfo is
+// rejected on purpose — credentials in a URL would sit plaintext in the
+// DB, unlike everything else secret the panel stores. The https:// anchor
+// also rules out git argument injection (nothing can start with a dash).
+export const GIT_URL_RE = /^https:\/\/[a-z0-9.-]+(:\d{1,5})?\/[A-Za-z0-9._~/-]{1,300}$/i
+
 // Network profiles for container projects: open = engine default (internet
 // as before), restricted = only its convoy networks (no internet, no LAN,
 // no host). Convoy names become engine network names, so they get the same
@@ -63,10 +69,17 @@ export function slugify(name) {
 }
 
 // Collects field errors for a project payload; returns {} when everything is valid.
-export function validateProject({ name, repo_full_name, branch, pm2_name, cwd, deploy_script, start_command, build_image, run_image, runtime, subdomain, port, memory_mb, network_profile, host_access, networks }) {
+export function validateProject({ name, repo_full_name, git_url, branch, pm2_name, cwd, deploy_script, start_command, build_image, run_image, runtime, subdomain, port, memory_mb, network_profile, host_access, networks }) {
   const errors = {}
   if (typeof name !== 'string' || !name.trim()) errors.name = 'name is required'
-  if (typeof repo_full_name !== 'string' || !REPO_RE.test(repo_full_name)) errors.repo_full_name = 'must be owner/repo'
+  // A project is GitHub-App-backed (owner/repo) or plain-git (https URL) —
+  // exactly one. '' plays the unset role for both.
+  if (git_url) {
+    if (!GIT_URL_RE.test(git_url)) errors.git_url = 'must be a public https:// clone URL, with no credentials in it'
+    if (repo_full_name) errors.repo_full_name = 'set either a GitHub repo or a git URL, not both'
+  } else if (typeof repo_full_name !== 'string' || !REPO_RE.test(repo_full_name)) {
+    errors.repo_full_name = 'must be owner/repo'
+  }
   if (!isValidBranch(branch)) errors.branch = 'invalid branch name'
   if (typeof pm2_name !== 'string' || !PM2_NAME_RE.test(pm2_name)) errors.pm2_name = 'letters, digits, dot, dash, underscore only'
   if (!isValidCwd(cwd)) errors.cwd = 'must be a safe relative path'

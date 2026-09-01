@@ -9,22 +9,39 @@
         {{ repoError }} — check the <router-link to="/settings">GitHub App settings</router-link>.
       </p>
 
-      <label>Repository</label>
-      <select v-model="form.repo_full_name" @change="onRepoPicked">
-        <option disabled value="">{{ reposLoading ? 'Loading repos…' : 'Pick a repository' }}</option>
-        <option v-for="r in repos" :key="r.full_name" :value="r.full_name">
-          {{ r.full_name }}{{ r.private ? ' 🔒' : '' }}
-        </option>
-      </select>
+      <label class="check-label">
+        <input type="checkbox" v-model="externalRepo" />
+        External repository — a public git URL outside the GitHub App
+      </label>
+
+      <template v-if="externalRepo">
+        <label>Git URL</label>
+        <input v-model="form.git_url" class="code" placeholder="https://github.com/user/repo.git" />
+        <p class="hint">
+          Any public https host (GitHub, GitLab, Codeberg…). No webhook reaches these —
+          check for updates from the project page instead.
+        </p>
+      </template>
+      <template v-else>
+        <label>Repository</label>
+        <select v-model="form.repo_full_name" @change="onRepoPicked">
+          <option disabled value="">{{ reposLoading ? 'Loading repos…' : 'Pick a repository' }}</option>
+          <option v-for="r in repos" :key="r.full_name" :value="r.full_name">
+            {{ r.full_name }}{{ r.private ? ' 🔒' : '' }}
+          </option>
+        </select>
+      </template>
 
       <label>Branch</label>
       <input v-model="form.branch" class="code" placeholder="main" />
 
-      <label class="check-label">
-        <input type="checkbox" v-model="form.auto_deploy" />
-        Auto deploy on push
-      </label>
-      <p class="hint">When off, pushes only show up as "commits ahead" — deploy manually.</p>
+      <template v-if="!externalRepo">
+        <label class="check-label">
+          <input type="checkbox" v-model="form.auto_deploy" />
+          Auto deploy on push
+        </label>
+        <p class="hint">When off, pushes only show up as "commits ahead" — deploy manually.</p>
+      </template>
 
       <label>Name</label>
       <input v-model="form.name" placeholder="My app" @input="syncPm2Name" />
@@ -57,7 +74,7 @@
 
       <p v-if="error" class="error">{{ error }}</p>
       <p style="margin: 22px 0 0">
-        <button :disabled="busy || !form.repo_full_name || !form.name" @click="submit">
+        <button :disabled="busy || !form.name || (externalRepo ? !form.git_url.trim() : !form.repo_full_name)" @click="submit">
           {{ busy ? 'Mooring…' : 'Moor project' }}
         </button>
       </p>
@@ -81,8 +98,10 @@ export default {
       error: '',
       busy: false,
       pm2NameTouched: false,
+      externalRepo: false,
       form: {
         repo_full_name: '',
+        git_url: '',
         branch: 'main',
         name: '',
         pm2_name: '',
@@ -143,6 +162,8 @@ export default {
           build_image: this.form.build_image || null,
           run_image: this.form.run_image || null,
           memory_mb: String(this.form.memory_mb ?? '').trim() || null,
+          repo_full_name: this.externalRepo ? null : this.form.repo_full_name,
+          git_url: this.externalRepo ? this.form.git_url.trim() : null,
           subdomain: this.form.subdomain || null,
           port: String(this.form.port ?? '').trim() || null,
         })

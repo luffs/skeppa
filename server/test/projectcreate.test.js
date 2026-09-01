@@ -222,3 +222,45 @@ test('host access with restricted or with networks is refused as untested', asyn
   expect(res.status).toBe(400)
   expect((await res.json()).fields.host_access).toBeDefined()
 })
+
+// --- plain-git projects -------------------------------------------------------
+
+test('a project can be created from a bare git URL, no GitHub App repo needed', async () => {
+  const { app } = setup()
+  const res = await app.request('/', {
+    method: 'POST',
+    body: JSON.stringify({
+      name: 'External', git_url: 'https://codeberg.org/luff/skeppa.git', auto_deploy: true,
+    }),
+  })
+  expect(res.status).toBe(201)
+  const body = await res.json()
+  expect(body.git_url).toBe('https://codeberg.org/luff/skeppa.git')
+  expect(body.repo_full_name).toBe('')
+  // no webhook will ever fire — the flag must not pretend otherwise
+  expect(body.auto_deploy).toBe(0)
+})
+
+test('a git URL and a GitHub repo together are refused', async () => {
+  const { app } = setup()
+  const res = await app.request('/', {
+    method: 'POST',
+    body: JSON.stringify({
+      name: 'Both', repo_full_name: 'o/r', git_url: 'https://example.com/r.git',
+    }),
+  })
+  expect(res.status).toBe(400)
+  expect((await res.json()).fields.repo_full_name).toContain('not both')
+})
+
+test('credentials embedded in a git URL are refused', async () => {
+  const { app } = setup()
+  const res = await app.request('/', {
+    method: 'POST',
+    body: JSON.stringify({
+      name: 'Leaky', git_url: 'https://token@example.com/r.git',
+    }),
+  })
+  expect(res.status).toBe(400)
+  expect((await res.json()).fields.git_url).toContain('no credentials')
+})
