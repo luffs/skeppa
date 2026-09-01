@@ -93,7 +93,8 @@ first-run checklist waiting on the dashboard:
 1. **Create GitHub App** — one button under Settings; GitHub shows the app pre-filled and the
    credentials land in Skeppa automatically (details: [GitHub App setup](#github-app-setup))
 2. **Install the app** on the repos you want to deploy, when GitHub offers it
-3. **Moor a project** — pick repo + branch, give it a deploy script (e.g.
+3. **Moor a project** — pick repo + branch (or check "External repository" and paste any
+   public git URL), give it a deploy script (e.g.
    `bun install && bun run build`) and a start command (e.g. `bun run start`; leave empty for
    build-only projects), and add ENV vars under the project's Environment tab
 4. **Push to the branch** — the deploy starts by itself; watch the live log in the project view
@@ -281,6 +282,12 @@ file up separately (see Security notes).
 Add the panel's own repo as a project with pm2 name `skeppa` (must match `SKEPPA_PM2_NAME`,
 default `skeppa`). The panel detects the self-deploy and runs the pm2 reload detached after
 the deploy finalizes, so it doesn't kill its own in-flight deploy process.
+
+On an instance whose GitHub App cannot see the Skeppa repo (say, a work install dogfooding
+the public release), add it by its public git URL instead — updating is then two clicks:
+**↻ Check remote**, then deploy. Start commands are resolved to absolute paths when the pm2
+config is written, so a plain `bun server/src/index.js` works even though the pm2 daemon's
+boot environment rarely has `~/.bun/bin` on its PATH.
 
 No project ENV is needed and the `.env`-file toggle stays off: whichever checkout the panel
 runs from — the original install or `APPS_DIR/skeppa/source` — it reads the same

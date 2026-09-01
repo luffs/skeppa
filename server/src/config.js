@@ -33,10 +33,26 @@ export function parseKeyValues(text) {
   return values
 }
 
-function readConfigFile(path) {
+// A missing config file is normal in dev (a repo .env carries everything),
+// so the default path stays quiet. But a path someone set explicitly that
+// does not exist is a typo or a vanished file — booting silently on blank
+// defaults there is how a panel ends up running against the wrong DATA_DIR
+// without anyone noticing. Same for a file that exists but cannot be read.
+const warnedConfigPaths = new Set()
+
+function readConfigFile(path, explicit) {
   try {
     return parseKeyValues(readFileSync(path, 'utf8'))
-  } catch {
+  } catch (err) {
+    if (!warnedConfigPaths.has(path)) {
+      if (err.code !== 'ENOENT') {
+        warnedConfigPaths.add(path)
+        console.warn(`warning: config file ${path} exists but cannot be read (${err.code}) — booting without it`)
+      } else if (explicit) {
+        warnedConfigPaths.add(path)
+        console.warn(`warning: SKEPPA_CONFIG points at ${path}, which does not exist — booting on defaults and the process env`)
+      }
+    }
     return {} // no config file — the process env / a dev .env carries everything
   }
 }
@@ -85,7 +101,7 @@ const SANDBOXES = ['host', 'podman']
 
 export function loadConfig({ requireMasterKey = true } = {}) {
   const configPath = configFilePath()
-  const env = { ...readConfigFile(configPath), ...process.env }
+  const env = { ...readConfigFile(configPath, Boolean(process.env.SKEPPA_CONFIG)), ...process.env }
   for (const key of PATH_KEYS) {
     if (env[key]) env[key] = expandHome(env[key])
   }

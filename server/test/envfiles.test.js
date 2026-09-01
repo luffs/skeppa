@@ -75,7 +75,9 @@ test('writeEcosystem contains no env values', () => {
   const generated = require(path)
   expect(generated.apps[0]).toMatchObject({
     name: 'app',
-    script: 'bun',
+    // resolved to an absolute path so the pm2 daemon can spawn it even when
+    // its boot PATH lacks ~/.bun/bin
+    script: Bun.which('bun'),
     args: 'run start',
   })
   expect(generated.apps[0].env).toBeUndefined()
@@ -113,4 +115,11 @@ test('runtimeEnv adds the routed port and a production NODE_ENV default', () => 
 test('decryptedEnv round-trips through the DB', () => {
   const { db, config, project } = setup()
   expect(decryptedEnv(db, config, project.id)).toEqual({ TOKEN: 'sekret' })
+})
+
+test('a start command the panel cannot resolve passes through untouched', () => {
+  const { config, project } = setup({ start_command: './run.sh --port 1' })
+  const generated = require(writeEcosystem(config, project))
+  expect(generated.apps[0].script).toBe('./run.sh')
+  expect(generated.apps[0].args).toBe('--port 1')
 })

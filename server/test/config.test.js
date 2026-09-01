@@ -60,6 +60,19 @@ test('a missing MASTER_KEY_FILE is tolerated when the key is not required (seed 
   })
 })
 
+test('an explicitly configured but missing config file warns instead of silently blanking', () => {
+  const warnings = []
+  const original = console.warn
+  console.warn = m => warnings.push(String(m))
+  try {
+    const ghost = join(tmpdir(), `skeppa-cfg-ghost-${Date.now()}`, 'config')
+    withEnv({ SKEPPA_CONFIG: ghost, MASTER_KEY: KEY }, () => loadConfig())
+    expect(warnings.some(w => w.includes(ghost) && w.includes('does not exist'))).toBe(true)
+  } finally {
+    console.warn = original
+  }
+})
+
 test('the panel binds loopback unless HOST widens it', () => {
   withEnv({ MASTER_KEY: KEY }, () => {
     expect(loadConfig().host).toBe('127.0.0.1')

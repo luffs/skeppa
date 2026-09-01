@@ -72,10 +72,16 @@ export function writeEcosystem(config, project) {
     return null
   }
   const [cmd, ...args] = project.start_command.trim().split(/\s+/)
+  // interpreter 'none' means the pm2 DAEMON execs the first word, resolved
+  // against the daemon's own environment — the boot unit's PATH, which often
+  // lacks ~/.bun/bin (and no shell runs, so ~ never expands). The panel's own
+  // PATH does have its tools, so resolve here and bake the absolute path in.
+  // A word that is not on the panel's PATH (./run.sh, a container-only tool)
+  // passes through untouched.
   const app = {
     name: project.pm2_name,
     cwd: dirs.work,
-    script: cmd,
+    script: Bun.which(cmd) ?? cmd,
     args: args.join(' '),
     interpreter: 'none',
     autorestart: true,
