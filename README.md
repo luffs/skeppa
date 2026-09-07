@@ -315,6 +315,7 @@ bun install
 bun run dev:server        # Hono on :3000
 bun run dev:web           # Vite on :5173, proxies /api and /ws to VITE_SKEPPA_API (web/.env)
 bun test                  # unit tests
+bun run test:web          # frontend smoke tests: every view mounted for both roles
 ```
 
 A `.env` in the repo root is the dev-time config (Bun loads it into the process env, which

@@ -1,0 +1,4 @@
+[test]
+# Bun runs the server suite only; web/test is Vitest (needs the Vue SFC
+# compiler) and is run with `bun run test:web`.
+root = "server"

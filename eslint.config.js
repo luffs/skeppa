@@ -78,6 +78,16 @@ export default [
     },
   },
 
+  // Frontend smoke tests: Vitest under happy-dom — browser globals for the
+  // mounted views, Node globals for the runner itself.
+  {
+    files: ['web/test/**/*.js'],
+    languageOptions: {
+      ecmaVersion: 'latest',
+      sourceType: 'module',
+      globals: { ...globals.browser, ...globals.node },
+    },
+  },
   // Tooling configs run under Bun/Node, not the browser.
   {
     files: ['*.js', 'web/*.js'],

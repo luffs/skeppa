@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vitest run"
   },
   "dependencies": {
     "lazy-watch": "^5.0.0",
@@ -14,6 +15,9 @@
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^6.0.8",
-    "vite": "^8.2.1"
+    "@vue/test-utils": "^2.5.0",
+    "happy-dom": "^20.14.0",
+    "vite": "^8.2.1",
+    "vitest": "^5.0.0"
   }
 }

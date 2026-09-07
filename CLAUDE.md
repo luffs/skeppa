@@ -22,7 +22,8 @@ Deploys private GitHub repos onto this server via webhooks, manages encrypted EN
 
 - `bun install` — install everything (workspaces)
 - `bun run dev:server` / `bun run dev:web` — dev servers (Vite proxies `/api` and `/ws` to :3000)
-- `bun test` — server unit tests (in `server/test/`)
+- `bun test` — server unit tests (in `server/test/`; bunfig.toml scopes the Bun runner there, so it never picks up the Vitest files)
+- `bun run test:web` — frontend smoke tests (Vitest + @vue/test-utils under happy-dom, in `web/test/`): every view mounted for both roles against a seeded store, failing on any Vue render warning — the bug class where a template references something the instance never exposed
 - `bun run build` — build the frontend to `web/dist` (served by Hono in prod)
 - `bun scripts/install.js` — interactive server install (key file, dirs, .env, admin user, pm2 + safe `pm2 save`)
 - `bun scripts/seed.js <user> <password>` — create/reset the admin user

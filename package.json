@@ -15,6 +15,7 @@
     "build": "bun run --cwd web build",
     "start": "bun server/src/index.js",
     "test": "bun test server",
+    "test:web": "bun run --cwd web test",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "seed": "bun scripts/seed.js"
