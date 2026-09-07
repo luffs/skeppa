@@ -9,21 +9,27 @@ export class Hub {
     this.liveState = liveState
     this.clients = new Set()
     this.logSubs = new Map() // deploymentId -> Set<socket>
+    this.users = new Map() // socket -> { id, role } from the upgrade session
     this.onClientsChange = onClientsChange || (() => {})
     this.getLogBacklog = () => null // wired to DeployRunner.getActiveLog in index.js
+    // Wired in index.js: deploy logs echo env values, so a tenant socket
+    // may only follow their own deployments. Bare hubs (tests) trust.
+    this.canReadDeployment = () => true
     if (liveState) {
       LazyWatch.on(liveState, diff => this.broadcast({ type: 'state', diff }))
     }
   }
 
-  add(sock) {
+  add(sock, user = null) {
     this.clients.add(sock)
+    if (user) this.users.set(sock, user)
     this._send(sock, { type: 'state:full', state: LazyWatch.snapshot(this.liveState) })
     this.onClientsChange(this.clients.size)
   }
 
   remove(sock) {
     this.clients.delete(sock)
+    this.users.delete(sock)
     for (const [id, subs] of this.logSubs) {
       subs.delete(sock)
       if (subs.size === 0) this.logSubs.delete(id)
@@ -42,6 +48,10 @@ export class Hub {
     }
     const { type, deploymentId } = msg ?? {}
     if (type === 'logs:subscribe' && Number.isInteger(deploymentId)) {
+      if (!this.canReadDeployment(this.users.get(sock) ?? null, deploymentId)) {
+        console.warn(`ws: denied logs:subscribe to deployment ${deploymentId}`)
+        return
+      }
       let subs = this.logSubs.get(deploymentId)
       if (!subs) this.logSubs.set(deploymentId, (subs = new Set()))
       subs.add(sock)

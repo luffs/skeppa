@@ -51,12 +51,16 @@ export function createApp({ db, config, liveState, hub, runner, github, poller, 
         console.log(`[ws] unauthorized connection attempt (cookie: ${cookie ? 'present' : 'missing'})`)
         return c.text('unauthorized', 401)
       }
+      // The socket keeps the identity it connected with (a mid-connection
+      // role change applies on reconnect) — the hub uses it to gate what
+      // the live stream may carry to this client.
+      c.set('wsUser', db.query('SELECT id, role FROM users WHERE id = ?').get(session.user_id) ?? null)
       await next()
     },
-    upgradeWebSocket(() => ({
+    upgradeWebSocket(c => ({
       onOpen: (_evt, ws) => {
         console.log('[ws] connection opened')
-        hub.add(ws.raw)
+        hub.add(ws.raw, c.get('wsUser'))
       },
       onMessage: (evt, ws) => hub.handleMessage(ws.raw, evt.data),
       onClose: (_evt, ws) => {

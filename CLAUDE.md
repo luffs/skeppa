@@ -43,5 +43,5 @@ Deploys private GitHub repos onto this server via webhooks, manages encrypted EN
 4. Session cookies: `httpOnly`, `sameSite=lax`, `secure` in prod. WS upgrades validate the same session before upgrading.
 5. The panel runs as its own non-root user; pm2 under the same user.
 6. Any input that reaches shell commands or paths and is *not* the intentional deploy script (slugs, branch names, pm2 names, cwd, env keys) is whitelist-validated in `lib/validate.js`. Processes are spawned with args arrays — no shell interpolation of user data. The deploy script itself intentionally runs as shell; the UI says so.
-7. WS client messages are schema-validated in `live/hub.js`; unknown types are ignored and logged.
+7. WS client messages are schema-validated in `live/hub.js`; unknown types are ignored and logged. Sockets carry the user from the upgrade session, and `logs:subscribe` is owner-gated (deploy logs echo ENV values) via `hub.canReadDeployment`, wired in index.js.
 8. Anything the panel spawns (deploy scripts, pm2, git) gets a minimal sanitized environment — the panel's own `process.env` (MASTER_KEY!) must never be inherited by child processes; pm2 injects its CLI env into the apps it starts, so this applies doubly there.

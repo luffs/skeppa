@@ -53,6 +53,16 @@ const runner = new DeployRunner({
   notify: text => sendNotification(db, text),
 })
 hub.getLogBacklog = id => runner.getActiveLog(id)
+// Deploy logs echo env values: tenant sockets follow only their own
+// deployments. Admin sockets (and sockets without a user, which the
+// upgrade never produces) pass.
+hub.canReadDeployment = (user, deploymentId) => {
+  if (!user || user.role === 'admin') return true
+  const row = db.query(
+    'SELECT p.owner_id FROM deployments d JOIN projects p ON p.id = d.project_id WHERE d.id = ?'
+  ).get(deploymentId)
+  return row?.owner_id === user.id
+}
 
 const proxy = createProxy({ db, config })
 // Bring the harbor gate back in sync after a restart (config may have changed
