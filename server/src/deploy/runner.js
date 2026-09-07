@@ -206,7 +206,7 @@ export class DeployRunner {
     let token = null
     if (!project.git_url) {
       log.line('▸ fetching GitHub installation token')
-      token = await this.github.getInstallationToken()
+      token = await this.github.getInstallationToken(project.repo_full_name)
     }
 
     log.line(`▸ syncing ${project.git_url || project.repo_full_name} @ ${project.branch}`)

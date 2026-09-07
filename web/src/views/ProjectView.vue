@@ -164,8 +164,8 @@
         <p class="hint" v-if="project.git_url">The repository is public — the command is just the URL.</p>
         <p class="hint" v-else>
           Generates a git clone command with a short-lived GitHub App installation token, to run on
-          another server. The token expires after about an hour, grants access to every repo the app
-          is installed on, and ends up in the clone's <span class="mono">.git/config</span> — after
+          another server. The token expires after about an hour, grants access to every repo of the
+          installation covering this one, and ends up in the clone's <span class="mono">.git/config</span> — after
           cloning, reset the remote with
           <span class="mono">git remote set-url origin https://github.com/{{ project.repo_full_name }}.git</span>.
         </p>

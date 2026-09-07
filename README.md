@@ -136,6 +136,11 @@ under an organization, put the org name in the field next to the button.
 Do this from the panel's real HTTPS address — the webhook URL is derived from the address in
 your browser, so a panel browsed via `localhost` would register an unreachable webhook.
 
+The app supports more than one installation: make it public in its GitHub settings and a
+friend can install it on their own repo — that repo then shows up in your repo picker,
+deploys on their pushes like any other, and is cloned with tokens scoped to their
+installation. They are granting your panel read access to that repo; nothing else of theirs.
+
 <details>
 <summary>Manual setup (what the button automates)</summary>
 

@@ -331,7 +331,7 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
       return c.json({ command: `git clone --branch ${project.branch} ${project.git_url}`, expiresAt: null })
     }
     try {
-      const { token, expiresAt } = await github.getInstallationTokenInfo()
+      const { token, expiresAt } = await github.getInstallationTokenInfo(project.repo_full_name)
       const command =
         `git clone --branch ${project.branch} ` +
         `https://x-access-token:${token}@github.com/${project.repo_full_name}.git`

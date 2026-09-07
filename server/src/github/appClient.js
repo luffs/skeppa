@@ -16,14 +16,19 @@ export function makeAppJwt(appId, privateKeyPem) {
   return `${data}.${b64url(signature)}`
 }
 
-// GitHub App client: signs an app JWT, resolves the (single) installation and
-// caches installation tokens until shortly before expiry.
+// GitHub App client: signs an app JWT and caches installation tokens until
+// shortly before expiry. The app can be installed by more than one account
+// (make it public in its GitHub settings and a friend can install it on
+// their repo), so tokens are minted per installation and a repo resolves
+// to the installation that covers it.
 export class GitHubApp {
-  constructor({ db, config }) {
+  constructor({ db, config, fetchFn = fetch }) {
     this.db = db
     this.config = config
-    this._tokenCache = null // { token, expiresAt (ms) }
-    this._installationId = null
+    this._fetchFn = fetchFn
+    this._tokens = new Map() // installationId -> { token, expiresAt (ms) }
+    this._repoInstallations = new Map() // repo_full_name -> installationId
+    this._installationId = null // first installation - the no-repo fallback
   }
 
   credentials() {
@@ -41,7 +46,8 @@ export class GitHubApp {
 
   // Call after settings change so new credentials take effect immediately.
   reset() {
-    this._tokenCache = null
+    this._tokens.clear()
+    this._repoInstallations.clear()
     this._installationId = null
   }
 
@@ -66,7 +72,7 @@ export class GitHubApp {
   }
 
   async _fetch(path, { token, jwt, method = 'GET' } = {}) {
-    const res = await fetch(`${API}${path}`, {
+    const res = await this._fetchFn(`${API}${path}`, {
       method,
       headers: {
         accept: 'application/vnd.github+json',
@@ -101,18 +107,46 @@ export class GitHubApp {
     return this._installationId
   }
 
-  async getInstallationToken() {
-    if (this._tokenCache && this._tokenCache.expiresAt - Date.now() > 60_000) {
-      return this._tokenCache.token
-    }
+  // Which installation covers a repo. A friend who installed the app on
+  // their repo is a second installation; installations[0] only ever covers
+  // the panel owner, so anything repo-scoped must resolve through here.
+  async getInstallationIdForRepo(repoFullName) {
+    const cached = this._repoInstallations.get(repoFullName)
+    if (cached) return cached
     const jwt = await this._appJwt()
-    const installationId = await this.getInstallationId()
+    let data
+    try {
+      data = await this._fetch(`/repos/${repoFullName}/installation`, { jwt })
+    } catch (err) {
+      if (String(err.message).includes('(404)')) {
+        throw new Error(`the GitHub App is not installed on ${repoFullName} — its owner has to install it`, { cause: err })
+      }
+      throw err
+    }
+    this._repoInstallations.set(repoFullName, data.id)
+    return data.id
+  }
+
+  async _tokenForInstallation(installationId) {
+    const cached = this._tokens.get(installationId)
+    if (cached && cached.expiresAt - Date.now() > 60_000) return cached.token
+    const jwt = await this._appJwt()
     const data = await this._fetch(`/app/installations/${installationId}/access_tokens`, {
       jwt,
       method: 'POST',
     })
-    this._tokenCache = { token: data.token, expiresAt: new Date(data.expires_at).getTime() }
-    return data.token
+    const entry = { token: data.token, expiresAt: new Date(data.expires_at).getTime() }
+    this._tokens.set(installationId, entry)
+    return entry.token
+  }
+
+  // With a repo, the token comes from the installation covering that repo;
+  // without one, from the first installation (panel-owner concerns).
+  async getInstallationToken(repoFullName = null) {
+    const id = repoFullName
+      ? await this.getInstallationIdForRepo(repoFullName)
+      : await this.getInstallationId()
+    return this._tokenForInstallation(id)
   }
 
   // App metadata (name, slug, html_url) — the slug builds the install link.
@@ -151,13 +185,16 @@ export class GitHubApp {
 
   // Token plus its expiry, for callers that show the token to the user
   // (e.g. the copy-paste clone command) rather than using it internally.
-  async getInstallationTokenInfo() {
-    const token = await this.getInstallationToken()
-    return { token, expiresAt: this._tokenCache?.expiresAt ?? null }
+  async getInstallationTokenInfo(repoFullName = null) {
+    const id = repoFullName
+      ? await this.getInstallationIdForRepo(repoFullName)
+      : await this.getInstallationId()
+    const token = await this._tokenForInstallation(id)
+    return { token, expiresAt: this._tokens.get(id)?.expiresAt ?? null }
   }
 
   async getBranchHead(repoFullName, branch) {
-    const token = await this.getInstallationToken()
+    const token = await this.getInstallationToken(repoFullName)
     const data = await this._fetch(`/repos/${repoFullName}/branches/${encodeURIComponent(branch)}`, { token })
     return {
       sha: data.commit?.sha ?? null,
@@ -166,13 +203,23 @@ export class GitHubApp {
     }
   }
 
+  // Every repo across every installation — the panel owner sees a friend-
+  // installed repo in the picker exactly like their own.
   async listRepos() {
-    const token = await this.getInstallationToken()
+    const installations = await this.listInstallations()
+    if (!installations.length) {
+      throw new Error('The GitHub App has no installations — install it on your account/org first')
+    }
     const repos = []
-    for (let page = 1; page <= 10; page++) {
-      const data = await this._fetch(`/installation/repositories?per_page=100&page=${page}`, { token })
-      repos.push(...data.repositories)
-      if (repos.length >= data.total_count || data.repositories.length === 0) break
+    for (const installation of installations) {
+      const token = await this._tokenForInstallation(installation.id)
+      const mine = []
+      for (let page = 1; page <= 10; page++) {
+        const data = await this._fetch(`/installation/repositories?per_page=100&page=${page}`, { token })
+        mine.push(...data.repositories)
+        if (mine.length >= data.total_count || data.repositories.length === 0) break
+      }
+      repos.push(...mine)
     }
     return repos.map(r => ({
       full_name: r.full_name,
