@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { migrate } from '../src/db/migrate.js'
 import { encrypt } from '../src/lib/crypto.js'
-import { projectDirs, syncEnvFiles, writeEcosystem, decryptedEnv, runtimeEnv } from '../src/deploy/envfiles.js'
+import { projectDirs, syncEnvFiles, writeEcosystem, decryptedEnv, runtimeEnv, prepareBuildEnv } from '../src/deploy/envfiles.js'
 
 const migrationsDir = fileURLToPath(new URL('../src/db/migrations', import.meta.url))
 const MASTER_KEY = 'c'.repeat(64)
@@ -122,4 +122,17 @@ test('a start command the panel cannot resolve passes through untouched', () => 
   const generated = require(writeEcosystem(config, project))
   expect(generated.apps[0].script).toBe('./run.sh')
   expect(generated.apps[0].args).toBe('--port 1')
+})
+
+test('prepareBuildEnv withholds the vars and scrubs the stale work .env when build access is off', () => {
+  const { config, project } = setup({ cwd: 'zerver' })
+  const dirs = projectDirs(config, project)
+  mkdirSync(dirs.work, { recursive: true })
+  writeFileSync(join(dirs.work, '.env'), 'TOKEN=stale\n')
+
+  expect(prepareBuildEnv(config, { ...project, build_env: 1 }, { TOKEN: 'x' })).toEqual({ TOKEN: 'x' })
+  expect(existsSync(join(dirs.work, '.env'))).toBe(true) // on: the file the build may read stays
+
+  expect(prepareBuildEnv(config, { ...project, build_env: 0 }, { TOKEN: 'x' })).toEqual({})
+  expect(existsSync(join(dirs.work, '.env'))).toBe(false) // off: nothing left for a postinstall to read
 })

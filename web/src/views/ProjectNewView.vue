@@ -52,6 +52,15 @@
         ⚠ This runs as a shell script on the server with the project's ENV — that is the point of a
         deploy panel, so only put trusted commands here.
       </p>
+      <label class="check-label">
+        <input type="checkbox" v-model="form.build_env" />
+        Inject ENV into the deploy script
+      </label>
+      <p class="hint">
+        Off, the build gets only a minimal environment and no <span class="mono">.env</span> —
+        the setting for repos whose dependencies you don't fully trust. The running app gets
+        its ENV either way.
+      </p>
 
       <label>Start command <span class="soft">(optional — empty for build-only)</span></label>
       <input v-model="form.start_command" class="code" placeholder="bun run start" />
@@ -114,6 +123,8 @@ export default {
         name: '',
         pm2_name: '',
         deploy_script: '',
+        // tenants' dependencies are the untrusted ones — their builds start blind
+        build_env: store.user?.role !== 'tenant',
         start_command: '',
         cwd: '',
         auto_deploy: true,

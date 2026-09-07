@@ -318,3 +318,21 @@ test('the live stream is scoped per socket: tenants get their projects and the p
   LazyWatch.flush(liveState); await tick()
   expect(bobSock.sent.filter(m => m.type === 'state').at(-1).diff).toEqual({ projects: { 2: null } })
 })
+
+test('build-time ENV defaults off for tenants, on for admins, and is editable', async () => {
+  const { db, liveState, config, admin, bob } = setup()
+  const routes = projectRoutes({ db, config, liveState })
+  const make = (user, name, extra = {}) => asUser(routes, user).request('/', {
+    method: 'POST',
+    body: JSON.stringify({ name, git_url: 'https://example.com/x.git', ...extra }),
+  })
+  expect((await (await make(bob, 'Bob Build')).json()).build_env).toBe(0)
+  expect((await (await make(admin, 'Admin Build')).json()).build_env).toBe(1)
+  expect((await (await make(bob, 'Bob Trusts', { build_env: true })).json()).build_env).toBe(1)
+
+  const created = await (await make(bob, 'Bob Later')).json()
+  const flipped = await asUser(routes, bob).request(`/${created.id}`, {
+    method: 'PATCH', body: JSON.stringify({ build_env: true }),
+  })
+  expect((await flipped.json()).build_env).toBe(1)
+})

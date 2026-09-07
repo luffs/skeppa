@@ -15,7 +15,7 @@ import { proxySettings } from '../proxy/index.js'
 
 const PROJECT_COLUMNS =
   'id, slug, name, repo_full_name, git_url, branch, deploy_script, build_image, run_image, runtime, pm2_name, start_command, cwd, ' +
-  'auto_deploy, write_env_file, subdomain, port, memory_mb, network_profile, host_access, networks, head_sha, head_message, head_pushed_at, created_at'
+  'auto_deploy, write_env_file, build_env, subdomain, port, memory_mb, network_profile, host_access, networks, head_sha, head_message, head_pushed_at, created_at'
 
 const DEFAULT_LOG_LINES = 200
 const MAX_LOG_LINES = 2000
@@ -159,6 +159,9 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
       else project.runtime = 'container'
       if (project.host_access) errors.host_access = 'host access is admin-only'
     }
+    // Build-time ENV: on by default for the admin's own repos, off for
+    // tenants, whose dependencies are the untrusted ones.
+    project.build_env = 'build_env' in body ? (body.build_env ? 1 : 0) : (tenant ? 0 : 1)
     if (project.runtime === 'container' && project.pm2_name === config.selfPm2Name) {
       errors.runtime = 'the panel itself must run under pm2'
     }
@@ -185,11 +188,11 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
     project.pm2_name = uniqueName(project.pm2_name, n => db.query('SELECT 1 FROM projects WHERE pm2_name = ?').get(n))
 
     const { lastInsertRowid } = db.query(
-      `INSERT INTO projects (slug, name, owner_id, repo_full_name, git_url, branch, deploy_script, build_image, run_image, runtime, pm2_name, start_command, cwd, auto_deploy, write_env_file, subdomain, port, memory_mb, network_profile, host_access, networks)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO projects (slug, name, owner_id, repo_full_name, git_url, branch, deploy_script, build_image, run_image, runtime, pm2_name, start_command, cwd, auto_deploy, write_env_file, build_env, subdomain, port, memory_mb, network_profile, host_access, networks)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(slug, project.name, project.owner_id, project.repo_full_name, project.git_url, project.branch, project.deploy_script,
           project.build_image, project.run_image, project.runtime, project.pm2_name, project.start_command,
-          project.cwd, project.auto_deploy, project.write_env_file, project.subdomain, project.port,
+          project.cwd, project.auto_deploy, project.write_env_file, project.build_env, project.subdomain, project.port,
           project.memory_mb, project.network_profile, project.host_access, project.networks)
     const id = Number(lastInsertRowid)
     if (project.port == null) {
@@ -227,6 +230,7 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
       cwd: 'cwd' in body ? (body.cwd?.trim() || null) : project.cwd,
       auto_deploy: 'auto_deploy' in body ? (body.auto_deploy ? 1 : 0) : project.auto_deploy,
       write_env_file: 'write_env_file' in body ? (body.write_env_file ? 1 : 0) : project.write_env_file,
+      build_env: 'build_env' in body ? (body.build_env ? 1 : 0) : project.build_env,
       subdomain: 'subdomain' in body ? normalizeSubdomain(body.subdomain) : project.subdomain,
       port: 'port' in body ? normalizeNumber(body.port) : project.port,
       memory_mb: 'memory_mb' in body ? normalizeNumber(body.memory_mb) : project.memory_mb,
@@ -256,11 +260,11 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
 
     db.query(
       `UPDATE projects SET name = ?, repo_full_name = ?, branch = ?, deploy_script = ?, build_image = ?, run_image = ?, runtime = ?,
-         start_command = ?, pm2_name = ?, cwd = ?, auto_deploy = ?, write_env_file = ?, subdomain = ?, port = ?, memory_mb = ?,
+         start_command = ?, pm2_name = ?, cwd = ?, auto_deploy = ?, write_env_file = ?, build_env = ?, subdomain = ?, port = ?, memory_mb = ?,
          network_profile = ?, host_access = ?, networks = ?, git_url = ? WHERE id = ?`
     ).run(merged.name, merged.repo_full_name, merged.branch, merged.deploy_script, merged.build_image,
           merged.run_image, merged.runtime, merged.start_command, merged.pm2_name, merged.cwd, merged.auto_deploy,
-          merged.write_env_file, merged.subdomain, merged.port, merged.memory_mb,
+          merged.write_env_file, merged.build_env, merged.subdomain, merged.port, merged.memory_mb,
           merged.network_profile, merged.host_access, merged.networks, merged.git_url, project.id)
     if (liveState.projects[project.id]) {
       liveState.projects[project.id].info = getProjectInfo(db, project.id)

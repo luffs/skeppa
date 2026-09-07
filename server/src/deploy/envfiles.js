@@ -57,6 +57,17 @@ export function syncEnvFiles(db, config, project) {
   return envVars
 }
 
+// What the deploy script gets. With build access off, the vars stay out of
+// the script's environment AND out of the working tree: the .env copy left
+// by the previous deploy is removed here, and syncEnvFiles runs after the
+// script instead of before — so a dependency's postinstall has nothing to
+// read. The running app is unaffected either way.
+export function prepareBuildEnv(config, project, envVars) {
+  if (project.build_env) return envVars
+  rmSync(join(projectDirs(config, project).work, '.env'), { force: true })
+  return {}
+}
+
 // Generates the pm2 ecosystem file for a project. Deliberately carries no env
 // block — decrypted ENV is injected via the pm2 CLI's environment at
 // start/reload time, so secrets never rest in this file. Returns its path, or

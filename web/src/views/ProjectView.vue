@@ -143,11 +143,21 @@
       <label>Working subdirectory</label>
       <input v-model="edit.cwd" class="code" />
       <label class="check-label">
+        <input type="checkbox" v-model="edit.build_env" />
+        Inject ENV into the deploy script
+      </label>
+      <p class="hint">
+        On, the build sees every ENV var — needed for generated clients, <span class="mono">VITE_*</span>
+        config or private registries. Off, it gets only a minimal environment and no
+        <span class="mono">.env</span> in the working tree, so a poisoned dependency's postinstall has
+        nothing to take. The running app gets its ENV either way.
+      </p>
+      <label class="check-label">
         <input type="checkbox" v-model="edit.write_env_file" />
         Write a plaintext <span class="mono">.env</span> file into the app
       </label>
       <p class="hint">
-        ENV vars are always injected into the deploy script and the pm2 process — decrypted only in
+        ENV vars are injected into the running process (and, with the toggle above on, the deploy script) — decrypted only in
         memory. Turn this on only if something reads <span class="mono">.env</span> from disk itself
         (e.g. Vite at build time); it writes <span class="mono">shared/.env</span> plus a copy in
         the working directory. Turning it off deletes those files.
@@ -389,6 +399,7 @@ export default {
         runtime: p.runtime ?? 'pm2',
         auto_deploy: !!p.auto_deploy,
         write_env_file: !!p.write_env_file,
+        build_env: !!p.build_env,
         subdomain: p.subdomain ?? '',
         port: p.port ?? '',
         memory_mb: p.memory_mb ?? '',

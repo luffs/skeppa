@@ -2,7 +2,7 @@ import { rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { resolveShell, scriptEnvBase } from '../lib/shell.js'
 import { projectDefaults, getProjectInfo, getRecentDeployments } from '../live/state.js'
-import { projectDirs, syncEnvFiles, writeEcosystem, runtimeEnv } from './envfiles.js'
+import { projectDirs, syncEnvFiles, writeEcosystem, runtimeEnv, decryptedEnv, prepareBuildEnv } from './envfiles.js'
 import { syncRepo } from './git.js'
 import { runScriptInContainer } from './sandbox.js'
 import { startOrReload, startOrReloadDetached, deleteProcess } from './pm2.js'
@@ -237,19 +237,30 @@ export class DeployRunner {
     // The sha is what the log entry shows for a running deploy.
     this._refreshRecent(project.id)
 
-    const envVars = syncEnvFiles(this.db, this.config, project)
-    log.line(project.write_env_file
-      ? `▸ wrote .env (${Object.keys(envVars).length} vars)`
-      : `▸ loaded ${Object.keys(envVars).length} ENV vars (injected in memory, no .env written)`)
+    // With build access off, ENV reaches only the runtime: nothing in the
+    // script's environment, no .env in the working tree until it is done.
+    const buildAccess = Boolean(project.build_env)
+    const envVars = buildAccess
+      ? syncEnvFiles(this.db, this.config, project)
+      : decryptedEnv(this.db, this.config, project.id)
+    if (buildAccess) {
+      log.line(project.write_env_file
+        ? `▸ wrote .env (${Object.keys(envVars).length} vars)`
+        : `▸ loaded ${Object.keys(envVars).length} ENV vars (injected in memory, no .env written)`)
+    } else {
+      log.line(`▸ ${Object.keys(envVars).length} ENV vars withheld from the deploy script (build access is off)`)
+    }
 
     if (project.deploy_script?.trim()) {
       log.line(this.config.sandbox === 'podman'
         ? '▸ running deploy script (podman sandbox)'
         : '▸ running deploy script')
-      await this._runScript(project, dirs, envVars, log)
+      await this._runScript(project, dirs, prepareBuildEnv(this.config, project, envVars), log)
     } else {
       log.line('▸ no deploy script configured, skipping')
     }
+    // .env (if that toggle is on) is written now, for the runtime only.
+    if (!buildAccess) syncEnvFiles(this.db, this.config, project)
 
     if (project.start_command?.trim()) {
       const appEnv = runtimeEnv(project, envVars)

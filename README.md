@@ -108,8 +108,11 @@ Everything below is reference for once you're sailing.
 
 ## Day-to-day
 
-- ENV vars are decrypted in memory on each deploy and injected into the deploy script and the
-  pm2 process — nothing is written to disk. If something in the app reads `.env` from disk
+- ENV vars are decrypted in memory on each deploy and injected into the running process and,
+  unless **Inject ENV into the deploy script** is off for the project, the deploy script. Turn it
+  off for repos whose dependencies you don't fully trust — the build then gets a minimal
+  environment and no `.env`, so a poisoned postinstall has nothing to take (tenant projects
+  default to off). Nothing is written to disk. If something in the app reads `.env` from disk
   itself (e.g. Vite at build time), enable **"Write a plaintext .env file into the app"** in
   the project settings: the panel then maintains `shared/.env` (0600) plus a copy in the
   working dir, and deletes both when the toggle is turned off.
