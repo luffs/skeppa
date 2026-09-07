@@ -21,9 +21,13 @@ export const engineNetworkName = name => `${NETWORK_PREFIX}${name}`
 // nothing, not fall back to open.
 export function projectEngineNetworks(project) {
   if (project.runtime !== 'container') return []
-  const named = (parseNetworks(project.networks) ?? []).map(engineNetworkName)
+  // Tenant convoys are namespaced by owner handle, so no tenant can join
+  // another owner's network by guessing its name. Admin convoys keep their
+  // plain names — networks already materialized must keep matching.
+  const scope = project.owner_role === 'tenant' && project.owner_handle ? `${project.owner_handle}-` : ''
+  const named = (parseNetworks(project.networks) ?? []).map(n => engineNetworkName(scope + n))
   if (project.network_profile === 'restricted') {
-    return named.length ? named : [engineNetworkName(project.slug)]
+    return named.length ? named : [engineNetworkName(scope + project.slug)]
   }
   return named.length ? ['podman', ...named] : []
 }

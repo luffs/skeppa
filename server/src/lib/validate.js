@@ -20,6 +20,14 @@ export const PM2_ACTIONS = ['start', 'stop', 'restart']
 export const IMAGE_RE = /^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,255}$/
 export const RUNTIMES = ['pm2', 'container']
 
+// Multi-tenancy: admins are the panel owner; tenants moor and deploy their
+// own container projects and nothing else. The handle namespaces a
+// tenant's convoy networks (and later their subdomains), so it gets the
+// same whitelist treatment as slugs.
+export const ROLES = ['admin', 'tenant']
+export const HANDLE_RE = /^[a-z0-9][a-z0-9-]{0,30}$/
+export const GITHUB_LOGIN_RE = /^[A-Za-z0-9-]{1,39}$/
+
 // Plain-git projects: a public https clone URL, any host. Userinfo is
 // rejected on purpose — credentials in a URL would sit plaintext in the
 // DB, unlike everything else secret the panel stores. The https:// anchor

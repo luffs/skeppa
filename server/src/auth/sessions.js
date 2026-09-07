@@ -31,11 +31,28 @@ export function pruneSessions(db) {
 }
 
 // Hono middleware protecting /api/* (login + webhooks are mounted before it).
+// Also attaches the user row: ownership checks and role gates downstream
+// read c.get('user') rather than re-querying.
 export function requireSession(db) {
   return async (c, next) => {
     const session = getSession(db, getCookie(c, COOKIE_NAME))
     if (!session) return c.json({ error: 'unauthorized' }, 401)
+    const user = db.query('SELECT id, username, role, handle, github_login FROM users WHERE id = ?').get(session.user_id)
+    if (!user) {
+      deleteSession(db, session.id) // the account is gone — so is the session
+      return c.json({ error: 'unauthorized' }, 401)
+    }
     c.set('session', session)
+    c.set('user', user)
+    await next()
+  }
+}
+
+// The panel's own configuration, engine, images, crew and proxy are admin
+// space — tenants operate on their projects only.
+export function requireAdmin() {
+  return async (c, next) => {
+    if (c.get('user')?.role !== 'admin') return c.json({ error: 'admins only' }, 403)
     await next()
   }
 }

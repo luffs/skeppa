@@ -137,6 +137,7 @@
         v-model:network-profile="edit.network_profile"
         v-model:host-access="edit.host_access"
         v-model:networks="edit.networks"
+        :tenant="store.user?.role === 'tenant'"
         existing
       />
       <label>Working subdirectory</label>

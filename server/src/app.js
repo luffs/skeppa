@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { getCookie } from 'hono/cookie'
 import { serveStatic } from 'hono/bun'
 import { existsSync } from 'node:fs'
-import { requireSession, getSession, COOKIE_NAME } from './auth/sessions.js'
+import { requireSession, requireAdmin, getSession, COOKIE_NAME } from './auth/sessions.js'
 import { authRoutes } from './routes/auth.js'
 import { projectRoutes } from './routes/projects.js'
 import { deploymentRoutes } from './routes/deployments.js'
@@ -27,6 +27,11 @@ export function createApp({ db, config, liveState, hub, runner, github, poller, 
 
   // Everything else under /api requires a valid session.
   app.use('/api/*', requireSession(db))
+  // Multi-tenant boundary: these groups configure the panel itself.
+  for (const group of ['settings', 'system', 'users', 'proxy', 'images']) {
+    app.use(`/api/${group}`, requireAdmin())
+    app.use(`/api/${group}/*`, requireAdmin())
+  }
   app.route('/api/projects', projectRoutes({ db, config, liveState, runner, poller, github, proxy }))
   app.route('/api/deployments', deploymentRoutes({ db, runner }))
   app.route('/api/github', githubRoutes({ db, config, github }))

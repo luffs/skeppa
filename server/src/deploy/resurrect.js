@@ -18,7 +18,10 @@ import { appContainerName, recreateAppContainer } from '../containers/runtime.js
 // Also rewrites/removes ecosystem files on the way through, scrubbing
 // plaintext env blocks written by versions before the env-injection change.
 export async function resurrectApps({ db, config, pm2 = realPm2, containers = null, log = console.log }) {
-  const projects = db.query('SELECT * FROM projects').all()
+  const projects = db.query(
+    `SELECT p.*, u.role AS owner_role, u.handle AS owner_handle
+     FROM projects p LEFT JOIN users u ON u.id = p.owner_id`
+  ).all()
 
   let pm2Known = null
   if (projects.some(p => p.runtime !== 'container')) {

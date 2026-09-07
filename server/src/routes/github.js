@@ -19,12 +19,25 @@ export function githubRoutes({ db, config, github }) {
   const app = new Hono()
   const pendingManifestStates = new Map() // state → expiry (ms since epoch)
 
+  // Tenant-reachable: the moor form needs a repo list. A tenant sees only
+  // repos from installations owned by their linked GitHub account; without
+  // a link they see none (and moor via git URL instead).
   app.get('/repos', async c => {
+    const user = c.get('user')
+    if (user && user.role !== 'admin' && !user.github_login) return c.json([])
     try {
-      return c.json(await github.listRepos())
+      return c.json(await github.listRepos(user && user.role !== 'admin' ? user.github_login : null))
     } catch (err) {
       return c.json({ error: err.message }, 502)
     }
+  })
+
+  // Everything below configures the app itself — admin space. Registered
+  // after /repos on purpose: Hono middleware only guards routes added
+  // after it.
+  app.use('*', async (c, next) => {
+    if (c.get('user') && c.get('user').role !== 'admin') return c.json({ error: 'admins only' }, 403)
+    await next()
   })
 
   // One call answering the first-run checklist: credentials present? app

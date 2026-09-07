@@ -4,8 +4,10 @@
     {
       "name": "skeppa",
       "runtimeExecutable": "bun",
-      "runtimeArgs": ["start"],
-      "port": 3000
+      "runtimeArgs": [
+        "start"
+      ],
+      "port": 3210
     }
   ]
 }

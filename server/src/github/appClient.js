@@ -110,7 +110,7 @@ export class GitHubApp {
   // Which installation covers a repo. A friend who installed the app on
   // their repo is a second installation; installations[0] only ever covers
   // the panel owner, so anything repo-scoped must resolve through here.
-  async getInstallationIdForRepo(repoFullName) {
+  async getRepoInstallation(repoFullName) {
     const cached = this._repoInstallations.get(repoFullName)
     if (cached) return cached
     const jwt = await this._appJwt()
@@ -123,8 +123,13 @@ export class GitHubApp {
       }
       throw err
     }
-    this._repoInstallations.set(repoFullName, data.id)
-    return data.id
+    const entry = { id: data.id, account: data.account?.login ?? '' }
+    this._repoInstallations.set(repoFullName, entry)
+    return entry
+  }
+
+  async getInstallationIdForRepo(repoFullName) {
+    return (await this.getRepoInstallation(repoFullName)).id
   }
 
   async _tokenForInstallation(installationId) {
@@ -205,10 +210,17 @@ export class GitHubApp {
 
   // Every repo across every installation — the panel owner sees a friend-
   // installed repo in the picker exactly like their own.
-  async listRepos() {
-    const installations = await this.listInstallations()
+  // accountLogin scopes the listing to installations owned by that GitHub
+  // account — how a tenant sees their repos and nobody else's. null = all.
+  async listRepos(accountLogin = null) {
+    let installations = await this.listInstallations()
     if (!installations.length) {
       throw new Error('The GitHub App has no installations — install it on your account/org first')
+    }
+    if (accountLogin != null) {
+      installations = installations.filter(
+        i => i.account?.login?.toLowerCase() === accountLogin.toLowerCase()
+      )
     }
     const repos = []
     for (const installation of installations) {

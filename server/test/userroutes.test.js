@@ -42,20 +42,20 @@ test('lists users without password hashes', async () => {
   expect(res.status).toBe(200)
   const users = await res.json()
   expect(users.map(u => u.username)).toEqual(['bosun', 'captain'])
-  expect(Object.keys(users[0]).sort()).toEqual(['created_at', 'id', 'username'])
+  expect(Object.keys(users[0]).sort()).toEqual(['created_at', 'github_login', 'handle', 'id', 'role', 'username'])
 })
 
 test('initLiveState mirrors existing users without password hashes', async () => {
   const { liveState } = await setup()
   expect(Object.values(liveState.users).map(u => u.username).sort()).toEqual(['bosun', 'captain'])
-  expect(Object.keys(liveState.users[1]).sort()).toEqual(['created_at', 'id', 'username'])
+  expect(Object.keys(liveState.users[1]).sort()).toEqual(['created_at', 'handle', 'id', 'role', 'username'])
 })
 
 test('creates a user with a hashed password and mirrors it into LiveState', async () => {
   const { db, app, liveState } = await setup()
   const res = await app.request('/', {
     method: 'POST',
-    body: JSON.stringify({ username: 'deckhand', password: 'seaworthy1' }),
+    body: JSON.stringify({ username: 'deckhand', password: 'seaworthy1', role: 'tenant', handle: 'deckhand' }),
   })
   expect(res.status).toBe(201)
   const created = await res.json()

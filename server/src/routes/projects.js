@@ -49,7 +49,22 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
     return engineInstance
   }
 
-  const getProject = id => db.query(`SELECT ${PROJECT_COLUMNS} FROM projects WHERE id = ?`).get(Number(id))
+  // Projects travel with their owner's role and handle: the deploy runner,
+  // convoy naming and container recreation all key off them.
+  const PROJECT_SELECT = `SELECT ${PROJECT_COLUMNS.split(', ').map(col => 'p.' + col).join(', ')}, p.owner_id,
+    u.role AS owner_role, u.handle AS owner_handle
+    FROM projects p LEFT JOIN users u ON u.id = p.owner_id`
+  const getProject = id => db.query(`${PROJECT_SELECT} WHERE p.id = ?`).get(Number(id))
+
+  // 404 rather than 403 for someone else's project: a tenant probing ids
+  // must not learn which exist. No user in context (bare factory in tests)
+  // behaves as admin — the mounted app always attaches one.
+  const getProjectFor = c => {
+    const project = getProject(c.req.param('id'))
+    const user = c.get('user')
+    if (project && user && user.role !== 'admin' && project.owner_id !== user.id) return null
+    return project
+  }
 
   const normalizeSubdomain = value =>
     typeof value === 'string' && value.trim() ? value.trim().toLowerCase() : null
@@ -89,7 +104,11 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
     proxy?.apply().catch(err => console.error('[proxy] apply failed:', err.message))
 
   app.get('/', c => {
-    return c.json(db.query(`SELECT ${PROJECT_COLUMNS} FROM projects ORDER BY name`).all())
+    const user = c.get('user')
+    if (user && user.role !== 'admin') {
+      return c.json(db.query(`${PROJECT_SELECT} WHERE p.owner_id = ? ORDER BY p.name`).all(user.id))
+    }
+    return c.json(db.query(`${PROJECT_SELECT} ORDER BY p.name`).all())
   })
 
   app.post('/', async c => {
@@ -118,11 +137,31 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
     // No webhook will ever fire for a plain-git project — keep the flag
     // honest instead of letting it promise something that cannot happen.
     if (project.git_url) project.auto_deploy = 0
+    const user = c.get('user')
+    const tenant = Boolean(user && user.role !== 'admin')
+    project.owner_id = user?.id ?? null
     const errors = { ...validateProject(project), ...routingConflicts(project) }
+    if (tenant) {
+      // The container boundary is what makes tenancy safe at all, and host
+      // access reaches the panel itself — both are role rules, not options.
+      if (body.runtime === 'pm2') errors.runtime = 'tenant projects run in containers only'
+      else project.runtime = 'container'
+      if (project.host_access) errors.host_access = 'host access is admin-only'
+    }
     if (project.runtime === 'container' && project.pm2_name === config.selfPm2Name) {
       errors.runtime = 'the panel itself must run under pm2'
     }
     if (Object.keys(errors).length) return c.json({ error: 'validation failed', fields: errors }, 400)
+
+    // A tenant moors GitHub repos only from installations their linked
+    // account owns — otherwise the panel would clone the admin's repos on
+    // their behalf. Plain git URLs are public and need no check.
+    if (tenant && !project.git_url) {
+      const inst = github ? await github.getRepoInstallation(project.repo_full_name).catch(() => null) : null
+      if (!inst || inst.account.toLowerCase() !== (user.github_login || '').toLowerCase()) {
+        return c.json({ error: 'validation failed', fields: { repo_full_name: 'not a repository of your linked GitHub account' } }, 400)
+      }
+    }
 
     const slugBase = body.slug?.trim() || slugify(project.name)
     if (!SLUG_RE.test(slugBase)) return c.json({ error: 'validation failed', fields: { slug: 'invalid slug' } }, 400)
@@ -135,9 +174,9 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
     project.pm2_name = uniqueName(project.pm2_name, n => db.query('SELECT 1 FROM projects WHERE pm2_name = ?').get(n))
 
     const { lastInsertRowid } = db.query(
-      `INSERT INTO projects (slug, name, repo_full_name, git_url, branch, deploy_script, build_image, run_image, runtime, pm2_name, start_command, cwd, auto_deploy, write_env_file, subdomain, port, memory_mb, network_profile, host_access, networks)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(slug, project.name, project.repo_full_name, project.git_url, project.branch, project.deploy_script,
+      `INSERT INTO projects (slug, name, owner_id, repo_full_name, git_url, branch, deploy_script, build_image, run_image, runtime, pm2_name, start_command, cwd, auto_deploy, write_env_file, subdomain, port, memory_mb, network_profile, host_access, networks)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(slug, project.name, project.owner_id, project.repo_full_name, project.git_url, project.branch, project.deploy_script,
           project.build_image, project.run_image, project.runtime, project.pm2_name, project.start_command,
           project.cwd, project.auto_deploy, project.write_env_file, project.subdomain, project.port,
           project.memory_mb, project.network_profile, project.host_access, project.networks)
@@ -153,13 +192,13 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
   })
 
   app.get('/:id', c => {
-    const project = getProject(c.req.param('id'))
+    const project = getProjectFor(c)
     if (!project) return c.json({ error: 'not found' }, 404)
     return c.json(project)
   })
 
   app.patch('/:id', async c => {
-    const project = getProject(c.req.param('id'))
+    const project = getProjectFor(c)
     if (!project) return c.json({ error: 'not found' }, 404)
     const body = await c.req.json().catch(() => ({}))
 
@@ -188,6 +227,11 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
     // re-assigns the default rather than leaving the project portless.
     if (merged.port == null) merged.port = autoPort(db, project.id)
     if (merged.git_url) merged.auto_deploy = 0 // no webhook for plain-git projects
+    const editor = c.get('user')
+    if (editor && editor.role !== 'admin') {
+      if (merged.runtime === 'pm2') errors.runtime = 'tenant projects run in containers only'
+      if (merged.host_access) errors.host_access = 'host access is admin-only'
+    }
     const errors = { ...validateProject(merged), ...routingConflicts(merged, project.id) }
     if (merged.runtime === 'container' && merged.pm2_name === config.selfPm2Name) {
       errors.runtime = 'the panel itself must run under pm2'
@@ -220,7 +264,7 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
   })
 
   app.delete('/:id', async c => {
-    const project = getProject(c.req.param('id'))
+    const project = getProjectFor(c)
     if (!project) return c.json({ error: 'not found' }, 404)
     await deleteProcess(project.pm2_name)
     try {
@@ -239,7 +283,7 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
   // --- ENV vars -------------------------------------------------------------
 
   app.get('/:id/env', c => {
-    const project = getProject(c.req.param('id'))
+    const project = getProjectFor(c)
     if (!project) return c.json({ error: 'not found' }, 404)
     const reveal = c.req.query('reveal') === '1'
     const rows = db.query('SELECT key, value_encrypted, iv FROM env_vars WHERE project_id = ? ORDER BY key').all(project.id)
@@ -251,7 +295,7 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
   })
 
   app.put('/:id/env', async c => {
-    const project = getProject(c.req.param('id'))
+    const project = getProjectFor(c)
     if (!project) return c.json({ error: 'not found' }, 404)
     const body = await c.req.json().catch(() => null)
     if (!Array.isArray(body)) return c.json({ error: 'expected an array of {key, value}' }, 400)
@@ -291,7 +335,7 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
   // --- Deployments ----------------------------------------------------------
 
   app.post('/:id/deploy', c => {
-    const project = getProject(c.req.param('id'))
+    const project = getProjectFor(c)
     if (!project) return c.json({ error: 'not found' }, 404)
     const deploymentId = runner.enqueue(project.id, { trigger: 'manual' })
     return c.json({ id: deploymentId }, 202)
@@ -301,7 +345,7 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
   // its own; this covers pushes made while the panel was down or before the
   // webhook was configured.
   app.post('/:id/refresh-head', async c => {
-    const project = getProject(c.req.param('id'))
+    const project = getProjectFor(c)
     if (!project) return c.json({ error: 'not found' }, 404)
     try {
       const head = project.git_url
@@ -324,7 +368,7 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
   // returned to the (session-authenticated) user on purpose — it is never
   // logged or persisted here.
   app.post('/:id/clone-command', async c => {
-    const project = getProject(c.req.param('id'))
+    const project = getProjectFor(c)
     if (!project) return c.json({ error: 'not found' }, 404)
     // A plain-git project needs no token — the URL is the command.
     if (project.git_url) {
@@ -342,7 +386,7 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
   })
 
   app.get('/:id/deployments', c => {
-    const project = getProject(c.req.param('id'))
+    const project = getProjectFor(c)
     if (!project) return c.json({ error: 'not found' }, 404)
     const rows = db.query(
       `SELECT id, project_id, status, "trigger", commit_sha, commit_message, exit_code,
@@ -355,7 +399,7 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
   // --- pm2 controls ---------------------------------------------------------
 
   app.post('/:id/pm2/:action', async c => {
-    const project = getProject(c.req.param('id'))
+    const project = getProjectFor(c)
     if (!project) return c.json({ error: 'not found' }, 404)
     const act = c.req.param('action')
     if (!PM2_ACTIONS.includes(act)) return c.json({ error: `action must be one of ${PM2_ACTIONS.join(', ')}` }, 400)
@@ -373,7 +417,7 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
   // Recent logs for the project's process, same response shape for both
   // runtimes (and as the Engine room pm2 log route), so one UI component fits.
   app.get('/:id/logs', async c => {
-    const project = getProject(c.req.param('id'))
+    const project = getProjectFor(c)
     if (!project) return c.json({ error: 'not found' }, 404)
     const requested = parseInt(c.req.query('lines') ?? '', 10)
     const lines = Math.min(Math.max(Number.isFinite(requested) ? requested : DEFAULT_LOG_LINES, 1), MAX_LOG_LINES)
@@ -403,7 +447,7 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
   // deployed". Static once written, so it is its own request rather than a
   // third key on the log route the UI polls every few seconds.
   app.get('/:id/logs/previous', async c => {
-    const project = getProject(c.req.param('id'))
+    const project = getProjectFor(c)
     if (!project) return c.json({ error: 'not found' }, 404)
     const requested = parseInt(c.req.query('lines') ?? '', 10)
     const lines = Math.min(Math.max(Number.isFinite(requested) ? requested : DEFAULT_LOG_LINES, 1), MAX_LOG_LINES)

@@ -2,11 +2,13 @@
   <!-- No wrapper element: the fields are siblings of the form's own labels, so
        they keep the shared vertical rhythm (a wrapper would make the first
        label a :first-child and zero its top margin). -->
-  <label>Runtime</label>
-  <select :value="runtime" class="code" @change="$emit('update:runtime', $event.target.value)">
-    <option value="pm2">pm2 — host process</option>
-    <option value="container">container — rootless podman</option>
-  </select>
+  <template v-if="!tenant">
+    <label>Runtime</label>
+    <select :value="runtime" class="code" @change="$emit('update:runtime', $event.target.value)">
+      <option value="pm2">pm2 — host process</option>
+      <option value="container">container — rootless podman</option>
+    </select>
+  </template>
   <p class="hint" v-if="runtime === 'container'">
     The start command runs in a disposable container: source read-only at
     <span class="mono">/app</span>, <span class="mono">shared/</span> writable at
@@ -72,7 +74,7 @@
       grant internet — that comes from the profile.
     </p>
 
-    <label class="check-label" v-if="networkProfile === 'open' && !networks.trim()">
+    <label class="check-label" v-if="!tenant && networkProfile === 'open' && !networks.trim()">
       <input
         type="checkbox"
         :checked="hostAccess"
@@ -111,6 +113,9 @@ export default {
     networkProfile: { type: String, default: 'open' },
     hostAccess: { type: Boolean, default: false },
     networks: { type: String, default: '' },
+    // Tenant projects are container-only with no host access — the runtime
+    // select and the host-access toggle disappear (the server enforces both).
+    tenant: { type: Boolean, default: false },
     // Wording differs slightly for a project that already exists.
     existing: { type: Boolean, default: false },
   },

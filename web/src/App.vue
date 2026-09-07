@@ -7,9 +7,11 @@
       </router-link>
       <div class="links">
         <router-link to="/" class="nav-link" :class="{ active: harborActive }">Harbor</router-link>
-        <router-link to="/system" class="nav-link" :class="{ active: $route.path === '/system' }">Engine room</router-link>
-        <router-link to="/settings" class="nav-link" :class="{ active: $route.path === '/settings' }">Rigging</router-link>
-        <router-link to="/shipyard" class="nav-link" :class="{ active: $route.path === '/shipyard' }">Shipyard</router-link>
+        <template v-if="store.user?.role !== 'tenant'">
+          <router-link to="/system" class="nav-link" :class="{ active: $route.path === '/system' }">Engine room</router-link>
+          <router-link to="/settings" class="nav-link" :class="{ active: $route.path === '/settings' }">Rigging</router-link>
+          <router-link to="/shipyard" class="nav-link" :class="{ active: $route.path === '/shipyard' }">Shipyard</router-link>
+        </template>
       </div>
       <span class="spacer"></span>
       <span class="conn" :title="`${store.connected ? 'live' : 'disconnected'} · ${store.user.username}`">

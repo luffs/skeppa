@@ -68,6 +68,7 @@
         v-model:network-profile="form.network_profile"
         v-model:host-access="form.host_access"
         v-model:networks="form.networks"
+        :tenant="isTenant"
       />
 
       <RoutingFields v-model:subdomain="form.subdomain" v-model:port="form.port" />
@@ -84,6 +85,7 @@
 
 <script>
 import { api } from '../api.js'
+import { store } from '../store.js'
 import RuntimeFields from '../components/RuntimeFields.vue'
 import RoutingFields from '../components/RoutingFields.vue'
 
@@ -99,6 +101,7 @@ export default {
       busy: false,
       pm2NameTouched: false,
       externalRepo: false,
+      isTenant: store.user?.role === 'tenant',
       form: {
         repo_full_name: '',
         git_url: '',
@@ -112,7 +115,8 @@ export default {
         // Set here rather than in Rigging afterwards: these decide what the
         // very first deploy does. The .env-file toggle has a working default
         // and stays in the project settings.
-        runtime: 'pm2',
+        // tenants deploy in containers only; the server enforces it too
+        runtime: store.user?.role === 'tenant' ? 'container' : 'pm2',
         build_image: '',
         run_image: '',
         memory_mb: '',

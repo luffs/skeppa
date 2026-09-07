@@ -151,8 +151,21 @@ export class DeployRunner {
     let status = 'success'
     let exitCode = 0
     try {
-      const project = this.db.query('SELECT * FROM projects WHERE id = ?').get(projectId)
+      const project = this.db.query(
+        `SELECT p.*, u.role AS owner_role, u.handle AS owner_handle
+         FROM projects p LEFT JOIN users u ON u.id = p.owner_id WHERE p.id = ?`
+      ).get(projectId)
       if (!project) throw new DeployError('project was deleted')
+      // The deploy script is arbitrary shell. For the admin that is the
+      // product; for a tenant it must never touch the host — container
+      // runtime and the podman build sandbox are hard requirements,
+      // enforced here so no route or UI gap can reopen them.
+      if (project.owner_role === 'tenant') {
+        if (project.runtime !== 'container') throw new DeployError('tenant projects run in containers only')
+        if (this.config.sandbox !== 'podman') {
+          throw new DeployError('tenant deploys require the podman build sandbox — the admin must set SKEPPA_SANDBOX=podman')
+        }
+      }
       await this._execute(project, deploymentId, log)
       log.line('✔ deploy finished')
     } catch (err) {

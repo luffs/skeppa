@@ -107,7 +107,8 @@ export function systemRoutes({ db, config, poller, pm2 = realPm2, containerClien
   const listed = async name => (await engine().listContainers()).some(e => containerName(e) === name)
 
   const owner = name =>
-    db.query("SELECT * FROM projects WHERE runtime = 'container'").all()
+    db.query(`SELECT p.*, u.role AS owner_role, u.handle AS owner_handle
+      FROM projects p LEFT JOIN users u ON u.id = p.owner_id WHERE p.runtime = 'container'`).all()
       .find(p => appContainerName(p.slug) === name) ?? null
 
   app.post('/containers/:name/:action', async c => {

@@ -26,7 +26,7 @@ export function getProxyInfo(db) {
 
 // The user row as rendered by the frontend (crew list). Never includes the
 // password hash.
-export const USER_INFO_COLUMNS = 'id, username, created_at'
+export const USER_INFO_COLUMNS = 'id, username, role, handle, created_at'
 
 export function getUserInfo(db, id) {
   return db.query(`SELECT ${USER_INFO_COLUMNS} FROM users WHERE id = ?`).get(Number(id)) ?? null
@@ -36,7 +36,7 @@ export function getUserInfo(db, id) {
 // header, settings form). head_* is deliberately excluded — the live
 // `headCommit` is the single source of truth for that.
 export const PROJECT_INFO_COLUMNS =
-  'id, slug, name, repo_full_name, git_url, branch, deploy_script, build_image, run_image, runtime, pm2_name, start_command, cwd, auto_deploy, write_env_file, subdomain, port, memory_mb, network_profile, host_access, networks, created_at'
+  'id, slug, name, owner_id, repo_full_name, git_url, branch, deploy_script, build_image, run_image, runtime, pm2_name, start_command, cwd, auto_deploy, write_env_file, subdomain, port, memory_mb, network_profile, host_access, networks, created_at'
 
 export function getProjectInfo(db, id) {
   return db.query(`SELECT ${PROJECT_INFO_COLUMNS} FROM projects WHERE id = ?`).get(Number(id)) ?? null

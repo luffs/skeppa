@@ -8,14 +8,20 @@
       </template>
 
       <p class="hint" style="font-size: 13.5px">
-        Every crew member has full access to the panel. Changing a password signs that user out
-        everywhere else; removing a member ends their sessions immediately.
+        Admins run the panel; tenants moor and deploy their own container projects only.
+        A tenant's handle namespaces their networks (and later their subdomains); the GitHub
+        login links their installation of the app, so they see their own repos in the picker.
+        Changing a password signs that user out everywhere else; removing a member ends their
+        sessions immediately.
       </p>
 
       <div class="crew-rows">
         <div v-for="u in users" :key="u.id" class="crew-member">
           <div class="crew-row">
             <span class="crew-name">{{ u.username }}</span>
+            <span class="chip" :class="u.role === 'admin' ? 'green' : ''">{{ u.role }}</span>
+            <span v-if="u.handle" class="mono" style="font-size: 12px; color: var(--dim)">@{{ u.handle }}</span>
+            <span v-if="u.github_login" class="mono" style="font-size: 12px; color: var(--dim)">gh:{{ u.github_login }}</span>
             <span v-if="isSelf(u)" class="chip blue">you</span>
             <span class="crew-since">aboard since {{ shortDate(u.created_at) }}</span>
             <span class="spacer"></span>
@@ -53,6 +59,24 @@
             autocomplete="new-password"
             placeholder="password (min 8 characters)"
             style="flex: 1 1 200px; width: auto"
+          />
+          <select v-model="newUser.role" class="code" style="flex: 0 0 auto; width: auto">
+            <option value="tenant">tenant</option>
+            <option value="admin">admin</option>
+          </select>
+          <input
+            v-if="newUser.role === 'tenant'"
+            v-model="newUser.handle"
+            placeholder="handle (a-z, 0-9, -)"
+            class="code"
+            style="flex: 1 1 120px; width: auto"
+          />
+          <input
+            v-if="newUser.role === 'tenant'"
+            v-model="newUser.github_login"
+            placeholder="GitHub login (optional)"
+            class="code"
+            style="flex: 1 1 140px; width: auto"
           />
           <button :disabled="crewBusy">{{ crewBusy ? 'Working…' : 'Add' }}</button>
         </div>
@@ -320,7 +344,7 @@ export default {
       deliveriesBusy: false,
       deliveriesError: '',
       redelivering: null,
-      newUser: { username: '', password: '' },
+      newUser: { username: '', password: '', role: 'tenant', handle: '', github_login: '' },
       passwordFor: null,
       newPassword: '',
       crewBusy: false,
@@ -624,7 +648,7 @@ export default {
       this.crewMessage = ''
       try {
         const user = await api.post('/api/users', this.newUser)
-        this.newUser = { username: '', password: '' }
+        this.newUser = { username: '', password: '', role: 'tenant', handle: '', github_login: '' }
         this.crewMessage = `Welcome aboard, ${user.username} ✔`
       } catch (err) {
         this.crewError = this.describeError(err)
