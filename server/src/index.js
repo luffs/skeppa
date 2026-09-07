@@ -8,6 +8,8 @@ import { migrate } from './db/migrate.js'
 import { pruneSessions } from './auth/sessions.js'
 import { createLiveState, initLiveState } from './live/state.js'
 import { Hub } from './live/hub.js'
+import { createLiveStores } from './live/stores.js'
+import { createLiveTransport } from './live/transport.js'
 import { createPoller } from './live/poller.js'
 import { sendNotification, upgradeNotifyUrl } from './lib/notify.js'
 import { createProxy, proxySettings } from './proxy/index.js'
@@ -45,9 +47,19 @@ const poller = createPoller({
 // before this boot writes anything else, so the next backup is clean.
 if (upgradeNotifyUrl(db, config.masterKey)) console.log('notify_url: legacy plaintext value now stored encrypted')
 
-const hub = new Hub({
+// LiveState reaches browsers as lazy-storage stores at /live; the Hub's /ws
+// carries deploy logs. The poller polls fast while anyone is looking
+// through either.
+let wsClients = 0
+const liveStores = createLiveStores({
   liveState,
-  onClientsChange: n => poller.setFast(n > 0),
+  onSessionsChange: n => poller.setFast(wsClients + n > 0),
+})
+const hub = new Hub({
+  onClientsChange: n => {
+    wsClients = n
+    poller.setFast(n + liveStores.sessions > 0)
+  },
 })
 // Always on: the crash watch must run with nobody looking. Clients connecting
 // only switch the cadence from idle to live.
@@ -79,9 +91,18 @@ if (proxySettings(db).baseDomain) {
 // would write their decrypted env to disk) — the panel starts them itself.
 resurrectApps({ db, config }).catch(err => console.error('[resurrect] failed:', err.message))
 
-const { upgradeWebSocket, websocket } = createBunWebSocket()
+const { upgradeWebSocket, websocket: honoWebsocket } = createBunWebSocket()
 const app = createApp({ db, config, liveState, hub, runner, github, poller, proxy, upgradeWebSocket })
+const live = createLiveTransport({ db, liveStores, honoWebsocket })
 
-const server = Bun.serve({ hostname: config.host, port: config.port, fetch: app.fetch, websocket })
+const server = Bun.serve({
+  hostname: config.host,
+  port: config.port,
+  async fetch(req, server) {
+    const res = await live.upgrade(req, server) // the /live socket and its snapshot route
+    return res === null ? app.fetch(req, server) : res
+  },
+  websocket: live.websocket,
+})
 console.log(`Skeppa listening on http://${config.host}:${server.port} (${config.isProd ? 'production' : 'development'})` +
   (config.host === '127.0.0.1' ? ' — loopback only; set HOST=0.0.0.0 in the panel config for direct LAN access' : ''))

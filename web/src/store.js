@@ -1,13 +1,14 @@
 import { reactive } from 'vue'
-import { LazyWatch } from 'lazy-watch'
 
-// `live` mirrors the server's LiveState. It is replaced wholesale on every
-// full snapshot and patched with lazy-watch diffs in between. Because it sits
-// inside a Vue reactive object, patched changes render automatically.
+// `live` mirrors the server's LiveState. live.js composes it from the
+// lazy-storage store mirrors once a user is signed in (projects merged across
+// the fleets this user may see, the rest from the panel and harbor stores);
+// the default here is the empty shape the views expect before that, and what
+// tests seed directly.
 export const store = reactive({
   user: null,
-  connected: false,
-  ready: false, // true once the first full snapshot has arrived
+  connected: false, // the /live socket is open
+  ready: false, // true once every opened store has delivered its snapshot
   liveUpdatedAt: null, // ms timestamp of the last snapshot/diff received
   live: { projects: {}, system: {}, users: {}, proxy: {}, images: {} },
   // The wall clock, ticked once a second so relative labels (timeAgo,
@@ -32,17 +33,6 @@ export function appUrlFor(project) {
   // Tenant projects are routed under their owner's handle.
   const nested = project.owner_role === 'tenant' && project.owner_handle
   return `https://${project.subdomain}.${nested ? `${project.owner_handle}.` : ''}${domain}`
-}
-
-export function applyFullState(state) {
-  store.live = state
-  store.ready = true
-  store.liveUpdatedAt = Date.now()
-}
-
-export function applyStateDiff(diff) {
-  LazyWatch.patch(store.live, diff)
-  store.liveUpdatedAt = Date.now()
 }
 
 export function liveProject(projectId) {

@@ -1,9 +1,7 @@
 import { test, expect } from 'bun:test'
-import { LazyWatch } from 'lazy-watch'
 import { Hub } from '../src/live/hub.js'
-import { createLiveState, projectDefaults } from '../src/live/state.js'
 
-const tick = () => new Promise(r => setTimeout(r, 0))
+// The Hub carries deploy logs only; live state is covered by livestores.test.js.
 
 function fakeSock() {
   return {
@@ -14,51 +12,8 @@ function fakeSock() {
   }
 }
 
-test('client gets a full snapshot on connect, then diffs that patch a mirror', async () => {
-  const liveState = createLiveState()
-  liveState.projects[1] = projectDefaults()
-  LazyWatch.flush(liveState)
-
-  const hub = new Hub({ liveState })
-  const sock = fakeSock()
-  hub.add(sock)
-
-  expect(sock.sent[0].type).toBe('state:full')
-  const mirror = structuredClone(sock.sent[0].state)
-  expect(mirror.projects['1'].pm2.status).toBe('unknown')
-
-  liveState.projects[1].pm2.status = 'online'
-  liveState.projects[1].currentDeployment = { id: 42, status: 'running', startedAt: 't' }
-  LazyWatch.flush(liveState)
-  await tick()
-
-  const diffs = sock.sent.filter(m => m.type === 'state')
-  expect(diffs.length).toBe(1) // batched into one diff
-  for (const { diff } of diffs) LazyWatch.patch(mirror, diff)
-  expect(mirror.projects['1'].pm2.status).toBe('online')
-  expect(mirror.projects['1'].currentDeployment.id).toBe(42)
-})
-
-test('deletions propagate through diffs', async () => {
-  const liveState = createLiveState()
-  liveState.projects[1] = projectDefaults()
-  LazyWatch.flush(liveState)
-
-  const hub = new Hub({ liveState })
-  const sock = fakeSock()
-  hub.add(sock)
-  const mirror = structuredClone(sock.sent[0].state)
-
-  delete liveState.projects[1]
-  LazyWatch.flush(liveState)
-  await tick()
-
-  for (const m of sock.sent.filter(m => m.type === 'state')) LazyWatch.patch(mirror, m.diff)
-  expect(mirror.projects['1']).toBeUndefined()
-})
-
 test('log subscribe/unsubscribe bookkeeping', () => {
-  const hub = new Hub({ liveState: createLiveState() })
+  const hub = new Hub()
   const a = fakeSock()
   const b = fakeSock()
   hub.add(a)
@@ -76,7 +31,7 @@ test('log subscribe/unsubscribe bookkeeping', () => {
 })
 
 test('subscribers receive the in-memory backlog on subscribe', () => {
-  const hub = new Hub({ liveState: createLiveState() })
+  const hub = new Hub()
   hub.getLogBacklog = id => (id === 7 ? 'line1\nline2\n' : null)
   const sock = fakeSock()
   hub.add(sock)
@@ -86,7 +41,7 @@ test('subscribers receive the in-memory backlog on subscribe', () => {
 })
 
 test('disconnecting cleans up log subscriptions', () => {
-  const hub = new Hub({ liveState: createLiveState() })
+  const hub = new Hub()
   const sock = fakeSock()
   hub.add(sock)
   hub.handleMessage(sock, JSON.stringify({ type: 'logs:subscribe', deploymentId: 1 }))
@@ -96,18 +51,19 @@ test('disconnecting cleans up log subscriptions', () => {
 })
 
 test('unknown and malformed messages are ignored', () => {
-  const hub = new Hub({ liveState: createLiveState() })
+  const hub = new Hub()
   const sock = fakeSock()
   hub.add(sock)
   hub.handleMessage(sock, 'not json at all')
   hub.handleMessage(sock, JSON.stringify({ type: 'evil:type', deploymentId: 1 }))
   hub.handleMessage(sock, JSON.stringify({ type: 'logs:subscribe', deploymentId: 'not-a-number' }))
   expect(hub.logSubs.size).toBe(0)
+  expect(sock.sent).toEqual([]) // nothing is sent on connect: no snapshot lives here
 })
 
 test('client count changes drive the poller start/stop hook', () => {
   const events = []
-  const hub = new Hub({ liveState: createLiveState(), onClientsChange: n => events.push(n) })
+  const hub = new Hub({ onClientsChange: n => events.push(n) })
   const a = fakeSock()
   const b = fakeSock()
   hub.add(a)

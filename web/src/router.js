@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { api } from './api.js'
 import { store } from './store.js'
 import { connectWs } from './ws.js'
+import { connectLive } from './live.js'
 import LoginView from './views/LoginView.vue'
 import DashboardView from './views/DashboardView.vue'
 import ProjectNewView from './views/ProjectNewView.vue'
@@ -30,6 +31,7 @@ router.beforeEach(async to => {
   if (store.user) return true
   try {
     store.user = await api.get('/api/auth/me')
+    connectLive()
     connectWs()
     return true
   } catch {

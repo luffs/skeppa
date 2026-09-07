@@ -36,6 +36,7 @@
 import { api } from '../api.js'
 import { store } from '../store.js'
 import { connectWs } from '../ws.js'
+import { connectLive } from '../live.js'
 import { currentTheme, toggleTheme } from '../lib/theme.js'
 
 // Firebase is loaded from Google's CDN only when a config exists and the
@@ -83,6 +84,7 @@ export default {
           username: this.username,
           password: this.password,
         })
+        connectLive()
         connectWs()
         this.$router.push('/')
       } catch (err) {
@@ -99,6 +101,7 @@ export default {
         const result = await signInWithPopup(firebaseAuth, new GoogleAuthProvider())
         const idToken = await result.user.getIdToken()
         store.user = await api.post('/api/auth/firebase', { idToken })
+        connectLive()
         connectWs()
         this.$router.push('/')
       } catch (err) {

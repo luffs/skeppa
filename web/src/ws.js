@@ -1,8 +1,9 @@
-import { store, applyFullState, applyStateDiff } from './store.js'
-
-// Reconnects with exponential backoff. Missed diffs cannot be replayed, so the
-// server always sends a fresh full snapshot on (re)connect. Log subscriptions
-// are re-established after every reconnect.
+// Deploy logs over Hono's /ws: per-deployment subscribe/unsubscribe, a
+// backlog on subscribe, then lines as they are written. Live state is not
+// on this socket any more — it comes from the stores in live.js.
+//
+// Reconnects with exponential backoff; subscriptions are re-established
+// after every reconnect.
 
 let ws = null
 let wanted = false
@@ -20,12 +21,9 @@ export function connectWs() {
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return
 
   const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-  const url = `${proto}://${location.host}/ws`
-  console.log(`Connecting to WebSocket: ${url}`)
-  ws = new WebSocket(url)
+  ws = new WebSocket(`${proto}://${location.host}/ws`)
 
   ws.onopen = () => {
-    store.connected = true
     backoff = 500
     for (const deploymentId of logListeners.keys()) {
       sendMsg({ type: 'logs:subscribe', deploymentId })
@@ -39,14 +37,11 @@ export function connectWs() {
     } catch {
       return
     }
-    if (msg.type === 'state:full') applyFullState(msg.state)
-    else if (msg.type === 'state') applyStateDiff(msg.diff)
-    else if (msg.type === 'logs:line') emitLog(msg.deploymentId, { type: 'line', line: msg.line })
+    if (msg.type === 'logs:line') emitLog(msg.deploymentId, { type: 'line', line: msg.line })
     else if (msg.type === 'logs:backlog') emitLog(msg.deploymentId, { type: 'backlog', log: msg.log })
   }
 
   ws.onclose = () => {
-    store.connected = false
     ws = null
     if (!wanted) return
     reconnectTimer = setTimeout(connectWs, backoff)
@@ -64,7 +59,6 @@ export function disconnectWs() {
   clearTimeout(reconnectTimer)
   ws?.close()
   ws = null
-  store.connected = false
 }
 
 function emitLog(deploymentId, event) {
