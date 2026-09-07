@@ -96,8 +96,8 @@ export default {
     // Rendered straight from the LiveState mirror — no API round-trip when
     // navigating here, and rows update live as projects change.
     projects() {
-      // Cosmetic scoping until the live layer is per-tenant: the API is
-      // owner-guarded, this keeps the tenant's harbor view to their ships.
+      // The server already scopes the live stream per socket; this keeps the
+      // intent explicit client-side and costs nothing.
       const mineOnly = store.user?.role === 'tenant'
       return Object.values(store.live.projects ?? {})
         .map(p => p.info)

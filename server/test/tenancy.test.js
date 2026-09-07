@@ -14,6 +14,7 @@ import { DeployRunner } from '../src/deploy/runner.js'
 import { Hub } from '../src/live/hub.js'
 import { buildCaddyConfig } from '../src/proxy/index.js'
 import { setSetting } from '../src/db/settings.js'
+import { LazyWatch } from 'lazy-watch'
 
 const migrationsDir = fileURLToPath(new URL('../src/db/migrations', import.meta.url))
 const tick = () => new Promise(r => setTimeout(r, 0))
@@ -272,4 +273,48 @@ test('the harbor gate routes tenant projects under their handle', () => {
   const cfg = buildCaddyConfig(db)
   const hosts = cfg.apps.http.servers.skeppa.routes.flatMap(r => r.match?.[0]?.host ?? [])
   expect(hosts.sort()).toEqual(['adm.apps.example.com', 'app.bob.apps.example.com'])
+})
+
+test('the live stream is scoped per socket: tenants get their projects and the proxy domain, nothing else', async () => {
+  const { liveState, admin, bob } = setup()
+  liveState.proxy = { baseDomain: 'apps.example.com' }
+  liveState.system = { loadavg: [1] }
+  LazyWatch.flush(liveState); await tick() // settle before the hub subscribes
+  const hub = new Hub({ liveState })
+  const sock = () => ({ sent: [], send(s) { this.sent.push(JSON.parse(s)) } })
+  const bobSock = sock()
+  const adminSock = sock()
+  hub.add(bobSock, { id: bob.id, role: 'tenant' })
+  hub.add(adminSock, { id: admin.id, role: 'admin' })
+
+  const full = bobSock.sent.find(m => m.type === 'state:full').state
+  expect(Object.keys(full.projects)).toEqual(['2'])
+  expect(full.system).toEqual({}) // branches exist for the client mirror, but empty
+  expect(full.users).toEqual({})
+  expect(full.proxy.baseDomain).toBe('apps.example.com')
+  expect(adminSock.sent.find(m => m.type === 'state:full').state.projects[1]).toBeDefined()
+
+  // one batched diff touching both projects and system: bob sees only his slice
+  liveState.projects[1].deployedSha = 'admin-sha'
+  liveState.projects[2].deployedSha = 'bob-sha'
+  liveState.system.loadavg = [2]
+  LazyWatch.flush(liveState); await tick()
+  const bobDiffs = bobSock.sent.filter(m => m.type === 'state').map(m => m.diff)
+  expect(bobDiffs.length).toBe(1)
+  expect(Object.keys(bobDiffs[0])).toEqual(['projects'])
+  expect(Object.keys(bobDiffs[0].projects)).toEqual(['2'])
+  const adminDiff = adminSock.sent.filter(m => m.type === 'state').at(-1).diff
+  expect(adminDiff.system).toBeDefined()
+  expect(Object.keys(adminDiff.projects).sort()).toEqual(['1', '2'])
+
+  // a change that is only the admin's produces no message for bob at all
+  liveState.projects[1].deployedSha = 'admin-again'
+  LazyWatch.flush(liveState); await tick()
+  expect(bobSock.sent.filter(m => m.type === 'state').length).toBe(1)
+
+  // deletions: bob's reaches him (owner remembered past the delete), the admin's does not
+  delete liveState.projects[2]
+  delete liveState.projects[1]
+  LazyWatch.flush(liveState); await tick()
+  expect(bobSock.sent.filter(m => m.type === 'state').at(-1).diff).toEqual({ projects: { 2: null } })
 })
