@@ -17,13 +17,13 @@
       "dependencies": {
         "hono": "^4.6.0",
         "lazy-storage": "^0.10.0",
-        "lazy-watch": "^5.0.0",
+        "lazy-watch": "^6.2.1",
       },
     },
     "web": {
       "name": "@skeppa/web",
       "dependencies": {
-        "lazy-watch": "^5.0.0",
+        "lazy-watch": "^6.2.1",
         "vue": "^3.5.41",
         "vue-router": "^5.2.0",
       },
@@ -315,7 +315,7 @@
 
     "lazy-storage": ["lazy-storage@0.10.0", "", { "dependencies": { "lazy-watch": "^6.2.1" }, "peerDependencies": { "react": ">=18", "vue": ">=3.2", "ws": ">=8" }, "optionalPeers": ["react", "vue", "ws"] }, "sha512-mFvO1PWOZmGJ7TNsnvRmN1WnLoLzZWRPHdlutiXnT+qctrg3rbCJoZCmVSoK0WSsos8B2Tg6SMfKiiE5fHBCPg=="],
 
-    "lazy-watch": ["lazy-watch@5.0.0", "", {}, "sha512-fEF0qgl5/fVqQ8H68dpAzaZWhWV7SfYfwwiDk0mWOm6jbMbY2+aekxTWe8ZeosemIavVIHHsvzDmEqnVvqCxqg=="],
+    "lazy-watch": ["lazy-watch@6.2.1", "", {}, "sha512-RRe1iPFWl5MK068lPr/WnGry3fLN+saMhDXv8rlIy6IDdSj2u+n+x4M2qoJgXyllbEvRvxCXtr+uWMB/vOiE0Q=="],
 
     "levn": ["levn@0.4.1", "", { "dependencies": { "prelude-ls": "^1.2.1", "type-check": "~0.4.0" } }, "sha512-+bT2uH4E5LGE7h/n3evcS/sQlJXCpIp6ym8OWJ5eV6+67Dsql/LaaT7qJBAt2rzfoa/5QBGBhxDix1dMt2kQKQ=="],
 
@@ -500,8 +500,6 @@
     "eslint/eslint-visitor-keys": ["eslint-visitor-keys@5.0.1", "", {}, "sha512-tD40eHxA35h0PEIZNeIjkHoDR4YjjJp34biM0mDvplBe//mB+IHCqHDGV7pxF+7MklTvighcCPPZC7ynWyjdTA=="],
 
     "eslint/espree": ["espree@11.2.0", "", { "dependencies": { "acorn": "^8.16.0", "acorn-jsx": "^5.3.2", "eslint-visitor-keys": "^5.0.1" } }, "sha512-7p3DrVEIopW1B1avAGLuCSh1jubc01H2JHc8B4qqGblmg5gI9yumBgACjWo4JlIc04ufug4xJ3SQI8HkS/Rgzw=="],
-
-    "lazy-storage/lazy-watch": ["lazy-watch@6.2.1", "", {}, "sha512-RRe1iPFWl5MK068lPr/WnGry3fLN+saMhDXv8rlIy6IDdSj2u+n+x4M2qoJgXyllbEvRvxCXtr+uWMB/vOiE0Q=="],
 
     "magic-string-ast/magic-string": ["magic-string@0.30.21", "", { "dependencies": { "@jridgewell/sourcemap-codec": "^1.5.5" } }, "sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ=="],
 

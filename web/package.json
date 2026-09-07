@@ -9,7 +9,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "lazy-watch": "^5.0.0",
+    "lazy-watch": "^6.2.1",
     "vue": "^3.5.41",
     "vue-router": "^5.2.0"
   },
