@@ -12,6 +12,7 @@
           <router-link to="/settings" class="nav-link" :class="{ active: $route.path === '/settings' }">Rigging</router-link>
           <router-link to="/shipyard" class="nav-link" :class="{ active: $route.path === '/shipyard' }">Shipyard</router-link>
         </template>
+        <router-link to="/account" class="nav-link" :class="{ active: $route.path === '/account' }">Account</router-link>
       </div>
       <span class="spacer"></span>
       <span class="conn" :title="`${store.connected ? 'live' : 'disconnected'} · ${store.user.username}`">

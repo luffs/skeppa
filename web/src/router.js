@@ -9,6 +9,7 @@ import ProjectView from './views/ProjectView.vue'
 import SettingsView from './views/SettingsView.vue'
 import SystemView from './views/SystemView.vue'
 import ShipyardView from './views/ShipyardView.vue'
+import AccountView from './views/AccountView.vue'
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -20,6 +21,7 @@ export const router = createRouter({
     { path: '/settings', component: SettingsView },
     { path: '/system', component: SystemView },
     { path: '/shipyard', component: ShipyardView },
+    { path: '/account', component: AccountView },
   ],
 })
 

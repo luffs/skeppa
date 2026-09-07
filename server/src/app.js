@@ -10,6 +10,7 @@ import { githubRoutes, settingsRoutes } from './routes/github.js'
 import { webhookRoutes } from './routes/webhooks.js'
 import { systemRoutes } from './routes/system.js'
 import { userRoutes } from './routes/users.js'
+import { accountRoutes } from './routes/account.js'
 import { proxyApiRoutes } from './routes/proxy.js'
 import { imageRoutes } from './routes/images.js'
 
@@ -38,6 +39,7 @@ export function createApp({ db, config, liveState, hub, runner, github, poller, 
   app.route('/api/settings', settingsRoutes({ db, config, github }))
   app.route('/api/system', systemRoutes({ db, config, poller }))
   app.route('/api/users', userRoutes({ db, liveState }))
+  app.route('/api/account', accountRoutes({ db })) // self-service — every role
   app.route('/api/proxy', proxyApiRoutes({ db, proxy, liveState }))
   app.route('/api/images', imageRoutes({ db, config, liveState }))
 
