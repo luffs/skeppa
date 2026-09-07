@@ -1,4 +1,3 @@
-import { createBunWebSocket } from 'hono/bun'
 import { mkdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -7,7 +6,6 @@ import { openDb } from './db/index.js'
 import { migrate } from './db/migrate.js'
 import { pruneSessions } from './auth/sessions.js'
 import { createLiveState, initLiveState } from './live/state.js'
-import { Hub } from './live/hub.js'
 import { createLiveStores } from './live/stores.js'
 import { createLiveTransport } from './live/transport.js'
 import { createPoller } from './live/poller.js'
@@ -47,38 +45,28 @@ const poller = createPoller({
 // before this boot writes anything else, so the next backup is clean.
 if (upgradeNotifyUrl(db, config.masterKey)) console.log('notify_url: legacy plaintext value now stored encrypted')
 
-// LiveState reaches browsers as lazy-storage stores at /live; the Hub's /ws
-// carries deploy logs. The poller polls fast while anyone is looking
-// through either.
-let wsClients = 0
+// Live state and deploy logs reach browsers as lazy-storage stores at /live.
+// The poller polls fast while anyone is looking.
 const liveStores = createLiveStores({
   liveState,
-  onSessionsChange: n => poller.setFast(wsClients + n > 0),
-})
-const hub = new Hub({
-  onClientsChange: n => {
-    wsClients = n
-    poller.setFast(n + liveStores.sessions > 0)
+  // Deploy logs echo env values: a tenant may only follow their own
+  // deployments. Admins pass.
+  canReadDeployment: (user, deploymentId) => {
+    if (user.role === 'admin') return true
+    const row = db.query(
+      'SELECT p.owner_id FROM deployments d JOIN projects p ON p.id = d.project_id WHERE d.id = ?'
+    ).get(deploymentId)
+    return row?.owner_id === user.id
   },
+  onSessionsChange: n => poller.setFast(n > 0),
 })
 // Always on: the crash watch must run with nobody looking. Clients connecting
 // only switch the cadence from idle to live.
 poller.start()
 const runner = new DeployRunner({
-  db, config, liveState, hub, github, poller,
+  db, config, liveState, logs: liveStores, github, poller,
   notify: text => sendNotification(db, config.masterKey, text),
 })
-hub.getLogBacklog = id => runner.getActiveLog(id)
-// Deploy logs echo env values: tenant sockets follow only their own
-// deployments. Admin sockets (and sockets without a user, which the
-// upgrade never produces) pass.
-hub.canReadDeployment = (user, deploymentId) => {
-  if (!user || user.role === 'admin') return true
-  const row = db.query(
-    'SELECT p.owner_id FROM deployments d JOIN projects p ON p.id = d.project_id WHERE d.id = ?'
-  ).get(deploymentId)
-  return row?.owner_id === user.id
-}
 
 const proxy = createProxy({ db, config })
 // Bring the harbor gate back in sync after a restart (config may have changed
@@ -91,9 +79,8 @@ if (proxySettings(db).baseDomain) {
 // would write their decrypted env to disk) — the panel starts them itself.
 resurrectApps({ db, config }).catch(err => console.error('[resurrect] failed:', err.message))
 
-const { upgradeWebSocket, websocket: honoWebsocket } = createBunWebSocket()
-const app = createApp({ db, config, liveState, hub, runner, github, poller, proxy, upgradeWebSocket })
-const live = createLiveTransport({ db, liveStores, honoWebsocket })
+const app = createApp({ db, config, liveState, runner, github, poller, proxy })
+const live = createLiveTransport({ db, liveStores })
 
 const server = Bun.serve({
   hostname: config.host,

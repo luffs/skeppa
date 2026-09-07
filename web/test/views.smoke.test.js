@@ -42,10 +42,9 @@ vi.mock('../src/api.js', () => {
     },
   }
 })
-vi.mock('../src/ws.js', () => ({ connectWs() {}, disconnectWs() {}, subscribeLogs() { return () => {} } }))
 // live.js would replace store.live with the store-backed composition; the
 // harness seeds store.live itself.
-vi.mock('../src/live.js', () => ({ connectLive() {}, disconnectLive() {} }))
+vi.mock('../src/live.js', () => ({ connectLive() {}, disconnectLive() {}, subscribeLogs() { return () => {} } }))
 
 import { store } from '../src/store.js'
 import DashboardView from '../src/views/DashboardView.vue'

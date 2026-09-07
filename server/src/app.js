@@ -1,8 +1,7 @@
 import { Hono } from 'hono'
-import { getCookie } from 'hono/cookie'
 import { serveStatic } from 'hono/bun'
 import { existsSync } from 'node:fs'
-import { requireSession, requireAdmin, getSession, COOKIE_NAME } from './auth/sessions.js'
+import { requireSession, requireAdmin } from './auth/sessions.js'
 import { authRoutes } from './routes/auth.js'
 import { projectRoutes } from './routes/projects.js'
 import { deploymentRoutes } from './routes/deployments.js'
@@ -14,7 +13,9 @@ import { accountRoutes } from './routes/account.js'
 import { proxyApiRoutes } from './routes/proxy.js'
 import { imageRoutes } from './routes/images.js'
 
-export function createApp({ db, config, liveState, hub, runner, github, poller, proxy, upgradeWebSocket }) {
+// The WebSocket is not here: lazy-storage serves live state and deploy logs
+// at /live, mounted ahead of this app in index.js.
+export function createApp({ db, config, liveState, runner, github, poller, proxy }) {
   const app = new Hono()
 
   app.onError((err, c) => {
@@ -42,35 +43,6 @@ export function createApp({ db, config, liveState, hub, runner, github, poller, 
   app.route('/api/account', accountRoutes({ db })) // self-service — every role
   app.route('/api/proxy', proxyApiRoutes({ db, proxy, liveState }))
   app.route('/api/images', imageRoutes({ db, config, liveState }))
-
-  // WebSocket: session is validated before the upgrade happens.
-  app.get(
-    '/ws',
-    async (c, next) => {
-      const cookie = getCookie(c, COOKIE_NAME)
-      const session = getSession(db, cookie)
-      if (!session) {
-        console.log(`[ws] unauthorized connection attempt (cookie: ${cookie ? 'present' : 'missing'})`)
-        return c.text('unauthorized', 401)
-      }
-      // The socket keeps the identity it connected with (a mid-connection
-      // role change applies on reconnect) — the hub uses it to gate what
-      // the live stream may carry to this client.
-      c.set('wsUser', db.query('SELECT id, role FROM users WHERE id = ?').get(session.user_id) ?? null)
-      await next()
-    },
-    upgradeWebSocket(c => ({
-      onOpen: (_evt, ws) => {
-        console.log('[ws] connection opened')
-        hub.add(ws.raw, c.get('wsUser'))
-      },
-      onMessage: (evt, ws) => hub.handleMessage(ws.raw, evt.data),
-      onClose: (_evt, ws) => {
-        console.log('[ws] connection closed')
-        hub.remove(ws.raw)
-      },
-    }))
-  )
 
   // Static SPA (prod build). In dev, Vite serves the frontend and proxies here.
   // serveStatic handles Content-Type and rejects traversal ('..', '\', '//').

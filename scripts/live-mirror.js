@@ -5,7 +5,8 @@
 //   bun scripts/live-mirror.js http://127.0.0.1:3000 <username> <password> [store ...]
 //
 // Without store ids: harbor and your own fleet — and, for an admin, panel
-// and every user's fleet. `--once` exits after the snapshots have landed.
+// and every user's fleet. A running deployment's log is `deploy-<id>`.
+// `--once` exits after the snapshots have landed.
 import { createClient, createConnection, webSocketTransport } from 'lazy-storage'
 
 const args = process.argv.slice(2)
@@ -51,11 +52,12 @@ const connection = createConnection({
 connection.on('status', status => console.log(`# socket ${status}`))
 connection.on('closed', closed => closed && console.log(`# socket closed: ${closed.code} ${closed.message}`))
 
-const REGISTERS = {
-  panel: ['images/managed', 'images/local'],
-  harbor: [],
+// Each kind of store declares its arrays of records (server/src/live/stores.js)
+const registersFor = id => {
+  if (id === 'panel') return ['images/managed', 'images/local']
+  if (id.startsWith('fleet-')) return ['projects/*/recentDeployments']
+  return [] // harbor, deploy-<id>
 }
-const registersFor = id => REGISTERS[id] ?? ['projects/*/recentDeployments']
 
 let pendingSnapshots = wanted.length
 for (const id of wanted) {

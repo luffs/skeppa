@@ -16,24 +16,26 @@ export class DeployError extends Error {
   }
 }
 
-// Collects log lines for one deployment: pushes each line to WS subscribers
-// immediately, batches DB writes (one UPDATE per second, not per line).
+// Collects log lines for one deployment: pushes each line into the
+// deployment's live store immediately (live/stores.js), batches DB writes
+// (one UPDATE per second, not per line).
 class LogCollector {
-  constructor(db, hub, deploymentId) {
+  constructor(db, logs, deploymentId) {
     this.db = db
-    this.hub = hub
+    this.logs = logs
     this.deploymentId = deploymentId
     this.text = ''
     this.pending = ''
     this.timer = null
     this.line = this.line.bind(this)
+    this.logs.openLog(deploymentId)
   }
 
   line(line) {
     const l = String(line)
     this.text += l + '\n'
     this.pending += l + '\n'
-    this.hub.sendLog(this.deploymentId, l)
+    this.logs.appendLog(this.deploymentId, l)
     if (!this.timer) this.timer = setTimeout(() => this.flush(), 1000)
   }
 
@@ -75,11 +77,11 @@ export function recoverInterrupted(db) {
 // runs, at most one more waits; a newer enqueue replaces the waiting one
 // (which is marked cancelled).
 export class DeployRunner {
-  constructor({ db, config, liveState, hub, github, execute, containerClient = null, notify = null, poller = null }) {
+  constructor({ db, config, liveState, logs, github, execute, containerClient = null, notify = null, poller = null }) {
     this.db = db
     this.config = config
     this.liveState = liveState
-    this.hub = hub
+    this.logs = logs // live/stores.js: openLog / appendLog / closeLog
     this.github = github
     this.notify = notify ?? (() => {}) // fire-and-forget; never awaited
     this.containerClient = containerClient // test injection; null = real engine
@@ -140,7 +142,7 @@ export class DeployRunner {
   }
 
   async _run(projectId, deploymentId) {
-    const log = new LogCollector(this.db, this.hub, deploymentId)
+    const log = new LogCollector(this.db, this.logs, deploymentId)
     this.activeLogs.set(deploymentId, log)
     const startedAt = new Date().toISOString()
     this.db.query(`UPDATE deployments SET status = 'running', started_at = ? WHERE id = ?`)
@@ -177,6 +179,7 @@ export class DeployRunner {
     const finishedAt = new Date().toISOString()
     log.flush()
     this.activeLogs.delete(deploymentId)
+    this.logs.closeLog(deploymentId)
     this.db.query(
       `UPDATE deployments SET status = ?, exit_code = ?, finished_at = ? WHERE id = ?`
     ).run(status, exitCode, finishedAt, deploymentId)

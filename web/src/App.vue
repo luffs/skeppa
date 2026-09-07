@@ -35,7 +35,6 @@
 import AppDialog from './components/AppDialog.vue'
 import { store } from './store.js'
 import { api } from './api.js'
-import { disconnectWs } from './ws.js'
 import { disconnectLive } from './live.js'
 import { currentTheme, toggleTheme } from './lib/theme.js'
 
@@ -59,7 +58,6 @@ export default {
       await api.post('/api/auth/logout').catch(() => {})
       store.user = null
       disconnectLive()
-      disconnectWs()
       this.$router.push('/login')
     },
   },

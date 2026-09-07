@@ -35,7 +35,6 @@
 <script>
 import { api } from '../api.js'
 import { store } from '../store.js'
-import { connectWs } from '../ws.js'
 import { connectLive } from '../live.js'
 import { currentTheme, toggleTheme } from '../lib/theme.js'
 
@@ -85,7 +84,6 @@ export default {
           password: this.password,
         })
         connectLive()
-        connectWs()
         this.$router.push('/')
       } catch (err) {
         this.error = err.message
@@ -102,7 +100,6 @@ export default {
         const idToken = await result.user.getIdToken()
         store.user = await api.post('/api/auth/firebase', { idToken })
         connectLive()
-        connectWs()
         this.$router.push('/')
       } catch (err) {
         // Closing the popup is not an error worth surfacing.

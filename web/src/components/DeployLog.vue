@@ -13,10 +13,10 @@
 
 <script>
 import { api } from '../api.js'
-import { subscribeLogs } from '../ws.js'
+import { subscribeLogs } from '../live.js'
 
-// Live log for running deployments (WS subscription with server-sent backlog),
-// stored log for finished ones. Auto-scrolls unless the user scrolled up.
+// Live log for running deployments (the deployment's own store, backlog on
+// open), stored log for finished ones. Auto-scrolls unless the user scrolled up.
 export default {
   name: 'DeployLog',
   props: {

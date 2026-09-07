@@ -16,6 +16,16 @@ import { expandRegisters, registerSet, setAt, valueAt } from 'lazy-storage/core'
 // writing the LiveState proxy; the bridge below forwards each lazy-watch
 // batch to the stores it belongs to, so the writers never learn that stores
 // exist. Clients are read-only mirrors — `validate` refuses every client op.
+//
+// A running deployment's log is a store of its own:
+//
+//   deploy-<id>    { lines: { <zero-padded seq>: line } }    canReadDeployment
+//
+// opened by the runner's LogCollector (openLog / appendLog / closeLog).
+// Opening it delivers the backlog as the snapshot, a reconnect gets a delta,
+// and the store is evicted when the deploy finishes — the stored log is on
+// the API from then on. Deploy logs echo ENV values, so who may open one is
+// the caller's rule (index.js: admins, or the project's owner).
 
 // Arrays of records travel as whole values and must be declared; an
 // undeclared one is refused by the store. Primitive arrays (loadavg, a
@@ -27,8 +37,11 @@ export const HARBOR_REGISTERS = []
 const LIVE_REGISTERS = registerSet([...FLEET_REGISTERS, ...PANEL_REGISTERS])
 
 const FLEET_ID = /^fleet-\d+$/
+const DEPLOY_ID = /^deploy-(\d+)$/
 export const fleetId = ownerId => `fleet-${ownerId}`
+export const deployStoreId = deploymentId => `deploy-${deploymentId}`
 
+// The rule for the live-state stores; deploy logs are the caller's (below).
 export function canOpenStore(user, id) {
   if (!user) return false
   if (id === 'harbor') return true
@@ -61,10 +74,12 @@ function withoutNulls(node) {
 
 export function createLiveStores({
   liveState,
+  canReadDeployment = () => false,
   onError = err => console.error('[live]', err?.message ?? err),
   onSessionsChange = () => {},
 }) {
   const stores = new Map()
+  const logs = new Map() // deploymentId -> { store, seq }
   // Last known owner per project id: a deletion diff arrives after the
   // project is gone from state, and it still has to reach its owner's fleet.
   const owners = new Map()
@@ -188,11 +203,52 @@ export function createLiveStores({
   }
   LazyWatch.on(liveState, listener)
 
+  function canOpen(user, id) {
+    const deploy = DEPLOY_ID.exec(id)
+    if (deploy) return Boolean(user) && Boolean(canReadDeployment(user, Number(deploy[1])))
+    return canOpenStore(user, id)
+  }
+
+  // --- deploy logs -----------------------------------------------------------
+  function openLog(deploymentId) {
+    if (logs.has(deploymentId)) return
+    const store = mirrorStore({ lines: {} }, [])
+    add(deployStoreId(deploymentId), store)
+    logs.set(deploymentId, { store, seq: 0 })
+  }
+
+  // One leaf per line: a patch is the line, a snapshot is the backlog, and
+  // keys sort as strings in arrival order.
+  function appendLog(deploymentId, line) {
+    const log = logs.get(deploymentId)
+    if (!log) return
+    log.seq += 1
+    try {
+      log.store.patch({ lines: { [String(log.seq).padStart(7, '0')]: String(line) } })
+    } catch (err) {
+      onError(new Error(`deploy log ${deploymentId}: ${err.message}`, { cause: err }))
+    }
+  }
+
+  // Everyone following is told the store is over (the client reads the
+  // stored log from the API from here), then the store and its lines go.
+  function closeLog(deploymentId) {
+    const log = logs.get(deploymentId)
+    if (!log) return
+    logs.delete(deploymentId)
+    stores.delete(deployStoreId(deploymentId))
+    log.store.closeSessions(() => true, 'deployment finished')
+    log.store.dispose()
+  }
+
   return {
     // The shape createHandlers takes as `stores`: get(id) → store or null
     get: id => stores.get(id) ?? null,
     ids: () => [...stores.keys()],
-    canOpen: canOpenStore,
+    canOpen,
+    openLog,
+    appendLog,
+    closeLog,
     get sessions() {
       return sessions
     },

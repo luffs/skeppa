@@ -17,7 +17,7 @@ const migrationsDir = fileURLToPath(new URL('../src/db/migrations', import.meta.
 const tick = () => new Promise(r => setTimeout(r, 0))
 const wait = ms => new Promise(r => setTimeout(r, ms))
 
-function setup() {
+function setup(options = {}) {
   const db = new Database(':memory:')
   migrate(db, migrationsDir)
   db.query("INSERT INTO users (username, password_hash, role) VALUES ('cap', 'x', 'admin')").run()
@@ -30,7 +30,7 @@ function setup() {
   initLiveState(liveState, db, {})
   liveState.system = { appsDir: '/apps', loadavg: [0.1, 0.2, 0.3], containers: {}, pm2: {} }
   const errors = []
-  const live = createLiveStores({ liveState, onError: err => errors.push(err.message) })
+  const live = createLiveStores({ liveState, onError: err => errors.push(err.message), ...options })
   const admin = { id: 1, role: 'admin' }
   const bob = { id: 2, role: 'tenant' }
   return { db, liveState, live, errors, admin, bob }
@@ -177,6 +177,48 @@ test('a tenant mirror follows its own fleet, is refused the rest, and cannot wri
   expect(refused).toEqual(['forbidden'])
   expect(mine.state.projects[2].pm2.status).toBe('online')
   expect(live.get('fleet-2').state.projects[2].pm2.status).toBe('online')
+})
+
+test('a running deployment is a store: owner-gated, the backlog on open, lines as they come, evicted at the end', async () => {
+  const { db, live, admin, bob } = setup({
+    // wired exactly as index.js wires it
+    canReadDeployment: (user, deploymentId) => {
+      if (user.role === 'admin') return true
+      const row = db.query('SELECT p.owner_id FROM deployments d JOIN projects p ON p.id = d.project_id WHERE d.id = ?').get(deploymentId)
+      return row?.owner_id === user.id
+    },
+  })
+  db.query(`INSERT INTO deployments (project_id, "trigger", log) VALUES (1, 'manual', '')`).run() // admin's, id 1
+  db.query(`INSERT INTO deployments (project_id, "trigger", log) VALUES (2, 'manual', '')`).run() // bob's, id 2
+  live.openLog(1)
+  live.appendLog(1, 'ADMIN_SECRET=x')
+  live.openLog(2)
+  live.appendLog(2, 'first')
+
+  const net = createNetwork({
+    session: ({ send, user }) => createHub(id => live.get(id), { send, user, authorize: live.canOpen }),
+  })
+  const follow = (store, user) => net.client({ store, initial: { lines: {} }, undo: false, presence: false }, { user })
+  const theirs = follow('deploy-1', bob)
+  const mine = follow('deploy-2', bob)
+  const admins = follow('deploy-1', admin)
+  await net.settle()
+  expect(theirs.closed?.code).toBe('forbidden') // not his
+  expect(Object.values(mine.state.lines)).toEqual(['first']) // the backlog is the snapshot
+  expect(Object.values(admins.state.lines)).toEqual(['ADMIN_SECRET=x'])
+
+  live.appendLog(2, 'second')
+  await net.settle()
+  const inOrder = client => Object.keys(client.state.lines).sort().map(k => client.state.lines[k])
+  expect(inOrder(mine)).toEqual(['first', 'second'])
+
+  live.closeLog(2)
+  await net.settle()
+  expect(mine.closed?.code).toBe('evicted')
+  expect(live.get('deploy-2')).toBeNull()
+  expect(live.get('deploy-1')).not.toBeNull()
+  live.appendLog(2, 'late') // nothing to write to; no throw
+  expect(live.canOpen(null, 'deploy-1')).toBe(false)
 })
 
 test('the admin opens every fleet; a project created later shows up in the right one', async () => {

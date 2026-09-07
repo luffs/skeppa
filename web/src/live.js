@@ -17,7 +17,8 @@ import { api } from './api.js'
 // views keep reading the shape they always have — `projects` is the merge
 // across fleets. Clients here only read: the server refuses any write.
 //
-// Deploy logs are not stores; they still ride Hono's /ws (ws.js).
+// A running deployment's log is a store of its own, deploy-<id>, on the same
+// socket (subscribeLogs below).
 
 // Arrays of records travel as whole values and both sides declare them; the
 // server reports a mismatch on every snapshot.
@@ -101,6 +102,59 @@ function syncFleets(ids) {
   refreshReady()
 }
 
+// --- deploy logs -------------------------------------------------------------
+// deploy-<id> holds one leaf per line, keyed by a zero-padded sequence
+// number. Opening it delivers the backlog as the snapshot, lines then arrive
+// as patches, and the server evicts the store when the deploy finishes — the
+// component swaps to the stored log from the API at that point.
+const logClients = new Map() // deploymentId -> { db, listeners, seen, synced }
+
+// Returns an unsubscribe function. Events: { type: 'backlog', log } once for
+// the lines present when the store opened, then { type: 'line', line } each.
+export function subscribeLogs(deploymentId, fn) {
+  let entry = logClients.get(deploymentId)
+  if (!entry) {
+    if (!connection) {
+      console.warn(`live: not connected — no log stream for deployment ${deploymentId}`)
+      return () => {}
+    }
+    const db = createClient({
+      connection, store: `deploy-${deploymentId}`, initial: { lines: {} }, undo: false, cache: false, presence: false,
+    })
+    entry = { db, listeners: new Set(), seen: new Set(), synced: false }
+    logClients.set(deploymentId, entry)
+    const emit = event => {
+      for (const listener of entry.listeners) listener(event)
+    }
+    db.watch(diff => {
+      const lines = diff?.lines
+      if (!lines || typeof lines !== 'object') return
+      // A snapshot after a reconnect repeats what was seen; only new keys count
+      const keys = Object.keys(lines).filter(k => typeof lines[k] === 'string' && !entry.seen.has(k)).sort()
+      if (!keys.length) return
+      for (const k of keys) entry.seen.add(k)
+      if (!entry.synced) {
+        entry.synced = true
+        emit({ type: 'backlog', log: keys.map(k => lines[k] + '\n').join('') })
+      } else {
+        for (const k of keys) emit({ type: 'line', line: lines[k] })
+      }
+    })
+    db.on('closed', closed => {
+      // 'evicted' is the deploy finishing; anything else is worth a look
+      if (closed?.code !== 'evicted') console.warn(`live: deploy-${deploymentId} closed — ${closed?.code}: ${closed?.message}`)
+    })
+    db.connect()
+  }
+  entry.listeners.add(fn)
+  return () => {
+    entry.listeners.delete(fn)
+    if (entry.listeners.size) return
+    logClients.delete(deploymentId)
+    entry.db.disconnect()
+  }
+}
+
 export function connectLive() {
   if (connection || !store.user) return
   const proto = location.protocol === 'https:' ? 'wss' : 'ws'
@@ -123,6 +177,8 @@ export function connectLive() {
 
 export function disconnectLive() {
   for (const id of [...clients.keys()]) close(id)
+  for (const entry of logClients.values()) entry.db.disconnect()
+  logClients.clear()
   const conn = connection
   connection = null
   conn?.close()

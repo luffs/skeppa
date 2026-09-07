@@ -6,7 +6,7 @@ A self-hosted deploy panel that turns a git push into a running app on your own 
 - Automatic deploy on push (GitHub App webhook, HMAC-verified) or manually from the UI
 - Per-project deploy script and ENV vars (AES-256-GCM encrypted at rest)
 - Run each app under pm2 or in a rootless-podman container — with per-project network profiles, memory caps and crash-loop alerts
-- Live status as [lazy-storage](https://www.npmjs.com/package/lazy-storage) stores (per-user by store, [lazy-watch](https://www.npmjs.com/package/lazy-watch) diffs on the wire) and live deploy logs over WebSockets
+- Live status and live deploy logs as [lazy-storage](https://www.npmjs.com/package/lazy-storage) stores over one WebSocket (per-user by store, [lazy-watch](https://www.npmjs.com/package/lazy-watch) diffs on the wire)
 - Optional extras once you're running: a throwaway-container build sandbox, managed images (Shipyard), wildcard subdomain routing (harbor gate), webhook notifications (ntfy/Discord/Slack)
 
 Stack: Bun, Hono, SQLite (`bun:sqlite`), Vue 3 (Options API) + Vite, pm2 + rootless podman. Plain ES6 JavaScript, no TypeScript.
@@ -72,7 +72,7 @@ deploy.example.com {
 <details>
 <summary>nginx instead</summary>
 
-Remember to proxy WS upgrades on `/ws` (deploy logs) and `/live` (the stores):
+Remember to proxy the WS upgrade on `/live`:
 
 ```nginx
 location / {
@@ -313,7 +313,7 @@ directory or the panel's process environment.
 ```bash
 bun install
 bun run dev:server        # Hono on :3000
-bun run dev:web           # Vite on :5173, proxies /api, /ws and /live to VITE_SKEPPA_API (web/.env)
+bun run dev:web           # Vite on :5173, proxies /api and /live to VITE_SKEPPA_API (web/.env)
 bun test                  # unit tests
 bun run test:web          # frontend smoke tests: every view mounted for both roles
 ```

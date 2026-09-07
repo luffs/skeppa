@@ -20,7 +20,7 @@ function setup(execute) {
     db,
     config: { appsDir: '/tmp/apps', masterKey: 'a'.repeat(64), deployTimeoutMs: 1000, selfPm2Name: 'skeppa' },
     liveState,
-    hub: { sendLog() {} },
+    logs: { openLog() {}, appendLog() {}, closeLog() {} },
     github: null,
     execute,
   })
@@ -182,7 +182,7 @@ test('a failed deploy fires the notifier; a successful one stays quiet', async (
     db,
     config: { appsDir: '/tmp/apps', masterKey: 'a'.repeat(64), deployTimeoutMs: 1000, selfPm2Name: 'skeppa' },
     liveState: createLiveState(),
-    hub: { sendLog() {} },
+    logs: { openLog() {}, appendLog() {}, closeLog() {} },
     github: null,
     execute,
     notify: text => notes.push(text),

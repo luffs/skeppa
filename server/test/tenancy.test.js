@@ -11,7 +11,6 @@ import { githubRoutes } from '../src/routes/github.js'
 import { requireAdmin } from '../src/auth/sessions.js'
 import { projectEngineNetworks } from '../src/containers/networks.js'
 import { DeployRunner } from '../src/deploy/runner.js'
-import { Hub } from '../src/live/hub.js'
 import { buildCaddyConfig } from '../src/proxy/index.js'
 import { setSetting } from '../src/db/settings.js'
 
@@ -131,7 +130,7 @@ test('tenant deploys refuse to run without the podman sandbox', async () => {
   const pending = []
   const runner = new DeployRunner({
     db, config: { ...config, sandbox: 'host', deployTimeoutMs: 1000 }, liveState,
-    hub: { sendLog() {} }, github: null,
+    logs: { openLog() {}, appendLog() {}, closeLog() {} }, github: null,
     execute: () => new Promise((resolve, reject) => pending.push({ resolve, reject })),
   })
   const id = runner.enqueue(2, { trigger: 'manual' }) // bob's project
@@ -147,7 +146,7 @@ test('tenant deploys run when the sandbox is on', async () => {
   const pending = []
   const runner = new DeployRunner({
     db, config: { ...config, sandbox: 'podman', deployTimeoutMs: 1000 }, liveState,
-    hub: { sendLog() {} }, github: null,
+    logs: { openLog() {}, appendLog() {}, closeLog() {} }, github: null,
     execute: () => new Promise(resolve => pending.push(resolve)),
   })
   runner.enqueue(2, { trigger: 'manual' })
@@ -215,35 +214,7 @@ test('requireAdmin turns tenants away from panel configuration', async () => {
   expect((await app.request('/x')).status).toBe(403)
 })
 
-test('the live log stream is owner-gated at subscribe time', () => {
-  const { db, admin, bob } = setup()
-  db.query(`INSERT INTO deployments (project_id, "trigger", log) VALUES (1, 'manual', '')`).run() // admin project
-  db.query(`INSERT INTO deployments (project_id, "trigger", log) VALUES (2, 'manual', '')`).run() // bob project
-  const hub = new Hub()
-  hub.getLogBacklog = () => 'backlog'
-  // wired exactly as index.js wires it
-  hub.canReadDeployment = (user, deploymentId) => {
-    if (!user || user.role === 'admin') return true
-    const row = db.query('SELECT p.owner_id FROM deployments d JOIN projects p ON p.id = d.project_id WHERE d.id = ?').get(deploymentId)
-    return row?.owner_id === user.id
-  }
-  const sock = () => ({ sent: [], send(s) { this.sent.push(JSON.parse(s)) } })
-  const bobSock = sock()
-  const adminSock = sock()
-  hub.add(bobSock, { id: bob.id, role: 'tenant' })
-  hub.add(adminSock, { id: admin.id, role: 'admin' })
-
-  hub.handleMessage(bobSock, JSON.stringify({ type: 'logs:subscribe', deploymentId: 1 })) // not his — denied
-  hub.handleMessage(bobSock, JSON.stringify({ type: 'logs:subscribe', deploymentId: 2 }))
-  hub.handleMessage(adminSock, JSON.stringify({ type: 'logs:subscribe', deploymentId: 1 }))
-  hub.sendLog(1, 'ADMIN_SECRET=x')
-  hub.sendLog(2, 'bob line')
-
-  expect(bobSock.sent.filter(m => m.type === 'logs:line'))
-    .toEqual([{ type: 'logs:line', deploymentId: 2, line: 'bob line' }])
-  expect(bobSock.sent.filter(m => m.type === 'logs:backlog').map(m => m.deploymentId)).toEqual([2])
-  expect(adminSock.sent.some(m => m.type === 'logs:line' && m.line === 'ADMIN_SECRET=x')).toBe(true)
-})
+// The live log stream is a store per deployment, owner-gated — see livestores.test.js.
 
 test('subdomains collide per namespace: two tenants may both be app.<handle>', async () => {
   const { db, liveState, config, admin, bob } = setup()
