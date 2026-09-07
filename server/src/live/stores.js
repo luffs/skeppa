@@ -1,6 +1,6 @@
 import { LazyWatch } from 'lazy-watch'
 import { createStore } from 'lazy-storage/server'
-import { expandRegisters, registerSet, setAt, valueAt } from 'lazy-storage/core'
+import { setAt, valueAt } from 'lazy-storage/core'
 
 // LiveState, served as lazy-storage stores.
 //
@@ -34,7 +34,6 @@ import { expandRegisters, registerSet, setAt, valueAt } from 'lazy-storage/core'
 export const FLEET_REGISTERS = ['projects/*/recentDeployments']
 export const PANEL_REGISTERS = ['images/managed', 'images/local']
 export const HARBOR_REGISTERS = []
-const LIVE_REGISTERS = registerSet([...FLEET_REGISTERS, ...PANEL_REGISTERS])
 
 const FLEET_ID = /^fleet-\d+$/
 const DEPLOY_ID = /^deploy-(\d+)$/
@@ -53,9 +52,7 @@ function mirrorStore(initial, registers) {
   return createStore({
     initial,
     registers,
-    // Clients only read: every op a client sends is refused, and the client
-    // resyncs from a snapshot.
-    validate: () => false,
+    readOnly: true, // clients only read; an op a client sends is refused and it resyncs
     rateLimit: false,
   })
 }
@@ -123,19 +120,21 @@ export function createLiveStores({
     return LazyWatch.isProxy(value) ? LazyWatch.snapshot(value) : value
   }
 
-  // A server patch is the authority (lazy-storage 0.10.1): a record
-  // recreated under a deleted key — a container after a deploy, a pm2
-  // process started again by hand — lands, and nothing here should ever be
-  // refused. Should the merge refuse a leaf anyway, the store would sit
-  // silently behind LiveState for good (the next batch only carries what
-  // changed since), so it is written again from the live value on the next
-  // turn, and reported if that keeps failing.
+  // patchFrom takes the batch as lazy-watch emitted it — array fragments are
+  // replaced with the whole arrays read from LiveState (every store's tree
+  // is a subtree of it at the same paths) — and patches as the server, which
+  // is the authority: a record recreated under a deleted key (a container
+  // after a deploy, a pm2 process started again by hand) lands, and nothing
+  // here should ever be refused. Should the merge refuse a leaf anyway, the
+  // store would sit silently behind LiveState for good (the next batch only
+  // carries what changed since), so it is written again from the live value
+  // on the next turn, and reported if that keeps failing.
   function write(id, diff, attempt = 0) {
     const store = stores.get(id)
     if (!store) return
     let result
     try {
-      result = store.patch(diff)
+      result = store.patchFrom(diff, liveState)
     } catch (err) {
       onError(new Error(`live store ${id}: ${err.message}`, { cause: err }))
       return
@@ -148,14 +147,12 @@ export function createLiveStores({
     setTimeout(() => {
       const repair = {}
       for (const path of result.rejected) setAt(repair, path, current(path))
-      write(id, expandRegisters(repair, LIVE_REGISTERS, liveState), attempt + 1)
+      write(id, repair, attempt + 1)
     }, 2)
   }
 
   function route(diff) {
-    // store.patch takes arrays only as whole values; lazy-watch emits them
-    // as fragments ({ 0: ..., $length }), expanded here from the live state.
-    const { projects, system, users, images, proxy } = expandRegisters(diff, LIVE_REGISTERS, liveState)
+    const { projects, system, users, images, proxy } = diff
     if (projects && typeof projects === 'object') {
       const fleets = new Map()
       for (const [id, subtree] of Object.entries(projects)) {

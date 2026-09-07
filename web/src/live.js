@@ -54,7 +54,7 @@ function refreshReady() {
 
 function open(id, initial, registers, mirror, onBatch = () => {}) {
   if (clients.has(id)) return
-  const db = createClient({ connection, store: id, initial, registers, undo: false, cache: false, presence: false })
+  const db = createClient({ connection, store: id, initial, registers, mirror: true })
   clients.set(id, db)
   db.watch(diff => {
     LazyWatch.patch(mirror, diff)
@@ -118,9 +118,7 @@ export function subscribeLogs(deploymentId, fn) {
       console.warn(`live: not connected — no log stream for deployment ${deploymentId}`)
       return () => {}
     }
-    const db = createClient({
-      connection, store: `deploy-${deploymentId}`, initial: { lines: {} }, undo: false, cache: false, presence: false,
-    })
+    const db = createClient({ connection, store: `deploy-${deploymentId}`, initial: { lines: {} }, mirror: true })
     entry = { db, listeners: new Set(), seen: new Set(), synced: false }
     logClients.set(deploymentId, entry)
     const emit = event => {
@@ -160,7 +158,7 @@ export function connectLive() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws'
   connection = createConnection({ transport: webSocketTransport(`${proto}://${location.host}/live`) })
   connection.on('status', status => {
-    store.connected = status === 'open' // 'offline' | 'connecting' | 'open'
+    store.connected = status === 'online' // the socket's: 'offline' | 'connecting' | 'online'
   })
   // The session is gone (expired, or the account was removed): the socket
   // will not come back on its own, and neither will the API calls.

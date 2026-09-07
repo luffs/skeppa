@@ -10,21 +10,21 @@
         "eslint": "^10.8.1",
         "eslint-plugin-vue": "^10.10.0",
         "globals": "^17.11.0",
-        "lazy-storage": "0.10.1",
+        "lazy-storage": "0.11.0",
       },
     },
     "server": {
       "name": "@skeppa/server",
       "dependencies": {
         "hono": "^4.6.0",
-        "lazy-storage": "0.10.1",
+        "lazy-storage": "0.11.0",
         "lazy-watch": "^6.2.1",
       },
     },
     "web": {
       "name": "@skeppa/web",
       "dependencies": {
-        "lazy-storage": "0.10.1",
+        "lazy-storage": "0.11.0",
         "lazy-watch": "^6.2.1",
         "vue": "^3.5.41",
         "vue-router": "^5.2.0",
@@ -315,7 +315,7 @@
 
     "keyv": ["keyv@4.5.4", "", { "dependencies": { "json-buffer": "3.0.1" } }, "sha512-oxVHkHR/EJf2CNXnWxRLW6mg7JyCCUcG0DtEGmL2ctUo1PNTin1PUil+r/+4r5MpVgC/fn1kjsx7mjSujKqIpw=="],
 
-    "lazy-storage": ["lazy-storage@0.10.1", "", { "dependencies": { "lazy-watch": "^6.2.1" }, "peerDependencies": { "react": ">=18", "vue": ">=3.2", "ws": ">=8" }, "optionalPeers": ["react", "vue", "ws"] }, "sha512-/6BlQgAhRlzv6sbljAAM0uT50TusJ5vfSMDIMYPHm/uv+5dWtG34UXycY3o3w4JNgf0691mwh4JM45PPS9xktg=="],
+    "lazy-storage": ["lazy-storage@0.11.0", "", { "dependencies": { "lazy-watch": "^6.2.1" }, "peerDependencies": { "react": ">=18", "vue": ">=3.2", "ws": ">=8" }, "optionalPeers": ["react", "vue", "ws"] }, "sha512-qVh3ahNGgDrixhFYA9L1Jk3+t+4FRp5qfRdv5MmlyuhoFPF0yiBfrCRcG6Xc9KFxgv4bmpauy8QRcRZFSghJHg=="],
 
     "lazy-watch": ["lazy-watch@6.2.1", "", {}, "sha512-RRe1iPFWl5MK068lPr/WnGry3fLN+saMhDXv8rlIy6IDdSj2u+n+x4M2qoJgXyllbEvRvxCXtr+uWMB/vOiE0Q=="],
 

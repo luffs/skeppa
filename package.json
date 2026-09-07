@@ -26,6 +26,6 @@
     "eslint": "^10.8.1",
     "eslint-plugin-vue": "^10.10.0",
     "globals": "^17.11.0",
-    "lazy-storage": "0.10.1"
+    "lazy-storage": "0.11.0"
   }
 }
