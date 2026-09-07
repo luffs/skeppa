@@ -50,6 +50,8 @@ export default {
   name: 'RoutingFields',
   props: {
     subdomain: { type: String, default: '' },
+    // The owner's namespace: tenant projects route as subdomain.handle.base.
+    handle: { type: String, default: '' },
     port: { type: [String, Number], default: '' },
     existing: { type: Boolean, default: false },
   },
@@ -60,7 +62,7 @@ export default {
     },
     routedUrl() {
       if (!this.subdomain || !this.baseDomain) return ''
-      return `https://${this.subdomain}.${this.baseDomain}`
+      return `https://${this.subdomain}.${this.handle ? `${this.handle}.` : ''}${this.baseDomain}`
     },
   },
 }

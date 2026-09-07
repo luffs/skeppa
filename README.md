@@ -266,6 +266,12 @@ injected into the app's environment as `PORT`. Your system Caddy forwards the wi
 with the one static block the panel shows you, and keeps owning TLS — give the wildcard a
 DNS-01 certificate or add `tls { on_demand }` to the block.
 
+Tenant projects route under their owner's handle — `app.bob.example.com` — so subdomains
+only collide within one namespace. Each tenant that routes something adds one more
+one-label wildcard block (`*.bob.example.com`) to the system Caddy; the panel shows every
+block it needs under Rigging → Harbor gate, and with DNS-01 each gets its certificate
+automatically.
+
 ## Notifications
 
 Point **Settings → Notifications** at any webhook that accepts a POST — an [ntfy](https://ntfy.sh)

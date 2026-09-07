@@ -28,7 +28,10 @@ setInterval(() => { store.now = Date.now() }, 1000)
 // any request of their own.
 export function appUrlFor(project) {
   const domain = store.live.proxy?.baseDomain
-  return project?.subdomain && domain ? `https://${project.subdomain}.${domain}` : ''
+  if (!project?.subdomain || !domain) return ''
+  // Tenant projects are routed under their owner's handle.
+  const nested = project.owner_role === 'tenant' && project.owner_handle
+  return `https://${project.subdomain}.${nested ? `${project.owner_handle}.` : ''}${domain}`
 }
 
 export function applyFullState(state) {

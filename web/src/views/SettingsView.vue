@@ -256,7 +256,7 @@
         <label style="margin-top: 20px">One-time setup for the system Caddy (ask the server admin)</label>
         <textarea class="code" readonly rows="3" :value="adminSnippet" @focus="$event.target.select()"></textarea>
         <p class="hint">
-          The wildcard needs a certificate: either a DNS-01 wildcard cert, or add
+          Each wildcard block needs its own certificate — with DNS-01 they issue automatically; or add
           <span class="mono" style="font-size: 12.5px">tls { on_demand }</span> to the block.
         </p>
 
@@ -375,7 +375,17 @@ export default {
       return Object.values(store.live.users ?? {}).sort((a, b) => a.username.localeCompare(b.username))
     },
     adminSnippet() {
-      return `*.${this.gateForm.base_domain || 'apps.example.com'} {\n    reverse_proxy localhost:${this.gateForm.http_port || 8100}\n}`
+      const base = this.gateForm.base_domain || 'apps.example.com'
+      const port = this.gateForm.http_port || 8100
+      // One extra one-label wildcard per tenant namespace that actually
+      // routes something — each block gets its own DNS-01 cert.
+      const handles = [...new Set(Object.values(store.live.projects ?? {})
+        .map(p => p.info)
+        .filter(i => i?.subdomain && i.owner_role === 'tenant' && i.owner_handle)
+        .map(i => i.owner_handle))].sort()
+      return [`*.${base}`, ...handles.map(h => `*.${h}.${base}`)]
+        .map(host => `${host} {\n    reverse_proxy localhost:${port}\n}`)
+        .join('\n')
     },
   },
   async created() {

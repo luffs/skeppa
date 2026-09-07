@@ -21,9 +21,20 @@ export function proxySettings(db) {
 
 export function proxyRouteRows(db) {
   return db.query(
-    `SELECT id, name, slug, subdomain, port FROM projects
-     WHERE subdomain IS NOT NULL AND port IS NOT NULL ORDER BY subdomain`
+    `SELECT p.id, p.name, p.slug, p.subdomain, p.port,
+            COALESCE(u.role, '') AS owner_role, COALESCE(u.handle, '') AS owner_handle
+     FROM projects p LEFT JOIN users u ON u.id = p.owner_id
+     WHERE p.subdomain IS NOT NULL AND p.port IS NOT NULL ORDER BY p.subdomain`
   ).all()
+}
+
+// The public host for a routed project. Tenants live under their handle —
+// subdomain.handle.base — so each tenant namespace is one more one-label
+// wildcard site block (with its own DNS-01 cert) in the admin's system
+// Caddy; admin projects keep the flat names that already have certs.
+export function routedHost(row, baseDomain) {
+  const nested = row.owner_role === 'tenant' && row.owner_handle
+  return `${row.subdomain}.${nested ? `${row.owner_handle}.` : ''}${baseDomain}`
 }
 
 // Full Caddy JSON config for the local instance. Returns null when no base
@@ -34,7 +45,7 @@ export function buildCaddyConfig(db) {
   if (!baseDomain) return null
 
   const routes = proxyRouteRows(db).map(p => ({
-    match: [{ host: [`${p.subdomain}.${baseDomain}`] }],
+    match: [{ host: [routedHost(p, baseDomain)] }],
     handle: [{ handler: 'reverse_proxy', upstreams: [{ dial: `localhost:${p.port}` }] }],
   }))
   // Unmatched hosts get an explicit 404 instead of caddy's empty default.

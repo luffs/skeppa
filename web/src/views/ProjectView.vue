@@ -137,7 +137,7 @@
         v-model:network-profile="edit.network_profile"
         v-model:host-access="edit.host_access"
         v-model:networks="edit.networks"
-        :tenant="store.user?.role === 'tenant'"
+        :tenant="isTenant"
         existing
       />
       <label>Working subdirectory</label>
@@ -152,7 +152,12 @@
         (e.g. Vite at build time); it writes <span class="mono">shared/.env</span> plus a copy in
         the working directory. Turning it off deletes those files.
       </p>
-      <RoutingFields v-model:subdomain="edit.subdomain" v-model:port="edit.port" existing />
+      <RoutingFields
+        v-model:subdomain="edit.subdomain"
+        v-model:port="edit.port"
+        :handle="project.owner_role === 'tenant' ? project.owner_handle : ''"
+        existing
+      />
       <p v-if="saveError" class="error">{{ saveError }}</p>
       <p v-if="saved" class="hint">Saved ✔</p>
       <div class="row" style="margin-top: 22px; justify-content: space-between">
@@ -204,7 +209,7 @@ import RuntimeFields from '../components/RuntimeFields.vue'
 import RoutingFields from '../components/RoutingFields.vue'
 import { api } from '../api.js'
 import { confirmDialog, alertDialog } from '../lib/dialog.js'
-import { liveProject, appUrlFor } from '../store.js'
+import { store, liveProject, appUrlFor } from '../store.js'
 import { timeAgo, duration, uptimeSince, bytes } from '../lib/format.js'
 
 export default {
@@ -233,6 +238,11 @@ export default {
     }
   },
   computed: {
+    // Templates only see what the instance exposes — raw store reads in the
+    // template throw, so the role check lives here.
+    isTenant() {
+      return store.user?.role === 'tenant'
+    },
     live() {
       return liveProject(Number(this.id))
     },

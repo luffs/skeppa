@@ -71,7 +71,11 @@
         :tenant="isTenant"
       />
 
-      <RoutingFields v-model:subdomain="form.subdomain" v-model:port="form.port" />
+      <RoutingFields
+        v-model:subdomain="form.subdomain"
+        v-model:port="form.port"
+        :handle="isTenant ? myHandle : ''"
+      />
 
       <p v-if="error" class="error">{{ error }}</p>
       <p style="margin: 22px 0 0">
@@ -102,6 +106,7 @@ export default {
       pm2NameTouched: false,
       externalRepo: false,
       isTenant: store.user?.role === 'tenant',
+      myHandle: store.user?.handle ?? '',
       form: {
         repo_full_name: '',
         git_url: '',

@@ -87,11 +87,22 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
   const normalizeImage = value => (typeof value === 'string' && value.trim() ? value.trim() : null)
 
   // Field errors for subdomain/port collisions with other projects.
-  const routingConflicts = ({ subdomain, port }, excludeId = -1) => {
+  // A tenant's public names live under their handle, so bob's "app" and
+  // eve's "app" are different hosts — collisions only exist inside one
+  // namespace ('' = the admin's flat namespace).
+  const namespaceOf = ownerId => {
+    const u = ownerId == null ? null : db.query('SELECT role, handle FROM users WHERE id = ?').get(ownerId)
+    return u && u.role === 'tenant' && u.handle ? u.handle : ''
+  }
+
+  const routingConflicts = ({ subdomain, port, owner_id }, excludeId = -1) => {
     const errors = {}
-    if (subdomain != null &&
-        db.query('SELECT 1 FROM projects WHERE subdomain = ? AND id != ?').get(subdomain, excludeId)) {
-      errors.subdomain = 'subdomain already routed'
+    if (subdomain != null) {
+      const ns = namespaceOf(owner_id)
+      const clash = db.query('SELECT owner_id FROM projects WHERE subdomain = ? AND id != ?')
+        .all(subdomain, excludeId)
+        .some(row => namespaceOf(row.owner_id) === ns)
+      if (clash) errors.subdomain = 'subdomain already routed'
     }
     if (port != null &&
         db.query('SELECT 1 FROM projects WHERE port = ? AND id != ?').get(port, excludeId)) {
@@ -222,6 +233,7 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
       network_profile: 'network_profile' in body ? body.network_profile : (project.network_profile ?? 'open'),
       host_access: 'host_access' in body ? (body.host_access ? 1 : 0) : project.host_access,
       networks: 'networks' in body ? (typeof body.networks === 'string' ? body.networks.trim() : '') : project.networks,
+      owner_id: project.owner_id, // ownership never changes on edit
     }
     // Clearing the port (or saving a legacy project that never had one)
     // re-assigns the default rather than leaving the project portless.

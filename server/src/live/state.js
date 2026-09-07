@@ -38,8 +38,15 @@ export function getUserInfo(db, id) {
 export const PROJECT_INFO_COLUMNS =
   'id, slug, name, owner_id, repo_full_name, git_url, branch, deploy_script, build_image, run_image, runtime, pm2_name, start_command, cwd, auto_deploy, write_env_file, subdomain, port, memory_mb, network_profile, host_access, networks, created_at'
 
+// Joined with the owner so the client can build tenant-nested app URLs
+// (subdomain.handle.base) without a lookup; '' for the admin/legacy case,
+// per the LiveState string convention.
+const PROJECT_INFO_SELECT = `SELECT ${PROJECT_INFO_COLUMNS.split(', ').map(c => 'p.' + c).join(', ')},
+  COALESCE(u.role, '') AS owner_role, COALESCE(u.handle, '') AS owner_handle
+  FROM projects p LEFT JOIN users u ON u.id = p.owner_id`
+
 export function getProjectInfo(db, id) {
-  return db.query(`SELECT ${PROJECT_INFO_COLUMNS} FROM projects WHERE id = ?`).get(Number(id)) ?? null
+  return db.query(`${PROJECT_INFO_SELECT} WHERE p.id = ?`).get(Number(id)) ?? null
 }
 
 // The tail of the deployment history the dashboard's ship's log renders. It
@@ -89,7 +96,7 @@ export function initLiveState(liveState, db, config = {}) {
     liveState.users[user.id] = user
   }
   const projects = db.query(
-    `SELECT ${PROJECT_INFO_COLUMNS}, head_sha, head_message, head_pushed_at FROM projects`
+    `${PROJECT_INFO_SELECT.replace(' FROM projects', ', p.head_sha, p.head_message, p.head_pushed_at FROM projects')}`
   ).all()
   for (const { head_sha, head_message, head_pushed_at, ...info } of projects) {
     const last = db.query(

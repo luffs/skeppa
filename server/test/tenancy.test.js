@@ -11,6 +11,9 @@ import { githubRoutes } from '../src/routes/github.js'
 import { requireAdmin } from '../src/auth/sessions.js'
 import { projectEngineNetworks } from '../src/containers/networks.js'
 import { DeployRunner } from '../src/deploy/runner.js'
+import { Hub } from '../src/live/hub.js'
+import { buildCaddyConfig } from '../src/proxy/index.js'
+import { setSetting } from '../src/db/settings.js'
 
 const migrationsDir = fileURLToPath(new URL('../src/db/migrations', import.meta.url))
 const tick = () => new Promise(r => setTimeout(r, 0))
@@ -210,4 +213,63 @@ test('requireAdmin turns tenants away from panel configuration', async () => {
   app.use('*', requireAdmin())
   app.get('/x', c => c.json({ ok: true }))
   expect((await app.request('/x')).status).toBe(403)
+})
+
+test('the live log stream is owner-gated at subscribe time', () => {
+  const { db, liveState, admin, bob } = setup()
+  db.query(`INSERT INTO deployments (project_id, "trigger", log) VALUES (1, 'manual', '')`).run() // admin project
+  db.query(`INSERT INTO deployments (project_id, "trigger", log) VALUES (2, 'manual', '')`).run() // bob project
+  const hub = new Hub({ liveState })
+  hub.getLogBacklog = () => 'backlog'
+  // wired exactly as index.js wires it
+  hub.canReadDeployment = (user, deploymentId) => {
+    if (!user || user.role === 'admin') return true
+    const row = db.query('SELECT p.owner_id FROM deployments d JOIN projects p ON p.id = d.project_id WHERE d.id = ?').get(deploymentId)
+    return row?.owner_id === user.id
+  }
+  const sock = () => ({ sent: [], send(s) { this.sent.push(JSON.parse(s)) } })
+  const bobSock = sock()
+  const adminSock = sock()
+  hub.add(bobSock, { id: bob.id, role: 'tenant' })
+  hub.add(adminSock, { id: admin.id, role: 'admin' })
+
+  hub.handleMessage(bobSock, JSON.stringify({ type: 'logs:subscribe', deploymentId: 1 })) // not his — denied
+  hub.handleMessage(bobSock, JSON.stringify({ type: 'logs:subscribe', deploymentId: 2 }))
+  hub.handleMessage(adminSock, JSON.stringify({ type: 'logs:subscribe', deploymentId: 1 }))
+  hub.sendLog(1, 'ADMIN_SECRET=x')
+  hub.sendLog(2, 'bob line')
+
+  expect(bobSock.sent.filter(m => m.type === 'logs:line'))
+    .toEqual([{ type: 'logs:line', deploymentId: 2, line: 'bob line' }])
+  expect(bobSock.sent.filter(m => m.type === 'logs:backlog').map(m => m.deploymentId)).toEqual([2])
+  expect(adminSock.sent.some(m => m.type === 'logs:line' && m.line === 'ADMIN_SECRET=x')).toBe(true)
+})
+
+test('subdomains collide per namespace: two tenants may both be app.<handle>', async () => {
+  const { db, liveState, config, admin, bob } = setup()
+  db.query("INSERT INTO users (username, password_hash, role, handle) VALUES ('eve', 'x', 'tenant', 'eve')").run()
+  const eve = db.query('SELECT * FROM users WHERE username = ' + String.fromCharCode(39) + 'eve' + String.fromCharCode(39)).get()
+  const routes = projectRoutes({ db, config, liveState })
+  const make = (user, name, subdomain) => asUser(routes, user).request('/', {
+    method: 'POST',
+    body: JSON.stringify({ name, git_url: 'https://example.com/x.git', subdomain }),
+  })
+
+  expect((await make(bob, 'Bob Site', 'app')).status).toBe(201)
+  expect((await make(eve, 'Eve Site', 'app')).status).toBe(201) // different namespace
+  const dupe = await make(bob, 'Bob Again', 'app')
+  expect(dupe.status).toBe(400) // same namespace
+  expect((await dupe.json()).fields.subdomain).toContain('already routed')
+  expect((await make(admin, 'Admin Site', 'app')).status).toBe(201) // flat namespace is its own
+  expect((await make(admin, 'Admin Again', 'app')).status).toBe(400)
+})
+
+test('the harbor gate routes tenant projects under their handle', () => {
+  const { db } = setup()
+  setSetting(db, 'proxy_base_domain', 'apps.example.com')
+  db.query("UPDATE projects SET subdomain = 'adm' WHERE id = 1").run()
+  db.query("UPDATE projects SET subdomain = 'app' WHERE id = 2").run()
+  const cfg = buildCaddyConfig(db)
+  const hosts = cfg.apps.http.servers.skeppa.routes.flatMap(r => r.match?.[0]?.host ?? [])
+  expect(hosts.sort()).toEqual(['adm.apps.example.com', 'app.bob.apps.example.com'])
 })
