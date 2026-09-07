@@ -278,8 +278,8 @@ automatically.
 ## Notifications
 
 Point **Settings → Notifications** at any webhook that accepts a POST — an [ntfy](https://ntfy.sh)
-topic gets plain text, Discord and Slack webhook URLs are recognized and get their JSON shape.
-The panel notifies on failed deploys and on crash loops (repeated restarts within a few
+topic gets plain text, Discord and Slack webhook URLs are recognized and get their JSON shape;
+the URL is stored encrypted like ENV values. The panel notifies on failed deploys and on crash loops (repeated restarts within a few
 minutes — one alert per burst, then a cooldown). Restarts the panel itself causes — deploys,
 your own start/stop clicks — never alert, so a message always means something actually broke.
 

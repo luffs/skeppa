@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { sendNotification } from '../lib/notify.js'
+import { sendNotification, notifyUrl } from '../lib/notify.js'
 import { randomBytes } from 'node:crypto'
 import {
   getSetting, setSetting, setSecretSetting, deleteSetting,
@@ -173,6 +173,14 @@ export function githubRoutes({ db, config, github }) {
   return app
 }
 
+const hostOf = url => {
+  try {
+    return url ? new URL(url).hostname : ''
+  } catch {
+    return ''
+  }
+}
+
 export function settingsRoutes({ db, config, github, notifyFn = sendNotification }) {
   const app = new Hono()
 
@@ -183,15 +191,18 @@ export function settingsRoutes({ db, config, github, notifyFn = sendNotification
       has_private_key: getSetting(db, 'github_private_key') != null,
       has_webhook_secret: getSetting(db, 'github_webhook_secret') != null,
       firebase_config: getFirebaseConfig(db),
-      notify_url: getSetting(db, 'notify_url') ?? '',
+      // The webhook URL is a credential: presence and host only, like the
+      // other secrets — enough for the form to say what is configured.
+      has_notify_url: Boolean(notifyUrl(db, config.masterKey)),
+      notify_url_host: hostOf(notifyUrl(db, config.masterKey)),
     })
   })
 
   // One message through the configured webhook, so the URL can be verified
   // from the form instead of by waiting for something to break.
   app.post('/notify/test', async c => {
-    if (!(getSetting(db, 'notify_url') ?? '')) return c.json({ error: 'no webhook URL configured' }, 400)
-    const ok = await notifyFn(db, '⛵ Test notification from Skeppa — failed deploys and restart bursts will look like this.')
+    if (!notifyUrl(db, config.masterKey)) return c.json({ error: 'no webhook URL configured' }, 400)
+    const ok = await notifyFn(db, config.masterKey, '⛵ Test notification from Skeppa — failed deploys and restart bursts will look like this.')
     return c.json({ ok }, ok ? 200 : 502)
   })
 
@@ -225,7 +236,7 @@ export function settingsRoutes({ db, config, github, notifyFn = sendNotification
         if (!/^https?:$/.test(parsed.protocol) || raw.length > 2000) {
           return c.json({ error: 'notify_url must be an http(s) URL' }, 400)
         }
-        setSetting(db, 'notify_url', raw)
+        setSecretSetting(db, config.masterKey, 'notify_url', raw)
       }
     }
     if ('firebase_config' in body) {

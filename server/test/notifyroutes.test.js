@@ -2,7 +2,7 @@ import { test, expect } from 'bun:test'
 import { Database } from 'bun:sqlite'
 import { fileURLToPath } from 'node:url'
 import { migrate } from '../src/db/migrate.js'
-import { getSetting, setSetting } from '../src/db/settings.js'
+import { getSetting, setSetting, getSecretSetting } from '../src/db/settings.js'
 import { settingsRoutes } from '../src/routes/github.js'
 
 function setup(notifyFn) {
@@ -18,8 +18,13 @@ const put = (app, body) => app.request('/', { method: 'PUT', body: JSON.stringif
 test('the webhook URL round-trips and clears', async () => {
   const { db, app } = setup()
   expect((await put(app, { notify_url: 'https://ntfy.sh/topic' })).status).toBe(200)
-  expect(getSetting(db, 'notify_url')).toBe('https://ntfy.sh/topic')
-  expect((await (await app.request('/')).json()).notify_url).toBe('https://ntfy.sh/topic')
+  // encrypted at rest; the API reports presence and host, never the URL
+  expect(getSetting(db, 'notify_url')).not.toContain('ntfy.sh')
+  expect(getSecretSetting(db, 'a'.repeat(64), 'notify_url')).toBe('https://ntfy.sh/topic')
+  const status = await (await app.request('/')).json()
+  expect(status.has_notify_url).toBe(true)
+  expect(status.notify_url_host).toBe('ntfy.sh')
+  expect(status.notify_url).toBeUndefined()
 
   await put(app, { notify_url: null })
   expect(getSetting(db, 'notify_url')).toBe(null)
@@ -34,7 +39,7 @@ test('garbage and non-http URLs are rejected', async () => {
 
 test('the test endpoint sends through the notifier and reports the outcome', async () => {
   const sent = []
-  const { db, app } = setup(async (db_, text) => (sent.push(text), true))
+  const { db, app } = setup(async (db_, key_, text) => (sent.push(text), true))
   // without a URL there is nothing to test against
   expect((await app.request('/notify/test', { method: 'POST' })).status).toBe(400)
 

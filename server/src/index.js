@@ -9,7 +9,7 @@ import { pruneSessions } from './auth/sessions.js'
 import { createLiveState, initLiveState } from './live/state.js'
 import { Hub } from './live/hub.js'
 import { createPoller } from './live/poller.js'
-import { sendNotification } from './lib/notify.js'
+import { sendNotification, upgradeNotifyUrl } from './lib/notify.js'
 import { createProxy, proxySettings } from './proxy/index.js'
 import { GitHubApp } from './github/appClient.js'
 import { DeployRunner, recoverInterrupted } from './deploy/runner.js'
@@ -39,8 +39,12 @@ const github = new GitHubApp({ db, config })
 const poller = createPoller({
   db, config, liveState,
   onCrashAlert: (label, count) =>
-    sendNotification(db, `⚠ ${label} restarted ${count} times in the last 10 minutes — check the Engine room`),
+    sendNotification(db, config.masterKey, `⚠ ${label} restarted ${count} times in the last 10 minutes — check the Engine room`),
 })
+// A webhook URL saved by an older version sits in plaintext — encrypt it
+// before this boot writes anything else, so the next backup is clean.
+if (upgradeNotifyUrl(db, config.masterKey)) console.log('notify_url: legacy plaintext value now stored encrypted')
+
 const hub = new Hub({
   liveState,
   onClientsChange: n => poller.setFast(n > 0),
@@ -50,7 +54,7 @@ const hub = new Hub({
 poller.start()
 const runner = new DeployRunner({
   db, config, liveState, hub, github, poller,
-  notify: text => sendNotification(db, text),
+  notify: text => sendNotification(db, config.masterKey, text),
 })
 hub.getLogBacklog = id => runner.getActiveLog(id)
 // Deploy logs echo env values: tenant sockets follow only their own

@@ -293,7 +293,7 @@
 
     <CollapseSection title="Notifications">
       <template #meta>
-        <span v-if="status?.notify_url" class="chip green">on</span>
+        <span v-if="status?.has_notify_url" class="chip green">on · {{ status.notify_url_host }}</span>
       </template>
 
       <p class="hint" style="font-size: 13.5px">
@@ -306,14 +306,24 @@
       </p>
 
       <label>Webhook URL</label>
-      <input v-model="notifyForm.url" class="code" placeholder="https://ntfy.sh/my-secret-topic" />
+      <input
+        v-model="notifyForm.url"
+        class="code"
+        :placeholder="status?.has_notify_url
+          ? `configured (${status.notify_url_host}) — paste a new URL to replace it`
+          : 'https://ntfy.sh/my-secret-topic'"
+      />
+      <p class="hint">Stored encrypted, like ENV values — the URL is a credential and is never shown again.</p>
 
       <p v-if="notifyError" class="error">{{ notifyError }}</p>
       <p v-if="notifyMessage" class="hint">{{ notifyMessage }}</p>
       <div class="row" style="margin-top: 20px">
         <button :disabled="notifyBusy" @click="saveNotify">{{ notifyBusy ? 'Working…' : 'Save' }}</button>
-        <button class="secondary" :disabled="notifyBusy || !status?.notify_url" @click="testNotify">
+        <button class="secondary" :disabled="notifyBusy || !status?.has_notify_url" @click="testNotify">
           Send test
+        </button>
+        <button v-if="status?.has_notify_url" class="secondary" :disabled="notifyBusy" @click="turnOffNotify">
+          Turn off
         </button>
       </div>
     </CollapseSection>
@@ -401,7 +411,7 @@ export default {
   methods: {
     async load() {
       this.status = await api.get('/api/settings')
-      this.notifyForm.url = this.status.notify_url ?? ''
+      // the webhook URL is write-only — the form never holds the stored value
       this.form.github_app_id = this.status.github_app_id ?? ''
       this.fbText = this.status.firebase_config ? JSON.stringify(this.status.firebase_config, null, 2) : ''
     },
@@ -521,12 +531,32 @@ export default {
       this.notifyMessage = ''
       try {
         const url = this.notifyForm.url.trim()
-        await api.put('/api/settings', { notify_url: url || null })
+        if (!url) {
+          this.notifyError = 'Paste a webhook URL — or use Turn off.'
+          return
+        }
+        await api.put('/api/settings', { notify_url: url })
         // The server stored exactly what we sent, so mirror it locally rather
         // than refetching every unrelated setting to learn one field.
-        this.status.notify_url = url
-        this.notifyForm.url = url
-        this.notifyMessage = url ? 'Saved ✔' : 'Notifications off.'
+        this.status.has_notify_url = true
+        this.status.notify_url_host = new URL(url).hostname
+        this.notifyForm.url = '' // write-only: the box empties once saved
+        this.notifyMessage = 'Saved ✔'
+      } catch (err) {
+        this.notifyError = err.message
+      } finally {
+        this.notifyBusy = false
+      }
+    },
+    async turnOffNotify() {
+      this.notifyBusy = true
+      this.notifyError = ''
+      this.notifyMessage = ''
+      try {
+        await api.put('/api/settings', { notify_url: null })
+        this.status.has_notify_url = false
+        this.status.notify_url_host = ''
+        this.notifyMessage = 'Notifications off.'
       } catch (err) {
         this.notifyError = err.message
       } finally {
