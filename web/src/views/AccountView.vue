@@ -15,9 +15,20 @@
           <label>Handle</label>
           <input :value="me.handle" class="code" readonly />
           <p class="hint">
-            Your projects route as
-            <span class="mono">&lt;subdomain&gt;.{{ me.handle }}.{{ baseDomain || '<base domain>' }}</span>
-            and your shared networks are namespaced by it. Set by the admin.
+            Your shared networks are namespaced by it<template v-if="!me.domain">, and your projects route as
+            <span class="mono">&lt;subdomain&gt;.{{ me.handle }}.{{ baseDomain || '<base domain>' }}</span></template>.
+            Set by the admin.
+          </p>
+          <label>Domain</label>
+          <input :value="me.domain || '— none —'" class="code" readonly />
+          <p class="hint" v-if="me.domain">
+            A domain of your own: your projects route as
+            <span class="mono">&lt;subdomain&gt;.{{ me.domain }}</span>, and the project whose subdomain is
+            <span class="mono">@</span> sits at <span class="mono">{{ me.domain }}</span> itself. Point its DNS
+            (the domain and a wildcard) at this server. Set by the admin.
+          </p>
+          <p class="hint" v-else>
+            The admin can route your projects under a domain of your own instead of the handle.
           </p>
           <label>GitHub login</label>
           <input :value="me.github_login || '— not linked —'" class="code" readonly />

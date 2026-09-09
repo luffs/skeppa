@@ -29,7 +29,7 @@ export function authRoutes({ db, config, getFirebaseUser = lookupFirebaseUser })
     if (!ok) return c.json({ error: 'invalid credentials' }, 401)
 
     issueSession(c, user.id)
-    return c.json({ id: user.id, username: user.username, role: user.role, handle: user.handle })
+    return c.json({ id: user.id, username: user.username, role: user.role, handle: user.handle, domain: user.domain })
   })
 
   // Public: the login page needs this to initialize Firebase before anyone is
@@ -61,7 +61,7 @@ export function authRoutes({ db, config, getFirebaseUser = lookupFirebaseUser })
     if (!user) return c.json({ error: `no crew member named ${account.email}` }, 401)
 
     issueSession(c, user.id)
-    return c.json({ id: user.id, username: user.username, role: user.role, handle: user.handle })
+    return c.json({ id: user.id, username: user.username, role: user.role, handle: user.handle, domain: user.domain })
   })
 
   app.post('/logout', c => {
@@ -73,8 +73,8 @@ export function authRoutes({ db, config, getFirebaseUser = lookupFirebaseUser })
   app.get('/me', c => {
     const session = getSession(db, getCookie(c, COOKIE_NAME))
     if (!session) return c.json({ error: 'unauthorized' }, 401)
-    const user = db.query('SELECT id, username, role, handle FROM users WHERE id = ?').get(session.user_id)
-    return c.json({ id: user?.id ?? null, username: user?.username ?? null, role: user?.role ?? null, handle: user?.handle ?? null })
+    const user = db.query('SELECT id, username, role, handle, domain FROM users WHERE id = ?').get(session.user_id)
+    return c.json({ id: user?.id ?? null, username: user?.username ?? null, role: user?.role ?? null, handle: user?.handle ?? null, domain: user?.domain ?? null })
   })
 
   return app

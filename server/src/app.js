@@ -39,7 +39,7 @@ export function createApp({ db, config, liveState, runner, github, poller, proxy
   app.route('/api/github', githubRoutes({ db, config, github }))
   app.route('/api/settings', settingsRoutes({ db, config, github }))
   app.route('/api/system', systemRoutes({ db, config, poller }))
-  app.route('/api/users', userRoutes({ db, liveState }))
+  app.route('/api/users', userRoutes({ db, liveState, proxy }))
   app.route('/api/account', accountRoutes({ db })) // self-service — every role
   app.route('/api/proxy', proxyApiRoutes({ db, proxy, liveState }))
   app.route('/api/images', imageRoutes({ db, config, liveState }))

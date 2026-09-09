@@ -166,6 +166,7 @@
         v-model:subdomain="edit.subdomain"
         v-model:port="edit.port"
         :handle="project.owner_role === 'tenant' ? project.owner_handle : ''"
+        :domain="project.owner_role === 'tenant' ? project.owner_domain : ''"
         existing
       />
       <p v-if="saveError" class="error">{{ saveError }}</p>

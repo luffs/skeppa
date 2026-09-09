@@ -26,7 +26,7 @@ export function getProxyInfo(db) {
 
 // The user row as rendered by the frontend (crew list). Never includes the
 // password hash.
-export const USER_INFO_COLUMNS = 'id, username, role, handle, created_at'
+export const USER_INFO_COLUMNS = 'id, username, role, handle, domain, created_at'
 
 export function getUserInfo(db, id) {
   return db.query(`SELECT ${USER_INFO_COLUMNS} FROM users WHERE id = ?`).get(Number(id)) ?? null
@@ -42,7 +42,7 @@ export const PROJECT_INFO_COLUMNS =
 // (subdomain.handle.base) without a lookup; '' for the admin/legacy case,
 // per the LiveState string convention.
 const PROJECT_INFO_SELECT = `SELECT ${PROJECT_INFO_COLUMNS.split(', ').map(c => 'p.' + c).join(', ')},
-  COALESCE(u.role, '') AS owner_role, COALESCE(u.handle, '') AS owner_handle
+  COALESCE(u.role, '') AS owner_role, COALESCE(u.handle, '') AS owner_handle, COALESCE(u.domain, '') AS owner_domain
   FROM projects p LEFT JOIN users u ON u.id = p.owner_id`
 
 export function getProjectInfo(db, id) {

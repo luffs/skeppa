@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { existsSync } from 'node:fs'
 import { encrypt, decrypt } from '../lib/crypto.js'
-import { slugify, validateProject, SLUG_RE, ENV_KEY_RE, PM2_ACTIONS } from '../lib/validate.js'
+import { slugify, validateProject, SLUG_RE, ENV_KEY_RE, PM2_ACTIONS, APEX } from '../lib/validate.js'
 import { projectDefaults, getProjectInfo } from '../live/state.js'
 import { syncManagedImages } from '../live/images.js'
 import { deleteProcess, describe } from '../deploy/pm2.js'
@@ -52,7 +52,7 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
   // Projects travel with their owner's role and handle: the deploy runner,
   // convoy naming and container recreation all key off them.
   const PROJECT_SELECT = `SELECT ${PROJECT_COLUMNS.split(', ').map(col => 'p.' + col).join(', ')}, p.owner_id,
-    u.role AS owner_role, u.handle AS owner_handle
+    u.role AS owner_role, u.handle AS owner_handle, u.domain AS owner_domain
     FROM projects p LEFT JOIN users u ON u.id = p.owner_id`
   const getProject = id => db.query(`${PROJECT_SELECT} WHERE p.id = ?`).get(Number(id))
 
@@ -90,14 +90,18 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
   // A tenant's public names live under their handle, so bob's "app" and
   // eve's "app" are different hosts — collisions only exist inside one
   // namespace ('' = the admin's flat namespace).
+  // A tenant with a domain of their own is a namespace of its own, too.
+  const ownerOf = ownerId => (ownerId == null ? null : db.query('SELECT role, handle, domain FROM users WHERE id = ?').get(ownerId))
   const namespaceOf = ownerId => {
-    const u = ownerId == null ? null : db.query('SELECT role, handle FROM users WHERE id = ?').get(ownerId)
-    return u && u.role === 'tenant' && u.handle ? u.handle : ''
+    const u = ownerOf(ownerId)
+    return u && u.role === 'tenant' ? u.domain || u.handle || '' : ''
   }
 
   const routingConflicts = ({ subdomain, port, owner_id }, excludeId = -1) => {
     const errors = {}
-    if (subdomain != null) {
+    if (subdomain === APEX && !ownerOf(owner_id)?.domain) {
+      errors.subdomain = 'the apex needs a domain of your own — the admin sets it under Rigging → Crew'
+    } else if (subdomain != null) {
       const ns = namespaceOf(owner_id)
       const clash = db.query('SELECT owner_id FROM projects WHERE subdomain = ? AND id != ?')
         .all(subdomain, excludeId)

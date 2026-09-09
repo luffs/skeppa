@@ -26,6 +26,9 @@ export const RUNTIMES = ['pm2', 'container']
 // same whitelist treatment as slugs.
 export const ROLES = ['admin', 'tenant']
 export const HANDLE_RE = /^[a-z0-9][a-z0-9-]{0,30}$/
+// A tenant may route under a domain of their own (users.domain) instead of
+// under the handle; the project whose subdomain is APEX sits at the domain itself.
+export const APEX = '@'
 export const GITHUB_LOGIN_RE = /^[A-Za-z0-9-]{1,39}$/
 
 // Plain-git projects: a public https clone URL, any host. Userinfo is
@@ -96,8 +99,8 @@ export function validateProject({ name, repo_full_name, git_url, branch, pm2_nam
   if (build_image != null && !IMAGE_RE.test(build_image)) errors.build_image = 'invalid image reference'
   if (run_image != null && !IMAGE_RE.test(run_image)) errors.run_image = 'invalid image reference'
   if (runtime != null && !RUNTIMES.includes(runtime)) errors.runtime = `must be one of ${RUNTIMES.join(', ')}`
-  if (subdomain != null && !SUBDOMAIN_RE.test(subdomain)) {
-    errors.subdomain = 'lowercase letters, digits and dashes only'
+  if (subdomain != null && subdomain !== APEX && !SUBDOMAIN_RE.test(subdomain)) {
+    errors.subdomain = 'lowercase letters, digits and dashes only (or @ for the apex of your own domain)'
   }
   if (port != null && !isValidPort(port)) errors.port = 'must be a port between 1 and 65535'
   if (memory_mb != null && !(Number.isInteger(memory_mb) && memory_mb >= 16 && memory_mb <= 1024 * 1024)) {

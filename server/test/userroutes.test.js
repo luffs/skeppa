@@ -3,12 +3,13 @@ import { Database } from 'bun:sqlite'
 import { Hono } from 'hono'
 import { fileURLToPath } from 'node:url'
 import { migrate } from '../src/db/migrate.js'
-import { createLiveState, initLiveState } from '../src/live/state.js'
+import { createLiveState, initLiveState, projectDefaults, getProjectInfo } from '../src/live/state.js'
+import { setSetting } from '../src/db/settings.js'
 import { userRoutes } from '../src/routes/users.js'
 
 // The routes run behind requireSession in app.js; here a stub middleware plays
 // that part so tests can pick who the caller is.
-async function setup() {
+async function setup(proxy = null) {
   const db = new Database(':memory:')
   db.exec('PRAGMA foreign_keys = ON')
   migrate(db, fileURLToPath(new URL('../src/db/migrations', import.meta.url)))
@@ -30,7 +31,7 @@ async function setup() {
     c.set('session', { id: 'sess-captain', user_id: 1 })
     return next()
   })
-  app.route('/', userRoutes({ db, liveState }))
+  app.route('/', userRoutes({ db, liveState, proxy }))
   return { db, app, liveState }
 }
 
@@ -42,13 +43,13 @@ test('lists users without password hashes', async () => {
   expect(res.status).toBe(200)
   const users = await res.json()
   expect(users.map(u => u.username)).toEqual(['bosun', 'captain'])
-  expect(Object.keys(users[0]).sort()).toEqual(['created_at', 'github_login', 'handle', 'id', 'role', 'username'])
+  expect(Object.keys(users[0]).sort()).toEqual(['created_at', 'domain', 'github_login', 'handle', 'id', 'role', 'username'])
 })
 
 test('initLiveState mirrors existing users without password hashes', async () => {
   const { liveState } = await setup()
   expect(Object.values(liveState.users).map(u => u.username).sort()).toEqual(['bosun', 'captain'])
-  expect(Object.keys(liveState.users[1]).sort()).toEqual(['created_at', 'handle', 'id', 'role', 'username'])
+  expect(Object.keys(liveState.users[1]).sort()).toEqual(['created_at', 'domain', 'handle', 'id', 'role', 'username'])
 })
 
 test('creates a user with a hashed password and mirrors it into LiveState', async () => {
@@ -130,4 +131,41 @@ test('404s on an unknown user', async () => {
   const { app } = await setup()
   expect((await app.request('/99', { method: 'DELETE' })).status).toBe(404)
   expect((await app.request('/99/password', { method: 'PUT', body: JSON.stringify({ password: 'seaworthy1' }) })).status).toBe(404)
+})
+
+test('a tenant may bring a domain of their own: validated, unique, tenant-only, never under the base domain', async () => {
+  const { db, app, liveState } = await setup()
+  setSetting(db, 'proxy_base_domain', 'apps.example.com')
+  const post = body => app.request('/', { method: 'POST', body: JSON.stringify(body) })
+  const tenant = { username: 'bob', password: 'anchors aweigh', role: 'tenant', handle: 'bob' }
+  expect((await (await post({ ...tenant, domain: 'not a domain' })).json()).fields.domain).toBe('not a valid domain name')
+  expect((await (await post({ ...tenant, domain: 'bob.apps.example.com' })).json()).fields.domain).toContain('base domain')
+  expect((await (await post({ ...tenant, role: 'admin', handle: '', domain: 'bob.dev' })).json()).fields.domain).toContain('only tenants')
+  const created = await post({ ...tenant, domain: ' Bob.DEV ' })
+  expect(created.status).toBe(201)
+  const bob = await created.json()
+  expect(bob.domain).toBe('bob.dev')
+  expect(liveState.users[bob.id].domain).toBe('bob.dev')
+  expect((await (await post({ ...tenant, username: 'eve', handle: 'eve', domain: 'bob.dev' })).json()).fields.domain).toBe('already taken')
+})
+
+test("changing a tenant's domain reroutes their projects: live info follows and the proxy is re-applied", async () => {
+  const applied = []
+  const { db, app, liveState } = await setup({ apply: async () => applied.push(1) })
+  db.query("INSERT INTO users (username, password_hash, role, handle) VALUES ('bob', 'x', 'tenant', 'bob')").run()
+  const bobId = db.query("SELECT id FROM users WHERE username = 'bob'").get().id
+  db.query(`INSERT INTO projects (slug, name, owner_id, repo_full_name, branch, pm2_name, runtime, start_command, port, subdomain)
+            VALUES ('site', 'Site', ?, '', 'main', 'site', 'container', '', 4101, 'www')`).run(bobId)
+  const projectId = db.query("SELECT id FROM projects WHERE slug = 'site'").get().id
+  liveState.projects[projectId] = projectDefaults(null, getProjectInfo(db, projectId))
+  expect(liveState.projects[projectId].info.owner_domain).toBe('')
+
+  const res = await app.request(`/${bobId}`, { method: 'PUT', body: JSON.stringify({ domain: 'bob.dev' }) })
+  expect(res.status).toBe(200)
+  expect(liveState.projects[projectId].info.owner_domain).toBe('bob.dev')
+  expect(liveState.users[bobId].domain).toBe('bob.dev')
+  expect(applied.length).toBe(1)
+  // an edit that leaves the hosts alone does not touch the proxy
+  await app.request(`/${bobId}`, { method: 'PUT', body: JSON.stringify({ github_login: 'bobgh' }) })
+  expect(applied.length).toBe(1)
 })

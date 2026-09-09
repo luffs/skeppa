@@ -264,3 +264,26 @@ test('build-time ENV defaults off for tenants, on for admins, and is editable', 
   })
   expect((await flipped.json()).build_env).toBe(1)
 })
+
+test('a tenant with a domain of their own routes there, apex included; the apex needs a domain', async () => {
+  const { db, liveState, config, admin, bob } = setup()
+  setSetting(db, 'proxy_base_domain', 'apps.example.com')
+  db.query("UPDATE users SET domain = 'bob.dev' WHERE id = 2").run()
+  db.query("UPDATE projects SET subdomain = 'app' WHERE id = 2").run()
+  const routes = projectRoutes({ db, config, liveState })
+  const make = (user, name, subdomain) => asUser(routes, user).request('/', {
+    method: 'POST',
+    body: JSON.stringify({ name, git_url: 'https://example.com/x.git', subdomain }),
+  })
+  const apex = await make(bob, 'Bob Root', '@')
+  expect(apex.status).toBe(201)
+  expect((await apex.json()).owner_domain).toBe('bob.dev')
+  const adminApex = await make(admin, 'Admin Root', '@')
+  expect(adminApex.status).toBe(400)
+  expect((await adminApex.json()).fields.subdomain).toContain('domain of your own')
+  // bob's namespace is his domain now: the admin's "app" is a different host
+  expect((await make(admin, 'Admin App', 'app')).status).toBe(201)
+  expect((await make(bob, 'Bob Again', 'app')).status).toBe(400)
+  const hosts = buildCaddyConfig(db).apps.http.servers.skeppa.routes.flatMap(r => r.match?.[0]?.host ?? [])
+  expect(hosts.sort()).toEqual(['app.apps.example.com', 'app.bob.dev', 'bob.dev'])
+})

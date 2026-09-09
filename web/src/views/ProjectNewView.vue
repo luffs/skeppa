@@ -84,6 +84,7 @@
         v-model:subdomain="form.subdomain"
         v-model:port="form.port"
         :handle="isTenant ? myHandle : ''"
+        :domain="isTenant ? myDomain : ''"
       />
 
       <p v-if="error" class="error">{{ error }}</p>
@@ -116,6 +117,7 @@ export default {
       externalRepo: false,
       isTenant: store.user?.role === 'tenant',
       myHandle: store.user?.handle ?? '',
+      myDomain: store.user?.domain ?? '',
       form: {
         repo_full_name: '',
         git_url: '',

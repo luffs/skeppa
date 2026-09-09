@@ -8,6 +8,7 @@ import { join } from 'node:path'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { getSetting } from '../db/settings.js'
 import { startOrReload, describe, deleteProcess } from '../deploy/pm2.js'
+import { APEX } from '../lib/validate.js'
 
 export const PROXY_PROCESS = 'skeppa-proxy'
 
@@ -22,17 +23,22 @@ export function proxySettings(db) {
 export function proxyRouteRows(db) {
   return db.query(
     `SELECT p.id, p.name, p.slug, p.subdomain, p.port,
-            COALESCE(u.role, '') AS owner_role, COALESCE(u.handle, '') AS owner_handle
+            COALESCE(u.role, '') AS owner_role, COALESCE(u.handle, '') AS owner_handle, COALESCE(u.domain, '') AS owner_domain
      FROM projects p LEFT JOIN users u ON u.id = p.owner_id
      WHERE p.subdomain IS NOT NULL AND p.port IS NOT NULL ORDER BY p.subdomain`
   ).all()
 }
 
-// The public host for a routed project. Tenants live under their handle —
+// The public host for a routed project. A tenant with a domain of their own
+// routes subdomain.<domain>, or the domain itself for the project whose
+// subdomain is '@'. Other tenants live under their handle —
 // subdomain.handle.base — so each tenant namespace is one more one-label
 // wildcard site block (with its own DNS-01 cert) in the admin's system
 // Caddy; admin projects keep the flat names that already have certs.
 export function routedHost(row, baseDomain) {
+  if (row.owner_role === 'tenant' && row.owner_domain) {
+    return row.subdomain === APEX ? row.owner_domain : `${row.subdomain}.${row.owner_domain}`
+  }
   const nested = row.owner_role === 'tenant' && row.owner_handle
   return `${row.subdomain}.${nested ? `${row.owner_handle}.` : ''}${baseDomain}`
 }

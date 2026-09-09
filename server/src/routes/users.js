@@ -1,14 +1,39 @@
 import { Hono } from 'hono'
-import { USERNAME_RE, MIN_PASSWORD_LENGTH, ROLES, HANDLE_RE, GITHUB_LOGIN_RE } from '../lib/validate.js'
-import { getUserInfo } from '../live/state.js'
+import { USERNAME_RE, MIN_PASSWORD_LENGTH, ROLES, HANDLE_RE, GITHUB_LOGIN_RE, DOMAIN_RE } from '../lib/validate.js'
+import { getUserInfo, getProjectInfo } from '../live/state.js'
+import { getSetting } from '../db/settings.js'
 
 const hashPassword = password => Bun.password.hash(password, { algorithm: 'bcrypt', cost: 12 })
 
-export function userRoutes({ db, liveState }) {
+export function userRoutes({ db, liveState, proxy = null }) {
   const app = new Hono()
 
+  const normalizeDomain = value => (typeof value === 'string' ? value.trim().toLowerCase() : '')
+  // A domain of the tenant's own: their projects route as subdomain.<domain>
+  // (the apex for a subdomain of '@') instead of under the handle. The
+  // panel's base domain and anything under it stay the admin's — that is
+  // what handles are for.
+  const domainError = (role, domain, excludeId = -1) => {
+    if (!domain) return null
+    if (role !== 'tenant') return 'only tenants route a domain of their own'
+    if (!DOMAIN_RE.test(domain)) return 'not a valid domain name'
+    const base = getSetting(db, 'proxy_base_domain')
+    if (base && (domain === base || domain.endsWith(`.${base}`))) return "under the panel's base domain — the handle already routes there"
+    if (db.query('SELECT 1 FROM users WHERE domain = ? AND id != ?').get(domain, excludeId)) return 'already taken'
+    return null
+  }
+
+  // A user's role, handle or domain names their projects' hosts: what the
+  // proxy routes and what every open client shows both follow the change.
+  const rerouteProjects = ownerId => {
+    for (const { id } of db.query('SELECT id FROM projects WHERE owner_id = ?').all(ownerId)) {
+      if (liveState.projects[id]) liveState.projects[id].info = getProjectInfo(db, id)
+    }
+    proxy?.apply().catch(err => console.error('[proxy] apply failed:', err.message))
+  }
+
   app.get('/', c => {
-    const users = db.query('SELECT id, username, role, handle, github_login, created_at FROM users ORDER BY username').all()
+    const users = db.query('SELECT id, username, role, handle, domain, github_login, created_at FROM users ORDER BY username').all()
     return c.json(users)
   })
 
@@ -21,11 +46,14 @@ export function userRoutes({ db, liveState }) {
     const role = body.role ?? 'tenant'
     const handle = typeof body.handle === 'string' ? body.handle.trim() : ''
     const githubLogin = typeof body.github_login === 'string' ? body.github_login.trim() : ''
+    const domain = normalizeDomain(body.domain)
 
     const fields = {}
     if (!ROLES.includes(role)) fields.role = `must be one of ${ROLES.join(', ')}`
-    // The handle namespaces the tenant's convoy networks (and later their
-    // subdomains) — a tenant without one would share the admin namespace.
+    const badDomain = domainError(role, domain)
+    if (badDomain) fields.domain = badDomain
+    // The handle namespaces the tenant's convoy networks and subdomains — a
+    // tenant without one would share the admin namespace.
     if (role === 'tenant' && !HANDLE_RE.test(handle)) fields.handle = 'required for tenants: lowercase letters, digits, dashes'
     if (handle && !HANDLE_RE.test(handle)) fields.handle = 'lowercase letters, digits, dashes'
     if (handle && db.query('SELECT 1 FROM users WHERE handle = ?').get(handle)) fields.handle = 'already taken'
@@ -38,8 +66,8 @@ export function userRoutes({ db, liveState }) {
     if (Object.keys(fields).length) return c.json({ error: 'validation failed', fields }, 400)
 
     const hash = await hashPassword(password)
-    const { lastInsertRowid } = db.query('INSERT INTO users (username, password_hash, role, handle, github_login) VALUES (?, ?, ?, ?, ?)')
-      .run(username, hash, role, handle, githubLogin)
+    const { lastInsertRowid } = db.query('INSERT INTO users (username, password_hash, role, handle, github_login, domain) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(username, hash, role, handle, githubLogin, domain)
     const user = getUserInfo(db, Number(lastInsertRowid))
     liveState.users[user.id] = user
     return c.json(user, 201)
@@ -77,9 +105,12 @@ export function userRoutes({ db, liveState }) {
     const role = 'role' in body ? body.role : existing.role
     const handle = 'handle' in body ? (typeof body.handle === 'string' ? body.handle.trim() : '') : existing.handle
     const githubLogin = 'github_login' in body ? (typeof body.github_login === 'string' ? body.github_login.trim() : '') : existing.github_login
+    const domain = 'domain' in body ? normalizeDomain(body.domain) : existing.domain
 
     const fields = {}
     if (!ROLES.includes(role)) fields.role = `must be one of ${ROLES.join(', ')}`
+    const badDomain = domainError(role, domain, id)
+    if (badDomain) fields.domain = badDomain
     if (role === 'tenant' && !HANDLE_RE.test(handle)) fields.handle = 'required for tenants: lowercase letters, digits, dashes'
     if (handle && !HANDLE_RE.test(handle)) fields.handle = 'lowercase letters, digits, dashes'
     if (handle && db.query('SELECT 1 FROM users WHERE handle = ? AND id != ?').get(handle, id)) fields.handle = 'already taken'
@@ -90,9 +121,10 @@ export function userRoutes({ db, liveState }) {
     }
     if (Object.keys(fields).length) return c.json({ error: 'validation failed', fields }, 400)
 
-    db.query('UPDATE users SET role = ?, handle = ?, github_login = ? WHERE id = ?').run(role, handle, githubLogin, id)
+    db.query('UPDATE users SET role = ?, handle = ?, github_login = ?, domain = ? WHERE id = ?').run(role, handle, githubLogin, domain, id)
     const user = getUserInfo(db, id)
     liveState.users[id] = user
+    if (role !== existing.role || handle !== existing.handle || domain !== existing.domain) rerouteProjects(id)
     return c.json(user)
   })
 

@@ -273,7 +273,10 @@ Tenant projects route under their owner's handle — `app.bob.example.com` — s
 only collide within one namespace. Each tenant that routes something adds one more
 one-label wildcard block (`*.bob.example.com`) to the system Caddy; the panel shows every
 block it needs under Rigging → Harbor gate, and with DNS-01 each gets its certificate
-automatically.
+automatically. A tenant can bring a domain of their own instead (Rigging → Crew → Edit):
+their projects then route as `app.their-domain.com`, and the project whose subdomain is
+`@` sits at the domain itself. They point the domain and its wildcard at your server; the
+panel adds the blocks to the snippet, and the certificates issue like the others.
 
 ## Notifications
 

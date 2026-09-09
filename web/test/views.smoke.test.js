@@ -27,7 +27,7 @@ vi.mock('../src/api.js', () => {
       return { name: 'x', lines: 200, out: stream, err: stream, prev: stream }
     }
     if (/\/api\/deployments\/\d+/.test(url)) return { id: 1, status: 'success', log: '' }
-    if (url.startsWith('/api/account')) return { id: 1, username: 'cap', role: 'admin', handle: '', github_login: '', created_at: '2026-01-01' }
+    if (url.startsWith('/api/account')) return { id: 1, username: 'cap', role: 'admin', handle: '', domain: '', github_login: '', created_at: '2026-01-01' }
     if (url.startsWith('/api/auth/firebase-config')) return null
     return {}
   }
@@ -65,7 +65,7 @@ const info = (id, slug, owner) => ({
   deploy_script: 'bun install', build_image: '', run_image: '', runtime: 'container', pm2_name: slug,
   start_command: 'bun start', cwd: null, auto_deploy: 1, write_env_file: 0, build_env: 1,
   subdomain: 'app', port: 4100 + id, memory_mb: 512, network_profile: 'open', host_access: 0, networks: '',
-  created_at: '2026-01-01 00:00:00', owner_role: owner.role, owner_handle: owner.handle,
+  created_at: '2026-01-01 00:00:00', owner_role: owner.role, owner_handle: owner.handle, owner_domain: owner.domain ?? '',
 })
 const stats = { status: 'online', uptime: NOW - 5_000, memory: 40 * 1024 * 1024, cpu: 2, restarts: 0, pid: 100 }
 const project = (id, slug, owner) => ({
@@ -77,8 +77,8 @@ const project = (id, slug, owner) => ({
   deployedSha: 'a'.repeat(40),
   headCommit: { sha: 'b'.repeat(40), message: 'feat: something', pushedAt: ISO },
 })
-const ADMIN = { id: 1, username: 'cap', role: 'admin', handle: '' }
-const TENANT = { id: 2, username: 'bob', role: 'tenant', handle: 'bob' }
+const ADMIN = { id: 1, username: 'cap', role: 'admin', handle: '', domain: '' }
+const TENANT = { id: 2, username: 'bob', role: 'tenant', handle: 'bob', domain: '' }
 
 function seedStore(role) {
   store.user = role === 'admin' ? ADMIN : TENANT

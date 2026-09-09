@@ -30,7 +30,11 @@ setInterval(() => { store.now = Date.now() }, 1000)
 export function appUrlFor(project) {
   const domain = store.live.proxy?.baseDomain
   if (!project?.subdomain || !domain) return ''
-  // Tenant projects are routed under their owner's handle.
+  // A tenant with a domain of their own routes there ('@' is the apex);
+  // other tenant projects are routed under their owner's handle.
+  if (project.owner_role === 'tenant' && project.owner_domain) {
+    return `https://${project.subdomain === '@' ? '' : `${project.subdomain}.`}${project.owner_domain}`
+  }
   const nested = project.owner_role === 'tenant' && project.owner_handle
   return `https://${project.subdomain}.${nested ? `${project.owner_handle}.` : ''}${domain}`
 }

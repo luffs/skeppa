@@ -9,7 +9,8 @@
 
       <p class="hint" style="font-size: 13.5px">
         Admins run the panel; tenants moor and deploy their own container projects only.
-        A tenant's handle namespaces their networks (and later their subdomains); the GitHub
+        A tenant's handle namespaces their networks and their subdomains; a domain of their own
+        routes their projects there instead (their DNS, your system Caddy). The GitHub
         login links their installation of the app, so they see their own repos in the picker.
         Changing a password signs that user out everywhere else; removing a member ends their
         sessions immediately.
@@ -21,10 +22,14 @@
             <span class="crew-name">{{ u.username }}</span>
             <span class="chip" :class="u.role === 'admin' ? 'green' : ''">{{ u.role }}</span>
             <span v-if="u.handle" class="mono" style="font-size: 12px; color: var(--dim)">@{{ u.handle }}</span>
+            <span v-if="u.domain" class="mono" style="font-size: 12px; color: var(--dim)">{{ u.domain }}</span>
             <span v-if="u.github_login" class="mono" style="font-size: 12px; color: var(--dim)">gh:{{ u.github_login }}</span>
             <span v-if="isSelf(u)" class="chip blue">you</span>
             <span class="crew-since">aboard since {{ shortDate(u.created_at) }}</span>
             <span class="spacer"></span>
+            <button class="secondary small" :disabled="crewBusy" @click="toggleEdit(u)">
+              {{ editFor === u.id ? 'Cancel' : 'Edit' }}
+            </button>
             <button class="secondary small" :disabled="crewBusy" @click="togglePassword(u)">
               {{ passwordFor === u.id ? 'Cancel' : 'Password' }}
             </button>
@@ -40,6 +45,34 @@
               @keyup.enter="savePassword(u)"
             />
             <button class="small" :disabled="crewBusy" @click="savePassword(u)">Set password</button>
+          </div>
+          <div v-if="editFor === u.id" class="row crew-pass">
+            <select v-model="editUser.role" class="code" style="flex: 0 0 auto; width: auto">
+              <option value="tenant">tenant</option>
+              <option value="admin">admin</option>
+            </select>
+            <input
+              v-if="editUser.role === 'tenant'"
+              v-model="editUser.handle"
+              placeholder="handle (a-z, 0-9, -)"
+              class="code"
+              style="flex: 1 1 120px; width: auto"
+            />
+            <input
+              v-if="editUser.role === 'tenant'"
+              v-model="editUser.domain"
+              placeholder="own domain (optional)"
+              class="code"
+              style="flex: 1 1 160px; width: auto"
+            />
+            <input
+              v-if="editUser.role === 'tenant'"
+              v-model="editUser.github_login"
+              placeholder="GitHub login (optional)"
+              class="code"
+              style="flex: 1 1 140px; width: auto"
+            />
+            <button class="small" :disabled="crewBusy" @click="saveUser(u)">Save</button>
           </div>
         </div>
       </div>
@@ -70,6 +103,13 @@
             placeholder="handle (a-z, 0-9, -)"
             class="code"
             style="flex: 1 1 120px; width: auto"
+          />
+          <input
+            v-if="newUser.role === 'tenant'"
+            v-model="newUser.domain"
+            placeholder="own domain (optional)"
+            class="code"
+            style="flex: 1 1 160px; width: auto"
           />
           <input
             v-if="newUser.role === 'tenant'"
@@ -257,7 +297,9 @@
         <textarea class="code" readonly rows="3" :value="adminSnippet" @focus="$event.target.select()"></textarea>
         <p class="hint">
           Each wildcard block needs its own certificate — with DNS-01 they issue automatically; or add
-          <span class="mono" style="font-size: 12.5px">tls { on_demand }</span> to the block.
+          <span class="mono" style="font-size: 12.5px">tls { on_demand }</span> to the block. A tenant's
+          own domain appears here once one of their projects routes: they point its DNS at this server,
+          and its certificate is issued like the others.
         </p>
 
         <label style="margin-top: 20px">Routes</label>
@@ -354,7 +396,9 @@ export default {
       deliveriesBusy: false,
       deliveriesError: '',
       redelivering: null,
-      newUser: { username: '', password: '', role: 'tenant', handle: '', github_login: '' },
+      newUser: { username: '', password: '', role: 'tenant', handle: '', domain: '', github_login: '' },
+      editFor: null,
+      editUser: { role: 'tenant', handle: '', domain: '', github_login: '' },
       passwordFor: null,
       newPassword: '',
       crewBusy: false,
@@ -388,12 +432,15 @@ export default {
       const base = this.gateForm.base_domain || 'apps.example.com'
       const port = this.gateForm.http_port || 8100
       // One extra one-label wildcard per tenant namespace that actually
-      // routes something — each block gets its own DNS-01 cert.
-      const handles = [...new Set(Object.values(store.live.projects ?? {})
+      // routes something — each block gets its own DNS-01 cert. A tenant's
+      // own domain is its wildcard, plus the apex when a project sits there.
+      const routed = Object.values(store.live.projects ?? {})
         .map(p => p.info)
-        .filter(i => i?.subdomain && i.owner_role === 'tenant' && i.owner_handle)
-        .map(i => i.owner_handle))].sort()
-      return [`*.${base}`, ...handles.map(h => `*.${h}.${base}`)]
+        .filter(i => i?.subdomain && i.owner_role === 'tenant')
+      const handles = [...new Set(routed.filter(i => !i.owner_domain && i.owner_handle).map(i => i.owner_handle))].sort()
+      const domains = [...new Set(routed.filter(i => i.owner_domain)
+        .flatMap(i => [`*.${i.owner_domain}`, ...(i.subdomain === '@' ? [i.owner_domain] : [])]))].sort()
+      return [`*.${base}`, ...handles.map(h => `*.${h}.${base}`), ...domains]
         .map(host => `${host} {\n    reverse_proxy localhost:${port}\n}`)
         .join('\n')
     },
@@ -688,8 +735,28 @@ export default {
       this.crewMessage = ''
       try {
         const user = await api.post('/api/users', this.newUser)
-        this.newUser = { username: '', password: '', role: 'tenant', handle: '', github_login: '' }
+        this.newUser = { username: '', password: '', role: 'tenant', handle: '', domain: '', github_login: '' }
         this.crewMessage = `Welcome aboard, ${user.username} ✔`
+      } catch (err) {
+        this.crewError = this.describeError(err)
+      } finally {
+        this.crewBusy = false
+      }
+    },
+    toggleEdit(user) {
+      this.editFor = this.editFor === user.id ? null : user.id
+      this.editUser = { role: user.role, handle: user.handle ?? '', domain: user.domain ?? '', github_login: user.github_login ?? '' }
+      this.crewError = ''
+      this.crewMessage = ''
+    },
+    async saveUser(user) {
+      this.crewBusy = true
+      this.crewError = ''
+      this.crewMessage = ''
+      try {
+        await api.put(`/api/users/${user.id}`, this.editUser)
+        this.editFor = null
+        this.crewMessage = `${user.username} updated ✔`
       } catch (err) {
         this.crewError = this.describeError(err)
       } finally {

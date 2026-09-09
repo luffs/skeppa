@@ -12,7 +12,7 @@ export function accountRoutes({ db }) {
 
   app.get('/', c => {
     const { id } = c.get('user')
-    return c.json(db.query('SELECT id, username, role, handle, github_login, created_at FROM users WHERE id = ?').get(id))
+    return c.json(db.query('SELECT id, username, role, handle, domain, github_login, created_at FROM users WHERE id = ?').get(id))
   })
 
   app.put('/password', async c => {

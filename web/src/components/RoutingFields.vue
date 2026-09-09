@@ -33,6 +33,11 @@
     <p class="hint" v-else-if="subdomain && !baseDomain">
       Set a base domain under Rigging → Harbor gate to route this subdomain.
     </p>
+    <p class="hint" v-else-if="domain">
+      Optional: route <span class="mono" style="font-size: 12px">subdomain.{{ domain }}</span>
+      to this app — or <span class="mono" style="font-size: 12px">@</span> for
+      <span class="mono" style="font-size: 12px">{{ domain }}</span> itself.
+    </p>
     <p class="hint" v-else>
       Optional: route <span class="mono" style="font-size: 12px">subdomain.&lt;base domain&gt;</span>
       to this app through the harbor gate proxy.
@@ -50,8 +55,11 @@ export default {
   name: 'RoutingFields',
   props: {
     subdomain: { type: String, default: '' },
-    // The owner's namespace: tenant projects route as subdomain.handle.base.
+    // The owner's namespace: tenant projects route as subdomain.handle.base —
+    // or subdomain.<domain> (and the domain itself for '@') when the tenant
+    // has a domain of their own.
     handle: { type: String, default: '' },
+    domain: { type: String, default: '' },
     port: { type: [String, Number], default: '' },
     existing: { type: Boolean, default: false },
   },
@@ -62,6 +70,7 @@ export default {
     },
     routedUrl() {
       if (!this.subdomain || !this.baseDomain) return ''
+      if (this.domain) return `https://${this.subdomain === '@' ? '' : `${this.subdomain}.`}${this.domain}`
       return `https://${this.subdomain}.${this.handle ? `${this.handle}.` : ''}${this.baseDomain}`
     },
   },
