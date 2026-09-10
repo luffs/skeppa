@@ -10,7 +10,16 @@
 
     <div v-if="projects.length" class="harbor-layout">
       <div class="harbor-list">
-        <ProjectCard v-for="p in projects" :key="p.id" :project="p" />
+        <template v-for="f in fleets" :key="f.key">
+          <!-- One fleet is the whole harbor: headings only once there is more than one. -->
+          <div v-if="fleets.length > 1" class="fleet-head">
+            <span class="section-label">{{ f.label }}</span>
+            <span v-if="f.detail" class="fleet-detail">{{ f.detail }}</span>
+            <span class="spacer"></span>
+            <span class="fleet-detail">{{ f.projects.length }} vessel{{ f.projects.length === 1 ? '' : 's' }}</span>
+          </div>
+          <ProjectCard v-for="p in f.projects" :key="p.id" :project="p" />
+        </template>
       </div>
       <div class="feed-panel">
         <div class="feed-head">
@@ -21,7 +30,7 @@
           <div v-for="(e, i) in feed" :key="i" class="feed-entry">
             <span class="dot" :class="e.dot"></span>
             <div class="body">
-              <div class="text"><strong>{{ e.project }}</strong> — {{ e.text }}</div>
+              <div class="text"><span v-if="e.owner" class="feed-owner">{{ e.owner }} ·</span> <strong>{{ e.project }}</strong> — {{ e.text }}</div>
               <div class="meta">{{ e.meta }}</div>
             </div>
           </div>
@@ -105,6 +114,19 @@ export default {
         .filter(p => !mineOnly || p.owner_id === store.user.id)
         .sort((a, b) => a.name.localeCompare(b.name))
     },
+    // The harbor split by owner: your own projects first, then everyone
+    // else's by name. A tenant only ever has one fleet (their own), so for
+    // them nothing changes; an admin sees who owns what without a legend.
+    fleets() {
+      const me = store.user?.id
+      const groups = new Map()
+      for (const p of this.projects) {
+        const key = p.owner_id ?? 'none'
+        if (!groups.has(key)) groups.set(key, { key, ...this.ownerLabel(p), mine: p.owner_id === me, projects: [] })
+        groups.get(key).projects.push(p)
+      }
+      return [...groups.values()].sort((a, b) => (b.mine - a.mine) || a.label.localeCompare(b.label))
+    },
     ready() {
       return store.ready
     },
@@ -137,13 +159,15 @@ export default {
     // request of its own and moves as deploys queue, start and finish.
     feed() {
       const items = []
+      const shown = new Set(this.projects.map(p => p.id)) // the same scope as the list
       for (const p of Object.values(store.live.projects ?? {})) {
         const info = p.info
-        if (!info) continue
+        if (!info || !shown.has(info.id)) continue
         for (const d of p.recentDeployments ?? []) {
           const when = d.finishedAt || d.startedAt || d.createdAt
           items.push({
             ts: when ? new Date(when).getTime() : 0,
+            owner: this.feedOwner(info),
             project: info.name,
             text: (FEED_TEXT[d.status] ?? (id => `voyage #${id} — ${d.status}`))(d.id),
             meta: [d.trigger, d.commitSha?.slice(0, 7), duration(d.startedAt, d.finishedAt), timeAgo(when)]
@@ -155,6 +179,7 @@ export default {
         if (p.headCommit?.sha && !p.currentDeployment && p.headCommit.sha !== p.deployedSha) {
           items.push({
             ts: p.headCommit.pushedAt ? new Date(p.headCommit.pushedAt).getTime() : 0,
+            owner: this.feedOwner(info),
             project: info.name,
             text: `new commits sighted on ${info.branch}`,
             meta: ['push', p.headCommit.sha.slice(0, 7), timeAgo(p.headCommit.pushedAt)].filter(Boolean).join(' · '),
@@ -171,6 +196,21 @@ export default {
     needsSetup: { immediate: true, handler(v) { if (v && !this.setup) this.checkSetup() } },
   },
   methods: {
+    // The owner's name as the crew list knows it (admins mirror the crew;
+    // a tenant never sees anyone else's projects, so never needs it).
+    ownerName(info) {
+      return store.live.users?.[info.owner_id]?.username || info.owner_handle || `crew #${info.owner_id}`
+    },
+    ownerLabel(info) {
+      if (info.owner_id == null) return { label: 'Unowned', detail: '' }
+      if (info.owner_id === store.user?.id) return { label: 'Your fleet', detail: '' }
+      const where = info.owner_role === 'tenant' ? info.owner_domain || (info.owner_handle ? `@${info.owner_handle}` : '') : 'admin'
+      return { label: this.ownerName(info), detail: where }
+    },
+    // Only other people's entries are tagged: your own read as they always did.
+    feedOwner(info) {
+      return info.owner_id === store.user?.id ? '' : this.ownerName(info)
+    },
     async checkSetup() {
       this.setupError = ''
       try {

@@ -23,7 +23,8 @@ export function proxySettings(db) {
 export function proxyRouteRows(db) {
   return db.query(
     `SELECT p.id, p.name, p.slug, p.subdomain, p.port,
-            COALESCE(u.role, '') AS owner_role, COALESCE(u.handle, '') AS owner_handle, COALESCE(u.domain, '') AS owner_domain
+            COALESCE(u.role, '') AS owner_role, COALESCE(u.handle, '') AS owner_handle, COALESCE(u.domain, '') AS owner_domain,
+            COALESCE(u.username, '') AS owner_username
      FROM projects p LEFT JOIN users u ON u.id = p.owner_id
      WHERE p.subdomain IS NOT NULL AND p.port IS NOT NULL ORDER BY p.subdomain`
   ).all()
@@ -160,7 +161,11 @@ export function createProxy({
         project_id: p.id,
         name: p.name,
         subdomain: p.subdomain,
-        host: `${p.subdomain}.${settings.baseDomain ?? '…'}`,
+        // The host the gate actually routes — built by the same function as
+        // the Caddy config, so a tenant's handle or domain shows as it is.
+        host: settings.baseDomain ? routedHost(p, settings.baseDomain) : `${p.subdomain}.…`,
+        owner: p.owner_username,
+        owner_role: p.owner_role,
         port: p.port,
       })),
       config_path: configPath,

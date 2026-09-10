@@ -187,3 +187,30 @@ test('the harness fails on an identifier the template uses but the instance neve
   const { problems } = await expectCleanRender(Broken)
   expect(problems.some(p => /store|accessed during render|threw/.test(p))).toBe(true)
 })
+
+// The harbor is split by owner for an admin (their own fleet first, then
+// each tenant's, headed with where it routes) and the ship's log tags other
+// people's entries; a tenant has one fleet, so no headings and no tags.
+test('the harbor groups projects by owner for an admin, and not for a tenant', async () => {
+  seedStore('admin')
+  store.live.users[2].domain = 'bob.dev'
+  store.live.projects[2].info.owner_domain = 'bob.dev'
+  const admin = await expectCleanRender(DashboardView, {
+    steps: async wrapper => {
+      const heads = wrapper.findAll('.fleet-head').map(h => h.findAll('span').map(x => x.text()).filter(Boolean).join(' '))
+      expect(heads).toEqual(['Your fleet 1 vessel', 'bob bob.dev 1 vessel'])
+      // bob's project has a finished voyage and unsighted commits: both are his
+      expect(wrapper.findAll('.feed-owner').map(o => o.text())).toEqual(['bob ·', 'bob ·'])
+    },
+  })
+  expect(admin.problems.join(' | ')).toBe('')
+
+  seedStore('tenant')
+  const tenant = await expectCleanRender(DashboardView, {
+    steps: async wrapper => {
+      expect(wrapper.findAll('.fleet-head').length).toBe(0)
+      expect(wrapper.findAll('.feed-owner').length).toBe(0)
+    },
+  })
+  expect(tenant.problems.join(' | ')).toBe('')
+})

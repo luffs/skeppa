@@ -271,3 +271,23 @@ test('the routed port reaches the app as PORT via the runtime env, not the ecosy
   const eco = readFileSync(writeEcosystem(config, project), 'utf8')
   expect(JSON.parse(eco.replace('module.exports = ', '')).apps[0].env).toBeUndefined()
 })
+
+test('status lists each route under the host the gate actually routes: handle, own domain, apex', async () => {
+  const db = makeDb()
+  setSetting(db, 'proxy_base_domain', 'apps.example.com')
+  db.query("INSERT INTO users (username, password_hash, role) VALUES ('cap', 'x', 'admin')").run()
+  db.query("INSERT INTO users (username, password_hash, role, handle) VALUES ('bob', 'x', 'tenant', 'bob')").run()
+  db.query("INSERT INTO users (username, password_hash, role, handle, domain) VALUES ('eve', 'x', 'tenant', 'eve', 'eve.dev')").run()
+  const own = (id, owner) => db.query('UPDATE projects SET owner_id = ? WHERE id = ?').run(owner, id)
+  own(addProject(db, { slug: 'adm', subdomain: 'adm', port: 4001 }), 1)
+  own(addProject(db, { slug: 'bobapp', subdomain: 'app', port: 4002 }), 2)
+  own(addProject(db, { slug: 'evesite', subdomain: 'www', port: 4003 }), 3)
+  own(addProject(db, { slug: 'everoot', subdomain: '@', port: 4004 }), 3)
+  const { proxy } = proxyHarness(db)
+  const routes = (await proxy.status()).routes
+  const byHost = Object.fromEntries(routes.map(r => [r.host, r.owner_role === 'tenant' ? r.owner : '']))
+  expect(byHost).toEqual({ 'adm.apps.example.com': '', 'app.bob.apps.example.com': 'bob', 'www.eve.dev': 'eve', 'eve.dev': 'eve' })
+  // the list and the Caddy config agree host for host
+  const routed = buildCaddyConfig(db).apps.http.servers.skeppa.routes.flatMap(r => r.match?.[0]?.host ?? [])
+  expect(routes.map(r => r.host).sort()).toEqual(routed.sort())
+})
