@@ -44,6 +44,8 @@ test('spec: read-only source, writable shared, localhost-only port, restart poli
   expect(spec.HostConfig.Binds).toEqual([`${dirs.source}:/app:ro`, `${dirs.shared}:/data`])
   expect(spec.HostConfig.PortBindings).toEqual({ '4100/tcp': [{ HostIp: '127.0.0.1', HostPort: '4100' }] })
   expect(spec.HostConfig.RestartPolicy).toEqual({ Name: 'on-failure', MaximumRetryCount: 10 })
+  // a capped file, never journald: tail=N must not walk a chatty app's whole log
+  expect(spec.HostConfig.LogConfig).toEqual({ Type: 'json-file', Config: { 'max-size': '10m' } })
   expect(spec.Cmd).toEqual(['/bin/sh', '-c', 'bun run start'])
   expect(spec.WorkingDir).toBe('/app/web')
   expect(spec.Env).toContain('TOKEN=sekret')

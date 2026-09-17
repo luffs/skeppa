@@ -48,6 +48,13 @@ export function appContainerSpec(config, project, dirs, env) {
           ? { NetworkMode: 'slirp4netns:allow_host_loopback=true' }
           : {}),
       RestartPolicy: { Name: 'on-failure', MaximumRetryCount: 10 },
+      // A capped log file instead of the engine default. Podman's default is
+      // often journald, whose `tail=N` walks the container's whole journal
+      // from the head to find the last N lines — a chatty app makes every
+      // log request slower until it outlives the request. A file is tailed
+      // from its end, and the cap keeps one noisy app from filling the disk.
+      // `json-file` is Docker's name; podman aliases it to k8s-file.
+      LogConfig: { Type: 'json-file', Config: { 'max-size': '10m' } },
       // Hard cap, swap included: past the limit the app is OOM-killed and the
       // restart policy brings it back — a leak crashes one project instead of
       // starving the host. No limit set means no cap, as before.

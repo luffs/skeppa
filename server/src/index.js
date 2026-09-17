@@ -85,6 +85,12 @@ const live = createLiveTransport({ db, liveStores })
 const server = Bun.serve({
   hostname: config.host,
   port: config.port,
+  // Bun drops a connection whose request has gone 10 s unanswered, and the
+  // Caddy in front reports that as a bare 502. Engine calls carry their own
+  // longer timers (containers/client.js: 30–120 s, none for a pull), so the
+  // default cut them off before their error could become a response. 255 is
+  // Bun's ceiling.
+  idleTimeout: 255,
   async fetch(req, server) {
     const res = await live.upgrade(req, server) // the /live socket and its snapshot route
     return res === null ? app.fetch(req, server) : res
