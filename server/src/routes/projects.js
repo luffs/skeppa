@@ -11,6 +11,7 @@ import { createContainerClient } from '../containers/client.js'
 import { appContainerName, appLogResponse, previousLogResponse } from '../containers/runtime.js'
 import { applyProjectAction } from '../deploy/control.js'
 import { tailFile } from '../lib/tail.js'
+import { readSourcePath, openSourceDownload, SourceFileError } from '../lib/sourcefiles.js'
 import { proxySettings } from '../proxy/index.js'
 
 const PROJECT_COLUMNS =
@@ -472,6 +473,50 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
     const requested = parseInt(c.req.query('lines') ?? '', 10)
     const lines = Math.min(Math.max(Number.isFinite(requested) ? requested : DEFAULT_LOG_LINES, 1), MAX_LOG_LINES)
     return c.json({ name: project.slug, ...(await previousLogResponse(projectDirs(config, project), lines)) })
+  })
+
+  // The read-only file viewer over the project's source/ checkout: one route
+  // answers for both directories and files, so a relative link in a README
+  // can be followed without knowing which it leads to. lib/sourcefiles.js
+  // holds the rules (the tree is untrusted — symlinks, `.git`, the panel's
+  // own `.env`). There is deliberately no write counterpart.
+  const fileError = (c, err) => {
+    if (err instanceof SourceFileError) return c.json({ error: err.message }, err.status)
+    return c.json({ error: err.message }, 500)
+  }
+
+  app.get('/:id/files', async c => {
+    const project = getProjectFor(c)
+    if (!project) return c.json({ error: 'not found' }, 404)
+    try {
+      return c.json(await readSourcePath(projectDirs(config, project).source, c.req.query('path') ?? ''))
+    } catch (err) {
+      return fileError(c, err)
+    }
+  })
+
+  // Always an attachment, never a page: a repo's .html or .svg must not
+  // render on the panel's origin, where it would run with the viewer's
+  // session. nosniff and the sandbox CSP are the same point made twice more.
+  app.get('/:id/files/raw', async c => {
+    const project = getProjectFor(c)
+    if (!project) return c.json({ error: 'not found' }, 404)
+    try {
+      const { name, size, stream } = await openSourceDownload(projectDirs(config, project).source, c.req.query('path') ?? '')
+      const ascii = name.replace(/[^\w.-]/g, '_')
+      return new Response(stream, {
+        headers: {
+          'Content-Type': 'application/octet-stream',
+          'Content-Length': String(size),
+          'Content-Disposition': `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`,
+          'X-Content-Type-Options': 'nosniff',
+          'Content-Security-Policy': 'sandbox',
+          'Cache-Control': 'no-store',
+        },
+      })
+    } catch (err) {
+      return fileError(c, err)
+    }
   })
 
   return app

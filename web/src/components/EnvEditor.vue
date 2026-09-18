@@ -18,7 +18,7 @@
         <button class="secondary small" style="padding: 8px 12px" @click="rows.splice(i, 1)">✕</button>
       </div>
     </div>
-    <p v-else class="hint">No cargo aboard — no ENV variables yet.</p>
+    <p v-else class="hint">Nothing on the manifest — no ENV variables yet.</p>
     <p v-if="error" class="error">{{ error }}</p>
     <div class="row" style="margin-top: 18px">
       <button class="secondary" @click="rows.push({ key: '', value: '', masked: false })">+ Add variable</button>

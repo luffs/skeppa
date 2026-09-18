@@ -49,7 +49,8 @@
     <div class="tabs">
       <button :class="{ active: tab === 'deploys' }" @click="tab = 'deploys'">Voyages</button>
       <button :class="{ active: tab === 'logs' }" @click="tab = 'logs'">Logbook</button>
-      <button :class="{ active: tab === 'env' }" @click="tab = 'env'">Cargo (env)</button>
+      <button :class="{ active: tab === 'env' }" @click="tab = 'env'">Manifest (env)</button>
+      <button :class="{ active: tab === 'files' }" @click="tab = 'files'">Freight (files)</button>
       <button :class="{ active: tab === 'settings' }" @click="tab = 'settings'">Rigging</button>
     </div>
 
@@ -100,6 +101,10 @@
 
     <div v-else-if="tab === 'env'" class="panel">
       <EnvEditor :project-id="project.id" />
+    </div>
+
+    <div v-else-if="tab === 'files'">
+      <SourceFiles :project-id="project.id" />
     </div>
 
     <div v-else-if="tab === 'settings'" class="panel" style="max-width: 680px">
@@ -216,6 +221,7 @@ import StatusBadge from '../components/StatusBadge.vue'
 import DeployLog from '../components/DeployLog.vue'
 import EnvEditor from '../components/EnvEditor.vue'
 import Pm2Logs from '../components/Pm2Logs.vue'
+import SourceFiles from '../components/SourceFiles.vue'
 import RuntimeFields from '../components/RuntimeFields.vue'
 import RoutingFields from '../components/RoutingFields.vue'
 import { api } from '../api.js'
@@ -225,7 +231,7 @@ import { timeAgo, duration, uptimeSince, bytes } from '../lib/format.js'
 
 export default {
   name: 'ProjectView',
-  components: { StatusBadge, DeployLog, EnvEditor, Pm2Logs, RuntimeFields, RoutingFields },
+  components: { StatusBadge, DeployLog, EnvEditor, Pm2Logs, SourceFiles, RuntimeFields, RoutingFields },
   props: { id: { type: String, required: true } },
   data() {
     return {

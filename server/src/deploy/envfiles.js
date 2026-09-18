@@ -27,10 +27,10 @@ export function decryptedEnv(db, config, projectId) {
 }
 
 // The environment the app runs with: the decrypted vars plus the routed port
-// (which is what the proxy dials, so it wins over a PORT from Cargo). Injected
+// (which is what the proxy dials, so it wins over a PORT from the Manifest). Injected
 // through the pm2 CLI's process env (deploy/pm2.js) — never written to disk.
 // NODE_ENV defaults to production (a deploy panel runs production apps); a
-// NODE_ENV in Cargo wins.
+// NODE_ENV in the Manifest wins.
 export function runtimeEnv(project, envVars) {
   const env = { NODE_ENV: 'production', ...envVars }
   if (project.port) env.PORT = String(project.port)

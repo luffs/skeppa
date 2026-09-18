@@ -26,6 +26,15 @@ vi.mock('../src/api.js', () => {
       const stream = { path: null, text: '', truncated: false, missing: true }
       return { name: 'x', lines: 200, out: stream, err: stream, prev: stream }
     }
+    if (/\/api\/projects\/\d+\/files\?path=README\.md/.test(url)) {
+      return { type: 'file', path: 'README.md', name: 'README.md', size: 30, binary: false, tooLarge: false, text: '# App\n\nSee [the api](docs/api.md).\n' }
+    }
+    if (/\/api\/projects\/\d+\/files/.test(url)) {
+      return {
+        type: 'dir', path: '', truncated: false,
+        entries: [{ name: 'docs', type: 'dir', size: null }, { name: '.env', type: 'file', size: 12, locked: true }, { name: 'README.md', type: 'file', size: 30 }],
+      }
+    }
     if (/\/api\/deployments\/\d+/.test(url)) return { id: 1, status: 'success', log: '' }
     if (url.startsWith('/api/account')) return { id: 1, username: 'cap', role: 'admin', handle: '', domain: '', github_login: '', created_at: '2026-01-01' }
     if (url.startsWith('/api/auth/firebase-config')) return null
@@ -170,9 +179,14 @@ for (const role of ['admin', 'tenant']) {
       const { problems } = await expectCleanRender(ProjectView, {
         props: { id: role === 'admin' ? '1' : '2' },
         steps: async wrapper => {
-          for (const tab of ['deploys', 'logs', 'env', 'settings']) {
+          for (const tab of ['deploys', 'logs', 'env', 'files', 'settings']) {
             wrapper.vm.tab = tab
             await settle()
+            // the freight tab lists the folder and renders its README underneath
+            if (tab === 'files') {
+              expect(wrapper.find('.source-files table').text()).toContain('kept in the Manifest')
+              expect(wrapper.find('.markdown a[data-path="docs/api.md"]').exists()).toBe(true)
+            }
           }
         },
       })
