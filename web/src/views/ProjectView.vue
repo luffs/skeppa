@@ -37,7 +37,7 @@
     <div class="ahead-banner" v-if="undeployed">
       <span class="chip amber">commits ahead</span>
       <span class="commit">
-        <span class="sha">{{ live.headCommit.sha.slice(0, 7) }}</span>
+        <span class="sha">{{ live.headCommit.sha.slice(0, 7) }}</span>{{ ' ' }}
         <span :title="live.headCommit.message">{{ brief(live.headCommit.message) }}</span><template v-if="live.headCommit.pushedAt"> — pushed
         {{ timeAgo(live.headCommit.pushedAt) }}</template><template
           v-if="!project.auto_deploy && !project.git_url"> · auto deploy is off</template>
@@ -60,7 +60,7 @@
       </p>
       <div v-else class="panel flush">
         <div class="table-scroll capped">
-          <table class="voyages" style="min-width: 640px">
+          <table class="voyages">
             <thead>
               <tr><th>Voyage</th><th>Status</th><th>Trigger</th><th>Commit</th><th>Departed</th><th>Passage</th></tr>
             </thead>
