@@ -725,7 +725,15 @@ tr:last-child td { border-bottom: none; }
 .markdown blockquote { border-left: 3px solid var(--line-strong); padding: 2px 0 2px 14px; color: var(--dim); }
 .markdown blockquote > :last-child { margin-bottom: 0; }
 .markdown hr { border: none; border-top: 1px solid var(--line); margin: 22px 0; }
-.markdown table { width: auto; }
+/* `anywhere` (above) also shrinks a column's minimum width to one character,
+   so auto layout squeezed the key column until MAGEEK_SERVER broke mid-word
+   to give the prose more room. `break-word` wraps the same way but leaves
+   min-content alone: a column is never narrower than its longest word, and a
+   table that then does not fit scrolls inside its .table-scroll. */
+.markdown table { width: auto; overflow-wrap: break-word; }
+/* The first column is usually the key — keep it on one line. Code further in
+   (a whole command in a description) may still wrap at its spaces. */
+.markdown td:first-child code { white-space: nowrap; }
 .markdown th, .markdown td { padding: 7px 14px; border: 1px solid var(--line-soft); }
 .markdown th { border-bottom-color: var(--line); }
 /* the global `tr:last-child td` would open the bottom of the grid */
