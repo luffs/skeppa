@@ -38,7 +38,7 @@
       <span class="chip amber">commits ahead</span>
       <span class="commit">
         <span class="sha">{{ live.headCommit.sha.slice(0, 7) }}</span>
-        {{ live.headCommit.message }}<template v-if="live.headCommit.pushedAt"> — pushed
+        <span :title="live.headCommit.message">{{ brief(live.headCommit.message) }}</span><template v-if="live.headCommit.pushedAt"> — pushed
         {{ timeAgo(live.headCommit.pushedAt) }}</template><template
           v-if="!project.auto_deploy && !project.git_url"> · auto deploy is off</template>
       </span>
@@ -60,7 +60,7 @@
       </p>
       <div v-else class="panel flush">
         <div class="table-scroll capped">
-          <table style="min-width: 640px">
+          <table class="voyages" style="min-width: 640px">
             <thead>
               <tr><th>Voyage</th><th>Status</th><th>Trigger</th><th>Commit</th><th>Departed</th><th>Passage</th></tr>
             </thead>
@@ -75,9 +75,8 @@
                 <td class="mono">#{{ d.id }}</td>
                 <td><StatusBadge :status="liveStatusFor(d)" /></td>
                 <td class="hint" style="font-size: 14px">{{ d.trigger }}</td>
-                <td>
-                  <span class="mono">{{ d.commit_sha ? d.commit_sha.slice(0, 7) : '—' }}</span>
-                  <span class="hint" style="margin-left: 6px">{{ d.commit_message }}</span>
+                <td class="commit-cell">
+                  <CommitMessage :sha="d.commit_sha ?? ''" :message="d.commit_message ?? ''" />
                 </td>
                 <td class="hint" style="font-size: 14px">{{ timeAgo(d.started_at || d.created_at) }}</td>
                 <td class="mono" style="color: var(--dim)">{{ duration(d.started_at, d.finished_at) }}</td>
@@ -221,6 +220,7 @@ import StatusBadge from '../components/StatusBadge.vue'
 import DeployLog from '../components/DeployLog.vue'
 import EnvEditor from '../components/EnvEditor.vue'
 import Pm2Logs from '../components/Pm2Logs.vue'
+import CommitMessage from '../components/CommitMessage.vue'
 import SourceFiles from '../components/SourceFiles.vue'
 import RuntimeFields from '../components/RuntimeFields.vue'
 import RoutingFields from '../components/RoutingFields.vue'
@@ -231,7 +231,7 @@ import { timeAgo, duration, uptimeSince, bytes } from '../lib/format.js'
 
 export default {
   name: 'ProjectView',
-  components: { StatusBadge, DeployLog, EnvEditor, Pm2Logs, SourceFiles, RuntimeFields, RoutingFields },
+  components: { StatusBadge, DeployLog, CommitMessage, EnvEditor, Pm2Logs, SourceFiles, RuntimeFields, RoutingFields },
   props: { id: { type: String, required: true } },
   data() {
     return {
@@ -324,6 +324,12 @@ export default {
     duration,
     uptimeSince,
     bytes,
+    // The banner is one flowing sentence, so a paragraph-long subject is cut
+    // in the text itself; the whole of it is in the title.
+    brief(message) {
+      const text = message ?? ''
+      return text.length > 140 ? `${text.slice(0, 140).trimEnd()}…` : text
+    },
     async loadDeployments() {
       this.deployments = await api.get(`/api/projects/${this.id}/deployments`)
     },
