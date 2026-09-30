@@ -293,3 +293,32 @@ test('a pending runtime change keeps the live controls and says so', async () =>
   })
   expect(settled.problems.join(' | ')).toBe('')
 })
+
+// The deploy script and start command start empty — nothing runs that was
+// not chosen — with the suggestion one click away.
+test('the new-project form offers its suggestions as one-click values', async () => {
+  seedStore('admin')
+  const { problems } = await expectCleanRender(ProjectNewView, {
+    steps: async wrapper => {
+      expect(wrapper.vm.form.deploy_script).toBe('')
+      expect(wrapper.vm.form.start_command).toBe('')
+      const offers = () => wrapper.findAll('p.suggest button')
+      expect(offers().map(b => b.text().replace(/\s+/g, ' '))).toEqual(['Use bun install && bun run build', 'Use bun run start'])
+      expect(wrapper.find('textarea').attributes('placeholder')).toBe('bun install && bun run build')
+
+      await offers()[0].trigger('click')
+      expect(wrapper.vm.form.deploy_script).toBe('bun install && bun run build')
+      expect(offers().map(b => b.text())).toEqual(['Use bun run start']) // a filled field needs no offer
+      await offers()[0].trigger('click')
+      expect(wrapper.vm.form.start_command).toBe('bun run start')
+      expect(offers().length).toBe(0)
+
+      // clearing a field brings its offer back; a static site has no start command to offer
+      await wrapper.find('textarea').setValue('')
+      wrapper.vm.form.runtime = 'static'
+      await settle()
+      expect(offers().map(b => b.text().replace(/\s+/g, ' '))).toEqual(['Use bun install && bun run build'])
+    },
+  })
+  expect(problems.join(' | ')).toBe('')
+})

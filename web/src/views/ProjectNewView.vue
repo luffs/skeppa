@@ -47,7 +47,14 @@
       <input v-model="form.name" placeholder="My app" @input="syncPm2Name" />
 
       <label>Deploy script</label>
-      <textarea v-model="form.deploy_script" class="code" rows="4" placeholder="bun install && bun run build"></textarea>
+      <textarea v-model="form.deploy_script" class="code" rows="4" :placeholder="suggested.deploy"></textarea>
+      <!-- The placeholder is a suggestion, not a default: nothing runs that was
+           not chosen. One click makes it the value. -->
+      <p v-if="!form.deploy_script.trim()" class="suggest">
+        <button type="button" class="secondary small" @click="form.deploy_script = suggested.deploy">
+          Use <span class="mono">{{ suggested.deploy }}</span>
+        </button>
+      </p>
       <p class="hint">
         ⚠ This runs as a shell script on the server with the project's ENV — that is the point of a
         deploy panel, so only put trusted commands here.
@@ -64,7 +71,12 @@
 
       <template v-if="form.runtime !== 'static'">
         <label>Start command <span class="soft">(optional — empty for build-only)</span></label>
-        <input v-model="form.start_command" class="code" placeholder="bun run start" />
+        <input v-model="form.start_command" class="code" :placeholder="suggested.start" />
+        <p v-if="!form.start_command.trim()" class="suggest">
+          <button type="button" class="secondary small" @click="form.start_command = suggested.start">
+            Use <span class="mono">{{ suggested.start }}</span>
+          </button>
+        </p>
       </template>
 
       <label>Working subdirectory <span class="soft">(optional, relative to repo root)</span></label>
@@ -122,6 +134,9 @@ export default {
       externalRepo: false,
       isTenant: store.user?.role === 'tenant',
       myHandle: store.user?.handle ?? '',
+      // Shown as placeholders and offered as one-click values — one source, so
+      // the hint and what the button fills in can never drift apart.
+      suggested: { deploy: 'bun install && bun run build', start: 'bun run start' },
       myDomain: store.user?.domain ?? '',
       form: {
         repo_full_name: '',

@@ -314,6 +314,9 @@ button.danger {
 }
 button.danger:hover { background: var(--red-tint); }
 button.small { padding: 5px 12px; font-size: 12px; }
+/* A one-click fill under an empty field: tucked against the field, not a new row of its own. */
+p.suggest { margin: 6px 0 0; }
+p.suggest button .mono { margin-left: 4px; }
 
 /* ---- text helpers ---- */
 
