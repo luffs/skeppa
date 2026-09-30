@@ -4,10 +4,12 @@ import { resolveShell, scriptEnvBase } from '../lib/shell.js'
 import { projectDefaults, getProjectInfo, getRecentDeployments } from '../live/state.js'
 import { projectDirs, syncEnvFiles, writeEcosystem, runtimeEnv, decryptedEnv, prepareBuildEnv } from './envfiles.js'
 import { syncRepo } from './git.js'
+import { publishStatic, unpublishStatic } from './publish.js'
 import { runScriptInContainer } from './sandbox.js'
-import { startOrReload, startOrReloadDetached, deleteProcess } from './pm2.js'
+import * as realPm2 from './pm2.js'
 import { createContainerClient } from '../containers/client.js'
 import { appContainerName, recreateAppContainer } from '../containers/runtime.js'
+import { isReservedPm2Name } from '../lib/runtime.js'
 
 export class DeployError extends Error {
   constructor(message, exitCode = null) {
@@ -77,7 +79,7 @@ export function recoverInterrupted(db) {
 // runs, at most one more waits; a newer enqueue replaces the waiting one
 // (which is marked cancelled).
 export class DeployRunner {
-  constructor({ db, config, liveState, logs, github, execute, containerClient = null, notify = null, poller = null }) {
+  constructor({ db, config, liveState, logs, github, execute, containerClient = null, notify = null, poller = null, applyProxy = null, pm2 = realPm2 }) {
     this.db = db
     this.config = config
     this.liveState = liveState
@@ -86,6 +88,8 @@ export class DeployRunner {
     this.notify = notify ?? (() => {}) // fire-and-forget; never awaited
     this.containerClient = containerClient // test injection; null = real engine
     this.poller = poller // told when a deploy changed the apps dir
+    this.applyProxy = applyProxy // reloads the harbor gate when a deploy changes what it should serve
+    this.pm2 = pm2 // test injection; the real CLI wrapper otherwise
     this.queues = new Map() // projectId -> { runningId, queuedId }
     this.activeLogs = new Map() // deploymentId -> LogCollector
     this._execute = execute || ((project, deploymentId, log) => this._deploy(project, deploymentId, log))
@@ -159,11 +163,12 @@ export class DeployRunner {
       ).get(projectId)
       if (!project) throw new DeployError('project was deleted')
       // The deploy script is arbitrary shell. For the admin that is the
-      // product; for a tenant it must never touch the host — container
-      // runtime and the podman build sandbox are hard requirements,
-      // enforced here so no route or UI gap can reopen them.
+      // product; for a tenant it must never touch the host — no host
+      // process (a container, or a static site with no process at all)
+      // and the podman build sandbox are hard requirements, enforced here
+      // so no route or UI gap can reopen them.
       if (project.owner_role === 'tenant') {
-        if (project.runtime !== 'container') throw new DeployError('tenant projects run in containers only')
+        if (!['container', 'static'].includes(project.runtime)) throw new DeployError('tenant projects run in a container or as a static site')
         if (this.config.sandbox !== 'podman') {
           throw new DeployError('tenant deploys require the podman build sandbox — the admin must set SKEPPA_SANDBOX=podman')
         }
@@ -265,12 +270,15 @@ export class DeployRunner {
     // .env (if that toggle is on) is written now, for the runtime only.
     if (!buildAccess) syncEnvFiles(this.db, this.config, project)
 
-    if (project.start_command?.trim()) {
+    if (project.runtime === 'static') {
+      this._publish(project, dirs, log)
+    } else if (project.start_command?.trim()) {
       const appEnv = runtimeEnv(project, envVars)
       if (project.runtime === 'container') {
-        // Leftovers from before a pm2 → container runtime switch.
+        // A pm2 process from before a pm2 → container switch still holds the
+        // port this container is about to publish.
         rmSync(dirs.ecosystem, { force: true })
-        await deleteProcess(project.pm2_name)
+        if (project.deployed_runtime === 'pm2') await this._removeLeftoverPm2(project)
         log.line(`▸ recreating container ${appContainerName(project.slug)}`)
         await recreateAppContainer({
           config: this.config, project, dirs, env: appEnv,
@@ -286,10 +294,10 @@ export class DeployRunner {
           // The deployed checkout's own ecosystem file: cwd resolves to the
           // new source dir, and the spec shape matches the one the installer
           // started the panel with — one definition, never a reload-merge.
-          setTimeout(() => startOrReloadDetached(join(dirs.source, 'ecosystem.config.cjs'), appEnv), 1500)
+          setTimeout(() => this.pm2.startOrReloadDetached(join(dirs.source, 'ecosystem.config.cjs'), appEnv), 1500)
         } else {
           log.line(`▸ pm2 startOrReload ${project.pm2_name}`)
-          await startOrReload(ecosystemPath, appEnv)
+          await this.pm2.startOrReload(ecosystemPath, appEnv)
         }
       }
       // A deploy that (re)started the app means it should start at boot too.
@@ -297,6 +305,76 @@ export class DeployRunner {
     } else {
       log.line('▸ no start command configured, skipping start')
     }
+    await this._settle(project, dirs, log)
+  }
+
+  // The new thing is ready — published, or started. Record that it is what
+  // the project now runs as, move the harbor gate's route to it, and only
+  // then clear away what served the project before. In that order a switch
+  // between an app and a static site has no gap, and anything failing on
+  // the way leaves the previous site exactly where it was.
+  async _settle(project, dirs, log) {
+    const was = project.deployed_runtime || ''
+    const now = project.runtime
+    if (was !== now) {
+      const record = runtime => {
+        this.db.query('UPDATE projects SET deployed_runtime = ? WHERE id = ?').run(runtime, project.id)
+        const live = this.liveState.projects[project.id]
+        if (live?.info) live.info.deployed_runtime = runtime
+      }
+      record(now)
+      // Files or a port: the route only changes kind when static is involved.
+      const switched = Boolean(was) && (was === 'static') !== (now === 'static')
+      if (this.applyProxy) {
+        try {
+          await this.applyProxy()
+          if (switched) log.line(`▸ harbor gate now serves ${now === 'static' ? 'the published files' : 'the app'}`)
+        } catch (err) {
+          if (switched) {
+            record(was)
+            throw new DeployError(`the harbor gate did not take the new route (${err.message}) — the previous site is still being served`)
+          }
+          log.line(`⚠ harbor gate reload failed: ${err.message} — see Rigging → Harbor gate`)
+        }
+      }
+    }
+    if (now === 'static') {
+      // What ran before would keep running (and keep its port) with nothing
+      // pointing at it.
+      rmSync(dirs.ecosystem, { force: true })
+      if (was === 'pm2') await this._removeLeftoverPm2(project)
+      if (was !== 'static') await this._removeStaleContainer(project.slug)
+    } else {
+      unpublishStatic(dirs.public) // left over from a static era
+    }
+  }
+
+  // Removes the pm2 process a project ran as before it left the pm2 runtime.
+  // Callers only get here when the last successful deploy was a pm2 one; the
+  // name check is the second lock — the panel's own process and the harbor
+  // gate are never deleted on the strength of a project's pm2 name.
+  async _removeLeftoverPm2(project) {
+    if (isReservedPm2Name(this.config, project.pm2_name)) return
+    await this.pm2.deleteProcess(project.pm2_name)
+  }
+
+  // Static runtime: nothing starts. What the build produced is copied into a
+  // panel-owned snapshot, which is what the harbor gate serves — see
+  // publish.js for why it is never the working tree itself.
+  _publish(project, dirs, log) {
+    log.line(`▸ publishing ${project.publish_dir || '.'}`)
+    let result
+    try {
+      result = publishStatic({ workDir: dirs.work, publishDir: project.publish_dir, target: dirs.public })
+    } catch (err) {
+      throw new DeployError(err.message)
+    }
+    const kb = Math.max(1, Math.round(result.bytes / 1024))
+    log.line(`▸ published ${result.files} file${result.files === 1 ? '' : 's'} (${kb} kB)`)
+    if (result.symlinks) log.line(`▸ left out ${result.symlinks} symlink${result.symlinks === 1 ? '' : 's'} — links are never published`)
+    if (result.hidden) log.line(`▸ left out ${result.hidden} dot-file${result.hidden === 1 ? '' : 's'}/director${result.hidden === 1 ? 'y' : 'ies'}`)
+    if (!result.hasIndex) log.line('⚠ no index.html at the top of the published directory — the site root will be a 404')
+    if (!project.subdomain) log.line('⚠ no subdomain set — the site is published but not reachable until it has one (Rigging)')
   }
 
   // A container left behind after a container → pm2 runtime switch would keep

@@ -66,6 +66,9 @@ poller.start()
 const runner = new DeployRunner({
   db, config, liveState, logs: liveStores, github, poller,
   notify: text => sendNotification(db, config.masterKey, text),
+  // A deploy that changes what a project is served as moves its route
+  // (`proxy` is created just below; this only runs once a deploy finishes).
+  applyProxy: () => proxy.apply(),
 })
 
 const proxy = createProxy({ db, config })

@@ -4,7 +4,7 @@ import { encrypt, decrypt } from '../lib/crypto.js'
 import { slugify, validateProject, SLUG_RE, ENV_KEY_RE, PM2_ACTIONS, APEX } from '../lib/validate.js'
 import { projectDefaults, getProjectInfo } from '../live/state.js'
 import { syncManagedImages } from '../live/images.js'
-import { deleteProcess, describe } from '../deploy/pm2.js'
+import * as realPm2 from '../deploy/pm2.js'
 import { lsRemoteHead } from '../deploy/git.js'
 import { projectDirs, syncEnvFiles, writeEcosystem } from '../deploy/envfiles.js'
 import { createContainerClient } from '../containers/client.js'
@@ -13,10 +13,11 @@ import { applyProjectAction } from '../deploy/control.js'
 import { tailFile } from '../lib/tail.js'
 import { readSourcePath, openSourceDownload, SourceFileError } from '../lib/sourcefiles.js'
 import { proxySettings } from '../proxy/index.js'
+import { PROXY_PM2_NAME, isReservedPm2Name } from '../lib/runtime.js'
 
 const PROJECT_COLUMNS =
   'id, slug, name, repo_full_name, git_url, branch, deploy_script, build_image, run_image, runtime, pm2_name, start_command, cwd, ' +
-  'auto_deploy, write_env_file, build_env, subdomain, port, memory_mb, network_profile, host_access, networks, head_sha, head_message, head_pushed_at, created_at'
+  'auto_deploy, write_env_file, build_env, subdomain, port, memory_mb, network_profile, host_access, networks, publish_dir, spa_fallback, deployed_runtime, head_sha, head_message, head_pushed_at, created_at'
 
 const DEFAULT_LOG_LINES = 200
 const MAX_LOG_LINES = 2000
@@ -34,7 +35,7 @@ function uniqueName(base, taken) {
   return candidate
 }
 
-export function projectRoutes({ db, config, liveState, runner, poller, github, proxy = null, containerClient = null }) {
+export function projectRoutes({ db, config, liveState, runner, poller, github, proxy = null, containerClient = null, pm2 = realPm2 }) {
   const app = new Hono()
 
   // Lazy so pm2-only installs never touch the socket; throws a useful message
@@ -86,6 +87,11 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
     return port
   }
   const normalizeImage = value => (typeof value === 'string' && value.trim() ? value.trim() : null)
+  // '' is the working directory itself; './dist/' and 'dist' are the same place.
+  const normalizePublishDir = value =>
+    (typeof value === 'string' ? value.trim().replace(/^(\.\/)+/, '').replace(/\/+$/, '').replace(/^\.$/, '') : 'dist')
+  // Tenants never get a host process: a container, or no process at all.
+  const TENANT_RUNTIMES = ['container', 'static']
 
   // Field errors for subdomain/port collisions with other projects.
   // A tenant's public names live under their handle, so bob's "app" and
@@ -149,6 +155,8 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
       network_profile: body.network_profile ?? 'open',
       host_access: body.host_access ? 1 : 0,
       networks: typeof body.networks === 'string' ? body.networks.trim() : '',
+      publish_dir: normalizePublishDir(body.publish_dir),
+      spa_fallback: body.spa_fallback ? 1 : 0,
     }
     // No webhook will ever fire for a plain-git project — keep the flag
     // honest instead of letting it promise something that cannot happen.
@@ -156,20 +164,25 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
     const user = c.get('user')
     const tenant = Boolean(user && user.role !== 'admin')
     project.owner_id = user?.id ?? null
+    // The container boundary is what makes tenancy safe at all: settle the
+    // runtime before anything is derived from it.
+    if (tenant && !TENANT_RUNTIMES.includes(project.runtime) && body.runtime !== 'pm2') project.runtime = 'container'
+    // Only a pm2 project has a pm2 process to name. For the rest the column
+    // is an internal label derived from the project name — never an input,
+    // so nobody can point a project at a process that is not theirs.
+    if (project.runtime !== 'pm2') project.pm2_name = slugify(body.name ?? '')
     const errors = { ...validateProject(project), ...routingConflicts(project) }
     if (tenant) {
-      // The container boundary is what makes tenancy safe at all, and host
-      // access reaches the panel itself — both are role rules, not options.
-      if (body.runtime === 'pm2') errors.runtime = 'tenant projects run in containers only'
-      else project.runtime = 'container'
+      // Host access reaches the panel itself — a role rule, not an option.
+      if (body.runtime === 'pm2') errors.runtime = 'tenant projects run in a container or as a static site'
       if (project.host_access) errors.host_access = 'host access is admin-only'
+    }
+    if (project.runtime === 'pm2' && project.pm2_name === PROXY_PM2_NAME) {
+      errors.pm2_name = 'reserved for the harbor gate'
     }
     // Build-time ENV: on by default for the admin's own repos, off for
     // tenants, whose dependencies are the untrusted ones.
     project.build_env = 'build_env' in body ? (body.build_env ? 1 : 0) : (tenant ? 0 : 1)
-    if (project.runtime === 'container' && project.pm2_name === config.selfPm2Name) {
-      errors.runtime = 'the panel itself must run under pm2'
-    }
     if (Object.keys(errors).length) return c.json({ error: 'validation failed', fields: errors }, 400)
 
     // A tenant moors GitHub repos only from installations their linked
@@ -190,15 +203,20 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
     // collision is resolved by suffixing rather than by rejecting a field the
     // user may not even see. PATCH still 400s, because there it is an
     // explicit edit to an existing project.
-    project.pm2_name = uniqueName(project.pm2_name, n => db.query('SELECT 1 FROM projects WHERE pm2_name = ?').get(n))
+    // The panel's own process names count as taken — except the panel's own
+    // name for a pm2 project, which is how the panel deploys itself.
+    project.pm2_name = uniqueName(project.pm2_name, n =>
+      (isReservedPm2Name(config, n) && !(project.runtime === 'pm2' && n === config.selfPm2Name)) ||
+      db.query('SELECT 1 FROM projects WHERE pm2_name = ?').get(n))
 
     const { lastInsertRowid } = db.query(
-      `INSERT INTO projects (slug, name, owner_id, repo_full_name, git_url, branch, deploy_script, build_image, run_image, runtime, pm2_name, start_command, cwd, auto_deploy, write_env_file, build_env, subdomain, port, memory_mb, network_profile, host_access, networks)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO projects (slug, name, owner_id, repo_full_name, git_url, branch, deploy_script, build_image, run_image, runtime, pm2_name, start_command, cwd, auto_deploy, write_env_file, build_env, subdomain, port, memory_mb, network_profile, host_access, networks, publish_dir, spa_fallback)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(slug, project.name, project.owner_id, project.repo_full_name, project.git_url, project.branch, project.deploy_script,
           project.build_image, project.run_image, project.runtime, project.pm2_name, project.start_command,
           project.cwd, project.auto_deploy, project.write_env_file, project.build_env, project.subdomain, project.port,
-          project.memory_mb, project.network_profile, project.host_access, project.networks)
+          project.memory_mb, project.network_profile, project.host_access, project.networks,
+          project.publish_dir, project.spa_fallback)
     const id = Number(lastInsertRowid)
     if (project.port == null) {
       project.port = autoPort(db, id)
@@ -242,20 +260,28 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
       network_profile: 'network_profile' in body ? body.network_profile : (project.network_profile ?? 'open'),
       host_access: 'host_access' in body ? (body.host_access ? 1 : 0) : project.host_access,
       networks: 'networks' in body ? (typeof body.networks === 'string' ? body.networks.trim() : '') : project.networks,
+      publish_dir: 'publish_dir' in body ? normalizePublishDir(body.publish_dir) : project.publish_dir,
+      spa_fallback: 'spa_fallback' in body ? (body.spa_fallback ? 1 : 0) : project.spa_fallback,
       owner_id: project.owner_id, // ownership never changes on edit
     }
     // Clearing the port (or saving a legacy project that never had one)
     // re-assigns the default rather than leaving the project portless.
     if (merged.port == null) merged.port = autoPort(db, project.id)
     if (merged.git_url) merged.auto_deploy = 0 // no webhook for plain-git projects
+    // The pm2 name is an input only while the project is a pm2 process;
+    // otherwise it stays what it was, whatever the request says.
+    if (merged.runtime !== 'pm2') merged.pm2_name = project.pm2_name
+    const errors = { ...validateProject(merged), ...routingConflicts(merged, project.id) }
     const editor = c.get('user')
     if (editor && editor.role !== 'admin') {
-      if (merged.runtime === 'pm2') errors.runtime = 'tenant projects run in containers only'
+      if (!TENANT_RUNTIMES.includes(merged.runtime)) errors.runtime = 'tenant projects run in a container or as a static site'
       if (merged.host_access) errors.host_access = 'host access is admin-only'
     }
-    const errors = { ...validateProject(merged), ...routingConflicts(merged, project.id) }
-    if (merged.runtime === 'container' && merged.pm2_name === config.selfPm2Name) {
+    if (merged.runtime !== 'pm2' && merged.pm2_name === config.selfPm2Name) {
       errors.runtime = 'the panel itself must run under pm2'
+    }
+    if (merged.runtime === 'pm2' && merged.pm2_name === PROXY_PM2_NAME) {
+      errors.pm2_name = 'reserved for the harbor gate'
     }
     if (Object.keys(errors).length) return c.json({ error: 'validation failed', fields: errors }, 400)
     if (merged.pm2_name !== project.pm2_name &&
@@ -266,11 +292,12 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
     db.query(
       `UPDATE projects SET name = ?, repo_full_name = ?, branch = ?, deploy_script = ?, build_image = ?, run_image = ?, runtime = ?,
          start_command = ?, pm2_name = ?, cwd = ?, auto_deploy = ?, write_env_file = ?, build_env = ?, subdomain = ?, port = ?, memory_mb = ?,
-         network_profile = ?, host_access = ?, networks = ?, git_url = ? WHERE id = ?`
+         network_profile = ?, host_access = ?, networks = ?, git_url = ?, publish_dir = ?, spa_fallback = ? WHERE id = ?`
     ).run(merged.name, merged.repo_full_name, merged.branch, merged.deploy_script, merged.build_image,
           merged.run_image, merged.runtime, merged.start_command, merged.pm2_name, merged.cwd, merged.auto_deploy,
           merged.write_env_file, merged.build_env, merged.subdomain, merged.port, merged.memory_mb,
-          merged.network_profile, merged.host_access, merged.networks, merged.git_url, project.id)
+          merged.network_profile, merged.host_access, merged.networks, merged.git_url,
+          merged.publish_dir, merged.spa_fallback, project.id)
     if (liveState.projects[project.id]) {
       liveState.projects[project.id].info = getProjectInfo(db, project.id)
     }
@@ -280,14 +307,22 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
     if (merged.write_env_file !== project.write_env_file) {
       syncEnvFiles(db, config, getProject(project.id))
     }
-    if (merged.subdomain !== project.subdomain || merged.port !== project.port) await applyProxy()
+    // The runtime decides what kind of route the gate holds (proxy or file
+    // server), and the fallback toggle its shape.
+    if (merged.subdomain !== project.subdomain || merged.port !== project.port ||
+        merged.runtime !== project.runtime || merged.spa_fallback !== project.spa_fallback) await applyProxy()
     return c.json(getProject(project.id))
   })
 
   app.delete('/:id', async c => {
     const project = getProjectFor(c)
     if (!project) return c.json({ error: 'not found' }, 404)
-    await deleteProcess(project.pm2_name)
+    // Only a project that is (or was last deployed as) a pm2 process has one
+    // to remove — and never the panel's own or the harbor gate's, whatever
+    // name the row carries.
+    if ((project.runtime === 'pm2' || project.deployed_runtime === 'pm2') && !isReservedPm2Name(config, project.pm2_name)) {
+      await pm2.deleteProcess(project.pm2_name)
+    }
     try {
       await engine().removeContainer(appContainerName(project.slug))
     } catch {
@@ -446,7 +481,7 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
       if (project.runtime === 'container') {
         return c.json(await appLogResponse(engine(), appContainerName(project.slug), lines))
       }
-      const proc = await describe(project.pm2_name)
+      const proc = await pm2.describe(project.pm2_name)
       if (!proc) return c.json({ error: 'not running under pm2 yet' }, 404)
       const read = async path =>
         path

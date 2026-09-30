@@ -62,8 +62,10 @@
         its ENV either way.
       </p>
 
-      <label>Start command <span class="soft">(optional — empty for build-only)</span></label>
-      <input v-model="form.start_command" class="code" placeholder="bun run start" />
+      <template v-if="form.runtime !== 'static'">
+        <label>Start command <span class="soft">(optional — empty for build-only)</span></label>
+        <input v-model="form.start_command" class="code" placeholder="bun run start" />
+      </template>
 
       <label>Working subdirectory <span class="soft">(optional, relative to repo root)</span></label>
       <input v-model="form.cwd" class="code" placeholder="apps/api" />
@@ -77,6 +79,8 @@
         v-model:network-profile="form.network_profile"
         v-model:host-access="form.host_access"
         v-model:networks="form.networks"
+        v-model:publish-dir="form.publish_dir"
+        v-model:spa-fallback="form.spa_fallback"
         :tenant="isTenant"
       />
 
@@ -85,6 +89,7 @@
         v-model:port="form.port"
         :handle="isTenant ? myHandle : ''"
         :domain="isTenant ? myDomain : ''"
+        :static-site="form.runtime === 'static'"
       />
 
       <p v-if="error" class="error">{{ error }}</p>
@@ -141,6 +146,8 @@ export default {
         network_profile: 'open',
         host_access: false,
         networks: '',
+        publish_dir: 'dist',
+        spa_fallback: false,
         subdomain: '',
         port: '',
       },

@@ -18,7 +18,9 @@ export const PM2_ACTIONS = ['start', 'stop', 'restart']
 // OCI image reference (registry/repo:tag@digest). Travels via the container
 // engine's JSON API, never a shell — this is a sanity check, not an escape.
 export const IMAGE_RE = /^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,255}$/
-export const RUNTIMES = ['pm2', 'container']
+// 'static' has no process at all: the deploy builds files and the harbor
+// gate serves a published snapshot of them (deploy/publish.js).
+export const RUNTIMES = ['pm2', 'container', 'static']
 
 // Multi-tenancy: admins are the panel owner; tenants moor and deploy their
 // own container projects and nothing else. The handle namespaces a
@@ -80,7 +82,7 @@ export function slugify(name) {
 }
 
 // Collects field errors for a project payload; returns {} when everything is valid.
-export function validateProject({ name, repo_full_name, git_url, branch, pm2_name, cwd, deploy_script, start_command, build_image, run_image, runtime, subdomain, port, memory_mb, network_profile, host_access, networks }) {
+export function validateProject({ name, repo_full_name, git_url, branch, pm2_name, cwd, deploy_script, start_command, build_image, run_image, runtime, subdomain, port, memory_mb, network_profile, host_access, networks, publish_dir }) {
   const errors = {}
   if (typeof name !== 'string' || !name.trim()) errors.name = 'name is required'
   // A project is GitHub-App-backed (owner/repo) or plain-git (https URL) —
@@ -94,6 +96,8 @@ export function validateProject({ name, repo_full_name, git_url, branch, pm2_nam
   if (!isValidBranch(branch)) errors.branch = 'invalid branch name'
   if (typeof pm2_name !== 'string' || !PM2_NAME_RE.test(pm2_name)) errors.pm2_name = 'letters, digits, dot, dash, underscore only'
   if (!isValidCwd(cwd)) errors.cwd = 'must be a safe relative path'
+  // Reaches the filesystem (the publish copy), so it gets the same whitelist.
+  if (!isValidCwd(publish_dir)) errors.publish_dir = 'must be a safe relative path'
   if (deploy_script != null && typeof deploy_script !== 'string') errors.deploy_script = 'must be a string'
   if (start_command != null && typeof start_command !== 'string') errors.start_command = 'must be a string'
   if (build_image != null && !IMAGE_RE.test(build_image)) errors.build_image = 'invalid image reference'

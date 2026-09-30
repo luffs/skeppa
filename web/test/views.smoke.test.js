@@ -228,3 +228,68 @@ test('the harbor groups projects by owner for an admin, and not for a tenant', a
   })
   expect(tenant.problems.join(' | ')).toBe('')
 })
+
+// A static site has no process: the project page drops the process controls
+// and the log tab, and Rigging swaps start command and port for the publish
+// directory. A tenant picks between a container and a static site.
+test('a static project shows no process controls, and its Rigging asks for a publish directory', async () => {
+  seedStore('admin')
+  Object.assign(store.live.projects[1].info, { runtime: 'static', publish_dir: 'dist', spa_fallback: 1 })
+  store.live.projects[1].pm2 = { status: 'published', uptime: null, memory: null, cpu: null, restarts: null, pid: null }
+  const page = await expectCleanRender(ProjectView, {
+    props: { id: '1' },
+    steps: async wrapper => {
+      const buttons = wrapper.findAll('button').map(b => b.text())
+      for (const gone of ['Start', 'Stop', 'Restart', 'Logbook']) expect(buttons).not.toContain(gone)
+      expect(buttons).toContain('Set sail — deploy')
+      expect(wrapper.find('.chip.green').text()).toContain('published')
+
+      wrapper.vm.tab = 'settings'
+      await settle()
+      const labels = wrapper.findAll('label').map(l => l.text())
+      expect(labels.some(l => l.startsWith('Publish directory'))).toBe(true)
+      expect(labels.some(l => l.startsWith('Single-page app'))).toBe(true)
+      expect(labels).not.toContain('Start command')
+      expect(labels.some(l => l.startsWith('App port'))).toBe(false)
+      expect(labels.some(l => l.startsWith('Memory limit'))).toBe(false)
+    },
+  })
+  expect(page.problems.join(' | ')).toBe('')
+
+  seedStore('tenant')
+  const form = await expectCleanRender(ProjectNewView, {
+    steps: async wrapper => {
+      const runtimes = wrapper.findAll('select option').map(o => o.attributes('value')).filter(v => ['pm2', 'container', 'static'].includes(v))
+      expect(runtimes).toEqual(['container', 'static']) // never a host process
+    },
+  })
+  expect(form.problems.join(' | ')).toBe('')
+})
+
+// A runtime saved but not deployed yet changes nothing that is live: the page
+// keeps the controls of what is running and says the change is waiting.
+test('a pending runtime change keeps the live controls and says so', async () => {
+  seedStore('admin')
+  Object.assign(store.live.projects[1].info, { runtime: 'static', deployed_runtime: 'container' })
+  const pending = await expectCleanRender(ProjectView, {
+    props: { id: '1' },
+    steps: async wrapper => {
+      const buttons = wrapper.findAll('button').map(b => b.text())
+      for (const kept of ['Start', 'Stop', 'Restart', 'Logbook']) expect(buttons).toContain(kept) // the container still runs
+      const note = wrapper.findAll('p.hint').map(p => p.text().replace(/\s+/g, ' ')).find(t => t.startsWith('Runtime change pending'))
+      expect(note).toContain('still served as a container')
+      expect(note).toContain('becomes a static site on the next successful deploy')
+    },
+  })
+  expect(pending.problems.join(' | ')).toBe('')
+
+  seedStore('admin')
+  Object.assign(store.live.projects[1].info, { runtime: 'container', deployed_runtime: 'container' })
+  const settled = await expectCleanRender(ProjectView, {
+    props: { id: '1' },
+    steps: async wrapper => {
+      expect(wrapper.findAll('p.hint').some(p => p.text().startsWith('Runtime change pending'))).toBe(false)
+    },
+  })
+  expect(settled.problems.join(' | ')).toBe('')
+})

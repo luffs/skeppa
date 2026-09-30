@@ -1,11 +1,12 @@
 # ⛵ Skeppa
 
-A self-hosted deploy panel that turns a git push into a running app on your own Linux server. Deploys private GitHub repos via webhooks, manages encrypted ENV variables, and runs each app as a pm2 process or in its own rootless-podman container — with per-project network isolation for code you don't fully trust.
+A self-hosted deploy panel that turns a git push into a running app on your own Linux server. Deploys private GitHub repos via webhooks, manages encrypted ENV variables, and runs each app as a pm2 process or in its own rootless-podman container — with per-project network isolation for code you don't fully trust — or publishes it as a static site with no process at all.
 
 - Add a project by picking a private GitHub repo + branch — or any public git URL (GitLab, Codeberg, anywhere), updated with a manual check instead of a webhook
 - Automatic deploy on push (GitHub App webhook, HMAC-verified) or manually from the UI
 - Per-project deploy script and ENV vars (AES-256-GCM encrypted at rest)
 - Run each app under pm2 or in a rootless-podman container — with per-project network profiles, memory caps and crash-loop alerts
+- Static sites (Vite, docs, plain HTML) served straight from the panel's proxy — nothing to start, nothing to keep alive
 - Live status and live deploy logs as [lazy-storage](https://www.npmjs.com/package/lazy-storage) stores over one WebSocket (per-user by store, [lazy-watch](https://www.npmjs.com/package/lazy-watch) diffs on the wire)
 - Optional extras once you're running: a throwaway-container build sandbox, managed images (Shipyard), wildcard subdomain routing (harbor gate), webhook notifications (ntfy/Discord/Slack)
 
@@ -277,6 +278,31 @@ automatically. A tenant can bring a domain of their own instead (Rigging → Cre
 their projects then route as `app.their-domain.com`, and the project whose subdomain is
 `@` sits at the domain itself. They point the domain and its wildcard at your server; the
 panel adds the blocks to the snippet, and the certificates issue like the others.
+
+## Static sites
+
+For a site that is only files — a Vite build, generated docs, plain HTML — pick the
+**static site** runtime. There is no start command, no port and no process: the deploy
+script builds as usual (`bun install && bun run build`), and the panel then publishes the
+**publish directory** (default `dist`, relative to the working directory) for the harbor
+gate to serve under the project's subdomain, compressed. A static site needs the harbor
+gate and a subdomain; without one it is published but not reachable.
+
+What is served is a snapshot in `APPS_DIR/<slug>/public`, copied after a successful build
+and swapped in whole — never the working tree. Visitors keep the previous version while a
+build runs, a failed build changes nothing, and symlinks and dot-files (`.git`, `.env`)
+are never published, `.well-known` excepted. Turn on **Single-page app** for client-side
+routers: unknown paths are then answered with `index.html`, so a reload on `/about` loads
+the app instead of a 404.
+
+An existing app can be switched to a static site, or back, without downtime: saving the
+runtime changes nothing that is live. The next successful deploy publishes (or starts) the
+new thing, moves the route to it, and only then removes what served the project before.
+Until that deploy the project page says the change is pending.
+
+`VITE_*` and similar values are baked in at build time, so the project needs **Inject ENV
+into the deploy script** on (off by default for tenants). Tenants may use this runtime: a
+static site runs none of their code on the server once the build is done.
 
 ## Notifications
 

@@ -3,6 +3,7 @@ import { projectDirs, decryptedEnv, runtimeEnv, writeEcosystem } from './envfile
 import * as realPm2 from './pm2.js'
 import { createContainerClient } from '../containers/client.js'
 import { appContainerName, recreateAppContainer } from '../containers/runtime.js'
+import { liveRuntime } from '../lib/runtime.js'
 
 // After a server reboot nothing starts the apps (the pm2 dump holds only the
 // panel — see README — and podman is daemonless), so the panel brings its own
@@ -22,9 +23,12 @@ export async function resurrectApps({ db, config, pm2 = realPm2, containers = nu
     `SELECT p.*, u.role AS owner_role, u.handle AS owner_handle
      FROM projects p LEFT JOIN users u ON u.id = p.owner_id`
   ).all()
+  // What was serving before the reboot is what comes back — a runtime
+  // change that was never deployed waits for its deploy.
+  for (const project of projects) project.live_runtime = liveRuntime(project)
 
   let pm2Known = null
-  if (projects.some(p => p.runtime !== 'container')) {
+  if (projects.some(p => p.live_runtime === 'pm2')) {
     try {
       pm2Known = new Set((await pm2.jlist()).map(p => p.name))
     } catch (err) {
@@ -33,7 +37,7 @@ export async function resurrectApps({ db, config, pm2 = realPm2, containers = nu
   }
 
   let engine = containers
-  if (!engine && config.containerSocket && projects.some(p => p.runtime === 'container')) {
+  if (!engine && config.containerSocket && projects.some(p => p.live_runtime === 'container')) {
     engine = createContainerClient({ socketPath: config.containerSocket })
   }
 
@@ -41,7 +45,13 @@ export async function resurrectApps({ db, config, pm2 = realPm2, containers = nu
   for (const project of projects) {
     const dirs = projectDirs(config, project)
 
-    if (project.runtime === 'container') {
+    // Static sites are files the harbor gate serves — nothing to start.
+    if (project.live_runtime === 'static') {
+      rmSync(dirs.ecosystem, { force: true }) // stale from a pm2 era
+      continue
+    }
+
+    if (project.live_runtime === 'container') {
       rmSync(dirs.ecosystem, { force: true }) // stale from a pm2 era
       if (!project.start_command?.trim() || !project.auto_start) continue
       if (!existsSync(dirs.source)) continue

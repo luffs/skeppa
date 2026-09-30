@@ -13,6 +13,7 @@
 const COLORS = {
   success: 'green',
   online: 'green',
+  published: 'green', // a static site: no process, its snapshot is being served
   running: 'blue',
   queued: 'amber',
   stopping: 'amber',

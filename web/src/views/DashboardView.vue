@@ -146,7 +146,7 @@ export default {
     fleetSummary() {
       const all = Object.values(store.live.projects ?? {}).filter(p => p.info)
       const n = all.length
-      const running = all.filter(p => p.pm2?.status === 'online').length
+      const running = all.filter(p => ['online', 'published'].includes(p.pm2?.status)).length
       const attention = all.filter(
         p =>
           (p.headCommit?.sha && !p.currentDeployment && p.headCommit.sha !== p.deployedSha) ||

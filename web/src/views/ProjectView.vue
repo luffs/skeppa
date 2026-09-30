@@ -25,15 +25,22 @@
         >
           {{ checking ? 'Checking…' : project.git_url ? '↻ Check remote' : '↻ Check GitHub' }}
         </button>
-        <button class="secondary" :disabled="pm2Busy" @click="pm2('start')">Start</button>
-        <button class="secondary" :disabled="pm2Busy" @click="confirmPm2('stop')">Stop</button>
-        <button class="secondary" :disabled="pm2Busy" @click="confirmPm2('restart')">Restart</button>
+        <!-- A static site has no process: deploying is the only verb. -->
+        <template v-if="!isStatic">
+          <button class="secondary" :disabled="pm2Busy" @click="pm2('start')">Start</button>
+          <button class="secondary" :disabled="pm2Busy" @click="confirmPm2('stop')">Stop</button>
+          <button class="secondary" :disabled="pm2Busy" @click="confirmPm2('restart')">Restart</button>
+        </template>
         <button :disabled="!!live?.currentDeployment" @click="deployNow">
           {{ live?.currentDeployment ? 'Under way…' : 'Set sail — deploy' }}
         </button>
       </div>
     </div>
 
+    <p class="hint" v-if="pendingRuntime" style="margin-top: 12px">
+      Runtime change pending: still served as {{ runtimeLabel(liveRuntime) }}. It becomes
+      {{ pendingRuntime }} on the next successful deploy — until then nothing moves.
+    </p>
     <div class="ahead-banner" v-if="undeployed">
       <span class="chip amber">commits ahead</span>
       <span class="commit">
@@ -48,7 +55,7 @@
 
     <div class="tabs">
       <button :class="{ active: tab === 'deploys' }" @click="tab = 'deploys'">Voyages</button>
-      <button :class="{ active: tab === 'logs' }" @click="tab = 'logs'">Logbook</button>
+      <button v-if="!isStatic" :class="{ active: tab === 'logs' }" @click="tab = 'logs'">Logbook</button>
       <button :class="{ active: tab === 'env' }" @click="tab = 'env'">Manifest (env)</button>
       <button :class="{ active: tab === 'files' }" @click="tab = 'files'">Freight (files)</button>
       <button :class="{ active: tab === 'settings' }" @click="tab = 'settings'">Rigging</button>
@@ -130,8 +137,10 @@
       <label>Deploy script</label>
       <textarea v-model="edit.deploy_script" class="code" rows="4"></textarea>
       <p class="hint">⚠ Runs as a shell script on the server — only trusted commands.</p>
-      <label>Start command</label>
-      <input v-model="edit.start_command" class="code" />
+      <template v-if="edit.runtime !== 'static'">
+        <label>Start command</label>
+        <input v-model="edit.start_command" class="code" />
+      </template>
       <RuntimeFields
         v-model:runtime="edit.runtime"
         v-model:build-image="edit.build_image"
@@ -141,6 +150,8 @@
         v-model:network-profile="edit.network_profile"
         v-model:host-access="edit.host_access"
         v-model:networks="edit.networks"
+        v-model:publish-dir="edit.publish_dir"
+        v-model:spa-fallback="edit.spa_fallback"
         :tenant="isTenant"
         existing
       />
@@ -171,6 +182,7 @@
         v-model:port="edit.port"
         :handle="project.owner_role === 'tenant' ? project.owner_handle : ''"
         :domain="project.owner_role === 'tenant' ? project.owner_domain : ''"
+        :static-site="edit.runtime === 'static'"
         existing
       />
       <p v-if="saveError" class="error">{{ saveError }}</p>
@@ -229,6 +241,8 @@ import { confirmDialog, alertDialog } from '../lib/dialog.js'
 import { store, liveProject, appUrlFor } from '../store.js'
 import { timeAgo, duration, uptimeSince, bytes } from '../lib/format.js'
 
+const RUNTIME_LABEL = { pm2: 'a pm2 process', container: 'a container', static: 'a static site' }
+
 export default {
   name: 'ProjectView',
   components: { StatusBadge, DeployLog, CommitMessage, EnvEditor, Pm2Logs, SourceFiles, RuntimeFields, RoutingFields },
@@ -259,6 +273,19 @@ export default {
     // template throw, so the role check lives here.
     isTenant() {
       return store.user?.role === 'tenant'
+    },
+    // What the project is being served as right now: the runtime of its
+    // last successful deploy, or the configured one before any deploy.
+    liveRuntime() {
+      return this.project?.deployed_runtime || this.project?.runtime
+    },
+    isStatic() {
+      return this.liveRuntime === 'static'
+    },
+    // A runtime saved in Rigging but not deployed yet: nothing has moved.
+    pendingRuntime() {
+      const p = this.project
+      return p?.deployed_runtime && p.deployed_runtime !== p.runtime ? RUNTIME_LABEL[p.runtime] ?? p.runtime : ''
     },
     live() {
       return liveProject(Number(this.id))
@@ -403,6 +430,9 @@ export default {
         this.pm2Busy = false
       }
     },
+    runtimeLabel(runtime) {
+      return RUNTIME_LABEL[runtime] ?? runtime
+    },
     editable(p) {
       return {
         ...p,
@@ -420,6 +450,8 @@ export default {
         network_profile: p.network_profile ?? 'open',
         host_access: !!p.host_access,
         networks: p.networks ?? '',
+        publish_dir: p.publish_dir ?? 'dist',
+        spa_fallback: !!p.spa_fallback,
       }
     },
     async save() {

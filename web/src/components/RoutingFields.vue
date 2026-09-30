@@ -10,7 +10,7 @@
           @input="$emit('update:subdomain', $event.target.value)"
         />
       </div>
-      <div style="flex: 1 1 120px">
+      <div v-if="!staticSite" style="flex: 1 1 120px">
         <label>App port <span class="soft">(blank = auto)</span></label>
         <input
           :value="port"
@@ -27,7 +27,8 @@
            deployed at that address yet. -->
       <a v-if="existing" :href="routedUrl" target="_blank" rel="noopener" class="mono" style="font-size: 12.5px">{{ routedUrl }}</a>
       <span v-else class="mono" style="font-size: 12.5px">{{ routedUrl }}</span>
-      <template v-if="port"> → localhost:{{ port }} · the app gets <span class="mono" style="font-size: 12px">PORT={{ port }}</span></template>
+      <template v-if="staticSite"> → the published files</template>
+      <template v-else-if="port"> → localhost:{{ port }} · the app gets <span class="mono" style="font-size: 12px">PORT={{ port }}</span></template>
       <template v-else> → the port assigned on save</template>
     </p>
     <p class="hint" v-else-if="subdomain && !baseDomain">
@@ -41,6 +42,9 @@
     <p class="hint" v-else>
       Optional: route <span class="mono" style="font-size: 12px">subdomain.&lt;base domain&gt;</span>
       to this app through the harbor gate proxy.
+    </p>
+    <p class="hint" v-if="staticSite && !subdomain">
+      A static site is only reachable through its subdomain — without one it is published but not served.
     </p>
   </div>
 </template>
@@ -61,6 +65,8 @@ export default {
     handle: { type: String, default: '' },
     domain: { type: String, default: '' },
     port: { type: [String, Number], default: '' },
+    // Static runtime: the gate serves files, so there is no port to set.
+    staticSite: { type: Boolean, default: false },
     existing: { type: Boolean, default: false },
   },
   emits: ['update:subdomain', 'update:port'],

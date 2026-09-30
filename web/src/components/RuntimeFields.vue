@@ -2,18 +2,23 @@
   <!-- No wrapper element: the fields are siblings of the form's own labels, so
        they keep the shared vertical rhythm (a wrapper would make the first
        label a :first-child and zero its top margin). -->
-  <template v-if="!tenant">
-    <label>Runtime</label>
-    <select :value="runtime" class="code" @change="$emit('update:runtime', $event.target.value)">
-      <option value="pm2">pm2 — host process</option>
-      <option value="container">container — rootless podman</option>
-    </select>
-  </template>
+  <label>Runtime</label>
+  <select :value="runtime" class="code" @change="$emit('update:runtime', $event.target.value)">
+    <option v-if="!tenant" value="pm2">pm2 — host process</option>
+    <option value="container">container — rootless podman</option>
+    <option value="static">static site — files only, no process</option>
+  </select>
   <p class="hint" v-if="runtime === 'container'">
     The start command runs in a disposable container: source read-only at
     <span class="mono">/app</span>, <span class="mono">shared/</span> writable at
     <span class="mono">/data</span>, the app port published on localhost.<template v-if="existing">
     Takes effect on the next deploy or restart.</template>
+  </p>
+  <p class="hint" v-if="runtime === 'static'">
+    Nothing runs: after the deploy script, the publish directory is copied into a snapshot
+    that the harbor gate serves under the project's subdomain. Visitors keep the previous
+    version until a build has finished, and a failed build changes nothing.<template v-if="existing">
+    Takes effect on the next deploy — whatever serves the project now keeps serving it until then.</template>
   </p>
 
   <label>Build image</label>
@@ -84,6 +89,32 @@
     </label>
   </template>
 
+  <template v-else-if="runtime === 'static'">
+    <label>Publish directory <span class="soft">(relative to the working directory — blank for the directory itself)</span></label>
+    <input
+      :value="publishDir"
+      class="code"
+      placeholder="dist"
+      @input="$emit('update:publishDir', $event.target.value)"
+    />
+    <p class="hint">
+      What the build produces — <span class="mono">dist</span> for Vite, <span class="mono">build</span> or
+      <span class="mono">out</span> elsewhere. Dot-files and symlinks are never published.
+    </p>
+    <label class="check-label">
+      <input
+        type="checkbox"
+        :checked="spaFallback"
+        @change="$emit('update:spaFallback', $event.target.checked)"
+      />
+      Single-page app — answer unknown paths with <span class="mono">index.html</span>
+    </label>
+    <p class="hint">
+      For client-side routers (vue-router history mode): a reload on
+      <span class="mono">/about</span> loads the app instead of a 404.
+    </p>
+  </template>
+
   <template v-else>
     <label>pm2 process name</label>
     <input
@@ -113,13 +144,16 @@ export default {
     networkProfile: { type: String, default: 'open' },
     hostAccess: { type: Boolean, default: false },
     networks: { type: String, default: '' },
-    // Tenant projects are container-only with no host access — the runtime
-    // select and the host-access toggle disappear (the server enforces both).
+    publishDir: { type: String, default: 'dist' },
+    spaFallback: { type: Boolean, default: false },
+    // Tenant projects never run as a host process and get no host access —
+    // the pm2 option and the host-access toggle disappear (the server
+    // enforces both).
     tenant: { type: Boolean, default: false },
     // Wording differs slightly for a project that already exists.
     existing: { type: Boolean, default: false },
   },
   emits: ['update:runtime', 'update:buildImage', 'update:runImage', 'update:pm2Name', 'update:memoryMb',
-    'update:networkProfile', 'update:hostAccess', 'update:networks'],
+    'update:networkProfile', 'update:hostAccess', 'update:networks', 'update:publishDir', 'update:spaFallback'],
 }
 </script>

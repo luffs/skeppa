@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs'
 import { applyAction } from './pm2.js'
 import { projectDirs, decryptedEnv, runtimeEnv } from './envfiles.js'
 import { appContainerName, recreateAppContainer } from '../containers/runtime.js'
+import { liveRuntime } from '../lib/runtime.js'
 
 // start/stop/restart for one project, whichever runtime it uses. The project
 // page and the Engine room both drive processes through here so the two
@@ -9,7 +10,13 @@ import { appContainerName, recreateAppContainer } from '../containers/runtime.js
 // stays stopped" across reboots) belongs to the action, not to the caller.
 // `engine` is a getter, so pm2-only installs never touch the socket.
 export async function applyProjectAction({ db, config, project, act, engine, poller = null }) {
-  if (project.runtime === 'container') {
+  // What is running now decides what there is to drive — a runtime change
+  // that has not been deployed yet changes nothing here.
+  const runtime = liveRuntime(project)
+  if (runtime === 'static') {
+    throw Object.assign(new Error('a static site has no process to ' + act + ' — deploy to publish it'), { status: 400 })
+  }
+  if (runtime === 'container') {
     if (act === 'stop') {
       await engine().stopContainer(appContainerName(project.slug))
     } else {

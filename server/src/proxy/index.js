@@ -9,8 +9,9 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { getSetting } from '../db/settings.js'
 import { startOrReload, describe, deleteProcess } from '../deploy/pm2.js'
 import { APEX } from '../lib/validate.js'
+import { PROXY_PM2_NAME } from '../lib/runtime.js'
 
-export const PROXY_PROCESS = 'skeppa-proxy'
+export const PROXY_PROCESS = PROXY_PM2_NAME
 
 export function proxySettings(db) {
   return {
@@ -22,11 +23,16 @@ export function proxySettings(db) {
 
 export function proxyRouteRows(db) {
   return db.query(
-    `SELECT p.id, p.name, p.slug, p.subdomain, p.port,
+    // The route follows what is deployed, not what the form says: a project
+    // switched to static keeps its proxy route until a deploy has published.
+    `SELECT p.id, p.name, p.slug, p.subdomain, p.port, p.spa_fallback,
+            CASE WHEN p.deployed_runtime != '' THEN p.deployed_runtime ELSE p.runtime END AS runtime,
             COALESCE(u.role, '') AS owner_role, COALESCE(u.handle, '') AS owner_handle, COALESCE(u.domain, '') AS owner_domain,
             COALESCE(u.username, '') AS owner_username
      FROM projects p LEFT JOIN users u ON u.id = p.owner_id
-     WHERE p.subdomain IS NOT NULL AND p.port IS NOT NULL ORDER BY p.subdomain`
+     WHERE p.subdomain IS NOT NULL
+       AND (p.port IS NOT NULL OR (CASE WHEN p.deployed_runtime != '' THEN p.deployed_runtime ELSE p.runtime END) = 'static')
+     ORDER BY p.subdomain`
   ).all()
 }
 
@@ -44,16 +50,43 @@ export function routedHost(row, baseDomain) {
   return `${row.subdomain}.${nested ? `${row.owner_handle}.` : ''}${baseDomain}`
 }
 
+// Where a static project's published snapshot lives (deploy/publish.js) —
+// the only directory the gate ever serves files from.
+export function staticRoot(config, slug) {
+  return join(config.appsDir, slug, 'public')
+}
+
+// A static site: compressed, served straight from its snapshot. With the
+// fallback on, a path that is no file is answered with index.html (the
+// Caddyfile's `try_files {path} /index.html`), which is what a client-side
+// router needs for a reload on /about to work.
+function staticHandlers(root, spaFallback) {
+  const routes = [
+    { handle: [{ handler: 'encode', encodings: { zstd: {}, gzip: {} }, prefer: ['zstd', 'gzip'] }] },
+  ]
+  if (spaFallback) {
+    routes.push({
+      match: [{ file: { root, try_files: ['{http.request.uri.path}', '/index.html'] } }],
+      handle: [{ handler: 'rewrite', uri: '{http.matchers.file.relative}' }],
+    })
+  }
+  routes.push({ handle: [{ handler: 'file_server', root }] })
+  return [{ handler: 'subroute', routes }]
+}
+
 // Full Caddy JSON config for the local instance. Returns null when no base
 // domain is configured (the feature is off). The admin endpoint must not use
 // caddy's default :2019 — that's usually taken by the system instance.
-export function buildCaddyConfig(db) {
+// `config` (for APPS_DIR) is only needed once a static project is routed.
+export function buildCaddyConfig(db, config = {}) {
   const { baseDomain, httpPort, adminPort } = proxySettings(db)
   if (!baseDomain) return null
 
   const routes = proxyRouteRows(db).map(p => ({
     match: [{ host: [routedHost(p, baseDomain)] }],
-    handle: [{ handler: 'reverse_proxy', upstreams: [{ dial: `localhost:${p.port}` }] }],
+    handle: p.runtime === 'static'
+      ? staticHandlers(staticRoot(config, p.slug), Boolean(p.spa_fallback))
+      : [{ handler: 'reverse_proxy', upstreams: [{ dial: `localhost:${p.port}` }] }],
   }))
   // Unmatched hosts get an explicit 404 instead of caddy's empty default.
   routes.push({
@@ -94,7 +127,7 @@ export function createProxy({
   // (re)start it under pm2 — caddy reads the config file at startup.
   async function apply() {
     try {
-      const caddyConfig = buildCaddyConfig(db)
+      const caddyConfig = buildCaddyConfig(db, config)
       if (!caddyConfig) return { applied: false, reason: 'no base domain configured' }
 
       mkdirSync(dir, { recursive: true })
@@ -166,6 +199,8 @@ export function createProxy({
         host: settings.baseDomain ? routedHost(p, settings.baseDomain) : `${p.subdomain}.…`,
         owner: p.owner_username,
         owner_role: p.owner_role,
+        // A static route serves files; there is no port to dial.
+        static: p.runtime === 'static',
         port: p.port,
       })),
       config_path: configPath,

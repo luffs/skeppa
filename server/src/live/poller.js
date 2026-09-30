@@ -1,9 +1,11 @@
 import os from 'node:os'
-import { statfsSync } from 'node:fs'
+import { statfsSync, existsSync } from 'node:fs'
+import { join } from 'node:path'
 import { jlist } from '../deploy/pm2.js'
 import { createContainerClient } from '../containers/client.js'
 import { appContainerName } from '../containers/runtime.js'
 import { PROXY_PROCESS } from '../proxy/index.js'
+import { liveRuntime } from '../lib/runtime.js'
 import { collectContainers } from './containers.js'
 import { createCrashWatch } from './crashwatch.js'
 import { roundCpu, roundMem } from './quantize.js'
@@ -122,9 +124,18 @@ export function createPoller({ db, config, liveState, intervalMs = 5000, idleInt
       }
       const byName = new Map((list ?? []).map(p => [p.name, p]))
 
-      for (const { id, pm2_name, slug, runtime } of db.query('SELECT id, pm2_name, slug, runtime FROM projects').all()) {
+      for (const row of db.query('SELECT id, pm2_name, slug, runtime, deployed_runtime FROM projects').all()) {
+        const { id, pm2_name, slug } = row
+        const runtime = liveRuntime(row) // what is serving now, not what the next deploy will do
         const live = liveState.projects[id]
         if (!live) continue
+        if (runtime === 'static') {
+          // No process: the site is either published (a snapshot exists for
+          // the gate to serve) or not yet.
+          const published = existsSync(join(config.appsDir, slug, 'public'))
+          live.pm2 = { ...EMPTY_STATS, status: published ? 'published' : 'not published' }
+          continue
+        }
         if (runtime === 'container') {
           // live.pm2 keeps its name for wire/UI compatibility — the shape is
           // identical, the Engine room's container pass fills it in. No

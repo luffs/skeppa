@@ -84,7 +84,7 @@ test('a tenant creation is owned, container-forced, and host access is refused',
     body: JSON.stringify({ name: 'Sneaky', git_url: 'https://example.com/s.git', runtime: 'pm2' }),
   })
   expect(pm2Try.status).toBe(400)
-  expect((await pm2Try.json()).fields.runtime).toContain('containers only')
+  expect((await pm2Try.json()).fields.runtime).toContain('container or as a static site')
 
   const hostTry = await app.request('/', {
     method: 'POST',

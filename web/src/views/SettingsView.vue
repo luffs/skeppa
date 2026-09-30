@@ -309,7 +309,7 @@
         <div v-else class="crew-rows" style="margin-top: 0">
           <div v-for="r in gate.routes" :key="r.project_id" class="crew-row">
             <a :href="`https://${r.host}`" target="_blank" rel="noopener" class="mono" style="font-size: 13px">{{ r.host }}</a>
-            <span class="hint">→ localhost:{{ r.port }}</span>
+            <span class="hint">→ {{ r.static ? 'published files' : `localhost:${r.port}` }}</span>
             <span class="spacer"></span>
             <span v-if="r.owner_role === 'tenant'" class="chip">{{ r.owner }}</span>
             <RouterLink :to="`/projects/${r.project_id}`" class="hint">{{ r.name }}</RouterLink>

@@ -101,15 +101,19 @@ test('missing container logs report missing instead of failing', async () => {
 
 test('the panel project itself cannot switch to the container runtime', async () => {
   const { app } = setup()
-  const res = await app.request('/', {
-    method: 'POST',
-    body: JSON.stringify({
-      name: 'Panel', repo_full_name: 'o/skeppa', branch: 'main',
-      pm2_name: 'skeppa', runtime: 'container',
-    }),
-  })
+  const post = body => app.request('/', { method: 'POST', body: JSON.stringify(body) })
+  // the panel deploying itself: a pm2 project carrying the panel's own process name
+  const panel = await (await post({ name: 'Panel', repo_full_name: 'o/skeppa', branch: 'main', pm2_name: 'skeppa', runtime: 'pm2' })).json()
+  expect(panel.pm2_name).toBe('skeppa')
+  const res = await app.request(`/${panel.id}`, { method: 'PATCH', body: JSON.stringify({ runtime: 'container' }) })
   expect(res.status).toBe(400)
   expect((await res.json()).fields.runtime).toContain('pm2')
+
+  // a container project cannot claim that name at creation either: the pm2
+  // name is not an input for it, and the derived one steps aside
+  const other = await post({ name: 'Skeppa', repo_full_name: 'o/other', branch: 'main', pm2_name: 'skeppa', runtime: 'container' })
+  expect(other.status).toBe(201)
+  expect((await other.json()).pm2_name).toBe('skeppa-2')
 })
 
 test('an unknown runtime value is rejected', async () => {

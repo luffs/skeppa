@@ -12,6 +12,8 @@ export function projectDirs(config, project) {
     root,
     source,
     shared: join(root, 'shared'),
+    // Static runtime: the published snapshot the harbor gate serves.
+    public: join(root, 'public'),
     work: project.cwd ? join(source, project.cwd) : source,
     ecosystem: join(root, 'ecosystem.config.cjs'),
   }
