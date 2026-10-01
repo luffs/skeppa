@@ -13,6 +13,7 @@ async function request(method, url, body) {
     const err = new Error(data?.error || `${res.status} ${res.statusText}`)
     err.status = res.status
     err.fields = data?.fields
+    err.blockers = data?.blockers
     throw err
   }
   return data

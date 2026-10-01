@@ -155,14 +155,27 @@ export function createLiveStores({
     const { projects, system, users, images, proxy } = diff
     if (projects && typeof projects === 'object') {
       const fleets = new Map()
+      const into = owner => {
+        if (!fleets.has(owner)) fleets.set(owner, {})
+        return fleets.get(owner)
+      }
       for (const [id, subtree] of Object.entries(projects)) {
         const owner = ownerOf(id)
         if (owner == null) {
           onError(new Error(`project ${id} has no owner — not published to any fleet`))
           continue
         }
-        if (!fleets.has(owner)) fleets.set(owner, {})
-        fleets.get(owner)[id] = subtree
+        const previous = owners.get(String(id))
+        if (subtree !== null && previous != null && String(previous) !== String(owner)) {
+          // The project changed hands (a Crew move). This batch only carries
+          // the fields that changed, so: the old fleet forgets the project —
+          // its owner must stop seeing it the moment it is not theirs — and
+          // the new fleet gets all of it.
+          into(previous)[id] = null
+          into(owner)[id] = current(['projects', id])
+          continue
+        }
+        into(owner)[id] = subtree
       }
       for (const [owner, subtree] of fleets) {
         ensureFleet(owner)

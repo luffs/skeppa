@@ -2,10 +2,11 @@ import { Hono } from 'hono'
 import { USERNAME_RE, MIN_PASSWORD_LENGTH, ROLES, HANDLE_RE, GITHUB_LOGIN_RE, DOMAIN_RE } from '../lib/validate.js'
 import { getUserInfo, getProjectInfo } from '../live/state.js'
 import { getSetting } from '../db/settings.js'
+import { reassignUsers, planReassign, applyReassign } from '../lib/reassign.js'
 
 const hashPassword = password => Bun.password.hash(password, { algorithm: 'bcrypt', cost: 12 })
 
-export function userRoutes({ db, liveState, proxy = null }) {
+export function userRoutes({ db, liveState, proxy = null, github = null }) {
   const app = new Hono()
 
   const normalizeDomain = value => (typeof value === 'string' ? value.trim().toLowerCase() : '')
@@ -128,6 +129,40 @@ export function userRoutes({ db, liveState, proxy = null }) {
     return c.json(user)
   })
 
+  // Moving someone's projects to another crew member — so they can be
+  // removed without deleting what they built. GET plans (what would change,
+  // what forbids it); POST plans again and moves only if nothing forbids it.
+  const reassignPair = (c, toValue) => {
+    const fromId = Number(c.req.param('id'))
+    const toId = Number(toValue)
+    if (!Number.isInteger(fromId)) return { failure: c.json({ error: 'invalid user id' }, 400) }
+    const { from, to } = reassignUsers(db, fromId, toId)
+    if (!from) return { failure: c.json({ error: 'user not found' }, 404) }
+    if (!Number.isInteger(toId) || !to) return { failure: c.json({ error: 'validation failed', fields: { to: 'pick a crew member' } }, 400) }
+    if (to.id === from.id) return { failure: c.json({ error: 'validation failed', fields: { to: 'pick someone else' } }, 400) }
+    return { from, to }
+  }
+
+  app.get('/:id/reassign', async c => {
+    const pair = reassignPair(c, c.req.query('to'))
+    if (pair.failure) return pair.failure
+    return c.json(await planReassign({ db, github }, pair.from, pair.to))
+  })
+
+  app.post('/:id/reassign', async c => {
+    const body = await c.req.json().catch(() => ({}))
+    const pair = reassignPair(c, body.to)
+    if (pair.failure) return pair.failure
+    const plan = await planReassign({ db, github }, pair.from, pair.to)
+    if (plan.blockers.length) return c.json({ error: 'these projects cannot move', blockers: plan.blockers }, 400)
+    const moved = applyReassign({ db, liveState }, plan)
+    // Addresses follow the owner: the gate re-routes whatever moved.
+    if (moved && db.query('SELECT 1 FROM projects WHERE owner_id = ? AND subdomain IS NOT NULL').get(plan.to.id)) {
+      proxy?.apply().catch(err => console.error('[proxy] apply failed:', err.message))
+    }
+    return c.json({ moved, changes: plan.changes })
+  })
+
   app.delete('/:id', c => {
     const id = Number(c.req.param('id'))
     if (!Number.isInteger(id)) return c.json({ error: 'invalid user id' }, 400)
@@ -135,7 +170,7 @@ export function userRoutes({ db, liveState, proxy = null }) {
     if (id === c.get('session').user_id) return c.json({ error: 'you cannot remove your own account' }, 400)
     // Their projects would silently become admin-owned orphans otherwise.
     if (db.query('SELECT 1 FROM projects WHERE owner_id = ?').get(id)) {
-      return c.json({ error: 'this user still owns projects — delete or reassign them first' }, 400)
+      return c.json({ error: 'this user still owns projects — move them to someone else first (Crew → Remove offers it), or delete them' }, 400)
     }
     const { changes } = db.query('DELETE FROM users WHERE id = ?').run(id)
     if (!changes) return c.json({ error: 'user not found' }, 404)

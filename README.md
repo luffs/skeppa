@@ -279,6 +279,12 @@ their projects then route as `app.their-domain.com`, and the project whose subdo
 `@` sits at the domain itself. They point the domain and its wildcard at your server; the
 panel adds the blocks to the snippet, and the certificates issue like the others.
 
+Removing a crew member who still owns projects moves them first: **Rigging → Crew → Remove**
+offers to hand them to you (or anyone else) and shows what the move changes — new addresses
+when the projects leave a tenant's handle or domain, renamed container networks — or why it
+cannot happen, before anything is written. A tenant can only receive what a tenant may run:
+containers and static sites, built from repos of their own GitHub installation.
+
 ## Static sites
 
 For a site that is only files — a Vite build, generated docs, plain HTML — pick the

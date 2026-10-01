@@ -33,7 +33,9 @@
             <button class="secondary small" :disabled="crewBusy" @click="togglePassword(u)">
               {{ passwordFor === u.id ? 'Cancel' : 'Password' }}
             </button>
-            <button v-if="!isSelf(u)" class="danger small" :disabled="crewBusy" @click="removeUser(u)">Remove</button>
+            <button v-if="!isSelf(u)" class="danger small" :disabled="crewBusy" @click="removeUser(u)">
+              {{ moveFor === u.id ? 'Cancel' : 'Remove' }}
+            </button>
           </div>
           <div v-if="passwordFor === u.id" class="row crew-pass">
             <input
@@ -73,6 +75,49 @@
               style="flex: 1 1 140px; width: auto"
             />
             <button class="small" :disabled="crewBusy" @click="saveUser(u)">Save</button>
+          </div>
+          <!-- Removing someone who still owns projects: move them first. The plan
+               says what would change, or why the move cannot happen, before anything does. -->
+          <div v-if="moveFor === u.id" class="crew-move">
+            <p class="hint" style="margin-top: 0">
+              {{ u.username }} owns {{ ownedBy(u).length }} project{{ ownedBy(u).length === 1 ? '' : 's' }}
+              ({{ ownedBy(u).map(p => p.name).join(', ') }}). Move {{ ownedBy(u).length === 1 ? 'it' : 'them' }}
+              to someone else, and {{ u.username }} is removed.
+            </p>
+            <div class="row">
+              <select v-model="moveTo" class="code" style="flex: 1 1 180px; width: auto" @change="loadMovePlan(u)">
+                <option v-for="t in users.filter(t => t.id !== u.id)" :key="t.id" :value="t.id">
+                  {{ t.username }}{{ isSelf(t) ? ' (you)' : '' }} — {{ t.role }}
+                </option>
+              </select>
+              <button
+                class="danger small"
+                :disabled="crewBusy || movePlanBusy || !movePlan || movePlan.blockers.length > 0"
+                @click="moveAndRemove(u)"
+              >
+                Move {{ ownedBy(u).length === 1 ? 'it' : 'them' }} and remove {{ u.username }}
+              </button>
+            </div>
+            <p v-if="movePlanBusy" class="hint">Checking what the move changes…</p>
+            <p v-else-if="movePlanError" class="error">{{ movePlanError }}</p>
+            <ul v-else-if="movePlan" class="move-plan">
+              <li v-for="b in movePlan.blockers" :key="'b' + b.project + b.reason" class="error">
+                <strong>{{ b.project }}</strong> {{ b.reason }}
+              </li>
+              <li v-for="ch in movePlan.changes" :key="'c' + ch.project + ch.kind">
+                <template v-if="ch.kind === 'address'">
+                  <strong>{{ ch.project }}</strong> moves from <span class="mono">{{ ch.before }}</span> to
+                  <span class="mono">{{ ch.after }}</span>
+                </template>
+                <template v-else>
+                  <strong>{{ ch.project }}</strong>: its container networks become
+                  <span class="mono">{{ ch.after || 'none' }}</span> on its next deploy
+                </template>
+              </li>
+              <li v-if="!movePlan.blockers.length && !movePlan.changes.length" class="hint">
+                Nothing else changes — same addresses, same networks.
+              </li>
+            </ul>
           </div>
         </div>
       </div>
@@ -401,6 +446,11 @@ export default {
       editFor: null,
       editUser: { role: 'tenant', handle: '', domain: '', github_login: '' },
       passwordFor: null,
+      moveFor: null, // the user being removed whose projects need a new owner
+      moveTo: null,
+      movePlan: null,
+      movePlanBusy: false,
+      movePlanError: '',
       newPassword: '',
       crewBusy: false,
       crewError: '',
@@ -785,7 +835,62 @@ export default {
         this.crewBusy = false
       }
     },
+    // From the live mirror: an admin sees every fleet.
+    ownedBy(user) {
+      return Object.values(store.live.projects ?? {}).map(p => p.info).filter(i => i?.owner_id === user.id)
+    },
+    async loadMovePlan(user) {
+      this.movePlan = null
+      this.movePlanError = ''
+      if (this.moveTo == null) return
+      this.movePlanBusy = true
+      const asked = this.moveTo
+      try {
+        const plan = await api.get(`/api/users/${user.id}/reassign?to=${asked}`)
+        if (this.moveFor === user.id && this.moveTo === asked) this.movePlan = plan // not a stale answer
+      } catch (err) {
+        this.movePlanError = this.describeError(err)
+      } finally {
+        this.movePlanBusy = false
+      }
+    },
+    async moveAndRemove(user) {
+      this.crewBusy = true
+      this.crewError = ''
+      this.crewMessage = ''
+      const target = this.users.find(t => t.id === this.moveTo)
+      try {
+        const { moved } = await api.post(`/api/users/${user.id}/reassign`, { to: this.moveTo })
+        await api.del(`/api/users/${user.id}`)
+        this.moveFor = null
+        this.crewMessage = `${moved} project${moved === 1 ? '' : 's'} moved to ${target?.username ?? 'their new owner'} — ${user.username} has gone ashore.`
+      } catch (err) {
+        // A move that went through stays; the plan shows what is left to do.
+        this.crewError = err.blockers
+          ? err.blockers.map(b => `${b.project} ${b.reason}`).join(' — ')
+          : this.describeError(err)
+        await this.loadMovePlan(user)
+      } finally {
+        this.crewBusy = false
+      }
+    },
     async removeUser(user) {
+      if (this.moveFor === user.id) {
+        this.moveFor = null
+        return
+      }
+      // Someone who still owns projects is removed by moving them first —
+      // to you, unless you pick someone else.
+      if (this.ownedBy(user).length) {
+        this.editFor = null
+        this.passwordFor = null
+        this.crewError = ''
+        this.crewMessage = ''
+        this.moveFor = user.id
+        this.moveTo = store.user?.id !== user.id ? store.user?.id ?? null : null
+        await this.loadMovePlan(user)
+        return
+      }
       if (!(await confirmDialog(`Remove ${user.username} from the crew? Their sessions end immediately.`, { confirmLabel: 'Remove', danger: true }))) return
       this.crewBusy = true
       this.crewError = ''

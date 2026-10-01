@@ -240,3 +240,33 @@ test('the admin opens every fleet; a project created later shows up in the right
   expect(Object.keys(fleet2.state.projects).sort()).toEqual(['2', '3'])
   expect(Object.keys(fleet1.state.projects)).toEqual(['1'])
 })
+
+// Crew → Remove moves a departing member's projects to someone else. The
+// live-state batch for that only carries the changed owner fields, so the
+// bridge must move the project between fleets whole: the old owner stops
+// seeing it at once, the new owner sees all of it.
+test('a project that changes hands leaves the old fleet and arrives whole in the new one', async () => {
+  const { db, liveState, live, admin, bob } = setup()
+  liveState.projects[2].pm2.status = 'online'
+  liveState.projects[2].recentDeployments = [{ id: 7, status: 'success', trigger: 'manual', createdAt: 'x' }]
+  await tick()
+  const net = createNetwork({
+    session: ({ send, user }) => createHub(id => live.get(id), { send, user, authorize: live.canOpen }),
+  })
+  const follow = (store, user) => net.client({ store, initial: { projects: {} }, registers: FLEET_REGISTERS, mirror: true }, { user })
+  const bobsFleet = follow('fleet-2', bob)
+  const capsFleet = follow('fleet-1', admin)
+  await net.settle()
+  expect(Object.keys(bobsFleet.state.projects)).toEqual(['2'])
+
+  db.query('UPDATE projects SET owner_id = 1 WHERE id = 2').run()
+  liveState.projects[2].info = getProjectInfo(db, 2) // what applyReassign does
+  await net.settle()
+
+  expect(bobsFleet.state.projects[2]).toBeUndefined()
+  const moved = capsFleet.state.projects[2]
+  expect(moved.info).toMatchObject({ slug: 'bobapp', owner_id: 1 })
+  expect(moved.pm2.status).toBe('online') // not just the fields that changed
+  expect(moved.recentDeployments.map(d => d.id)).toEqual([7])
+  expect(Object.keys(capsFleet.state.projects).sort()).toEqual(['1', '2'])
+})

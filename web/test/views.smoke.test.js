@@ -36,6 +36,12 @@ vi.mock('../src/api.js', () => {
       }
     }
     if (/\/api\/deployments\/\d+/.test(url)) return { id: 1, status: 'success', log: '' }
+    if (/\/api\/users\/\d+\/reassign/.test(url)) {
+      return {
+        projects: [{ id: 2, name: 'bobapp' }], blockers: [],
+        changes: [{ project: 'bobapp', kind: 'address', before: 'https://app.bob.apps.example.com', after: 'https://app.apps.example.com' }],
+      }
+    }
     if (url.startsWith('/api/account')) return { id: 1, username: 'cap', role: 'admin', handle: '', domain: '', github_login: '', created_at: '2026-01-01' }
     if (url.startsWith('/api/auth/firebase-config')) return null
     return {}
@@ -318,6 +324,29 @@ test('the new-project form offers its suggestions as one-click values', async ()
       wrapper.vm.form.runtime = 'static'
       await settle()
       expect(offers().map(b => b.text().replace(/\s+/g, ' '))).toEqual(['Use bun install && bun run build'])
+    },
+  })
+  expect(problems.join(' | ')).toBe('')
+})
+
+// Removing someone who still owns projects opens the move: their projects go
+// to you unless you pick someone else, and the plan is on screen first.
+test('removing a crew member who owns projects offers to move them, showing what changes', async () => {
+  seedStore('admin')
+  const { problems } = await expectCleanRender(SettingsView, {
+    steps: async wrapper => {
+      const bobRow = wrapper.findAll('.crew-member').find(m => m.find('.crew-name').text() === 'bob')
+      await bobRow.find('button.danger').trigger('click')
+      await settle()
+      const move = bobRow.find('.crew-move')
+      expect(move.exists()).toBe(true)
+      expect(move.text()).toContain('bob owns 1 project (bobapp)')
+      expect(move.find('select').element.value).toBe('1') // you, by default
+      expect(move.text().replace(/\s+/g, ' ')).toContain('bobapp moves from https://app.bob.apps.example.com to https://app.apps.example.com')
+      const go = move.findAll('button').find(b => b.text().startsWith('Move it and remove bob'))
+      expect(go.attributes('disabled')).toBeUndefined()
+      await bobRow.find('button.danger').trigger('click') // Cancel
+      expect(bobRow.find('.crew-move').exists()).toBe(false)
     },
   })
   expect(problems.join(' | ')).toBe('')
