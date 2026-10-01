@@ -60,8 +60,8 @@ test('restart recreates the container with freshly decrypted env', async () => {
   const res = await app.request(`/${project.id}/pm2/restart`, { method: 'POST' })
   expect(res.status).toBe(200)
   const order = containerClient.calls.map(c => c[0])
-  // 'logs' first: the outgoing container's tail is saved before the remove.
-  expect(order).toEqual(['logs', 'remove', 'create', 'start'])
+  // 'logs' first: the outgoing container's tail is saved before it is stopped and removed.
+  expect(order).toEqual(['logs', 'stop', 'remove', 'create', 'start'])
   expect(readFileSync(join(projectDirs(config, project).root, 'container.prev.log'), 'utf8'))
     .toContain('hello from app')
   const [, , spec] = containerClient.calls.find(c => c[0] === 'create')

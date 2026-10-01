@@ -3,8 +3,9 @@ import { mkdtempSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { readFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
 import {
-  appContainerName, appContainerSpec, resolveRunImage,
+  appContainerName, appContainerSpec, resolveRunImage, START_SHELL,
   recreateAppContainer, appLiveStats, cpuPercent, capturePreviousLogs,
 } from '../src/containers/runtime.js'
 
@@ -25,6 +26,7 @@ function fakeEngine({ createMissingImage = false } = {}) {
   let creates = 0
   return {
     calls,
+    async stopContainer(id) { calls.push(['stop', id]) },
     async removeContainer(id) { calls.push(['remove', id]) },
     async createContainer(name, spec) {
       calls.push(['create', name, spec])
@@ -46,7 +48,7 @@ test('spec: read-only source, writable shared, localhost-only port, restart poli
   expect(spec.HostConfig.RestartPolicy).toEqual({ Name: 'on-failure', MaximumRetryCount: 10 })
   // a capped file, never journald: tail=N must not walk a chatty app's whole log
   expect(spec.HostConfig.LogConfig).toEqual({ Type: 'json-file', Config: { 'max-size': '10m' } })
-  expect(spec.Cmd).toEqual(['/bin/sh', '-c', 'bun run start'])
+  expect(spec.Cmd).toEqual(['/bin/sh', '-c', START_SHELL, 'sh', 'bun run start'])
   expect(spec.WorkingDir).toBe('/app/web')
   expect(spec.Env).toContain('TOKEN=sekret')
   expect(spec.Labels['skeppa.project']).toBe('app')
@@ -91,13 +93,38 @@ test('run image falls back run_image → build_image → panel default', () => {
   expect(resolveRunImage(CONFIG, project({ build_image: 'node:22', run_image: 'nginx:alpine' }))).toBe('nginx:alpine')
 })
 
-test('recreate removes the old container, creates the shared dir, pulls on 404 and starts', async () => {
+test('recreate stops then removes the old container, creates the shared dir, pulls on 404 and starts', async () => {
   const dirs = makeDirs()
   const engine = fakeEngine({ createMissingImage: true })
   await recreateAppContainer({ config: CONFIG, project: project(), dirs, env: {}, client: engine })
-  expect(engine.calls.map(c => c[0])).toEqual(['remove', 'create', 'pull', 'create', 'start'])
+  expect(engine.calls.map(c => c[0])).toEqual(['stop', 'remove', 'create', 'pull', 'create', 'start'])
   expect(engine.calls[0][1]).toBe(appContainerName('app'))
+  expect(engine.calls[1][1]).toBe(appContainerName('app'))
   expect(existsSync(dirs.shared)).toBe(true)
+})
+
+test('an old container that will not stop is removed anyway; a missing one says nothing', async () => {
+  for (const [status, warnings] of [[404, 0], [500, 1]]) {
+    const engine = fakeEngine()
+    engine.stopContainer = async () => { throw Object.assign(new Error('engine said no'), { status }) }
+    const lines = []
+    await recreateAppContainer({ config: CONFIG, project: project(), dirs: makeDirs(), env: {}, client: engine, onLine: l => lines.push(l) })
+    expect(engine.calls.map(c => c[0])).toEqual(['remove', 'create', 'start'])
+    expect(lines.filter(l => l.includes('did not stop cleanly')).length).toBe(warnings)
+  }
+})
+
+// The start shell itself, where there is a /bin/sh to run it: the command
+// arrives whole as $1, compound or not, and its exit status is the
+// container's, so the restart policy still sees a crash. Passing SIGTERM on
+// as pid 1 needs a pid namespace; that was tried by hand.
+test.skipIf(!existsSync('/bin/sh'))('the start shell runs the command as given and exits with its status', () => {
+  const run = command => spawnSync('/bin/sh', ['-c', START_SHELL, 'sh', command], { encoding: 'utf8' })
+  expect(run('exit 3').status).toBe(3)
+  expect(run('true && false').status).toBe(1)
+  expect(run('sh -c \'kill -SEGV $$\'').status).toBe(139)
+  const echoed = run('printf "%s|" "a  b" \'$HOME\' && echo done')
+  expect([echoed.status, echoed.stdout]).toEqual([0, 'a  b|$HOME|done\n'])
 })
 
 test('appLiveStats maps engine state onto the pm2 stats shape', async () => {

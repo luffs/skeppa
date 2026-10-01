@@ -23,6 +23,20 @@ export function resolveRunImage(config, project) {
 
 const MB = 1024 * 1024
 
+// The shell the start command runs under, as the container's pid 1. A plain
+// `sh -c <start>` there never passes SIGTERM on: pid 1 ignores a signal it has
+// no handler for, and a shell defers its traps until the foreground command
+// ends. So a stop or a deploy never told the app, the engine killed it after
+// its grace period, and whatever the app does on stopping (flushing, letting
+// go of locks) was left undone. This one runs the command in the background,
+// in a subshell that outlives the signal (its trap is reset in what it runs),
+// sends SIGTERM to every process in the container on a stop, waits for the
+// command to finish, and exits with its status, so the restart policy sees
+// the app's own exit code. The command itself is `$1`, never spliced in.
+export const START_SHELL = 'trap "trap \'\' TERM INT; kill -TERM 0" TERM INT; ' +
+  '(trap : TERM; eval "$1") & app=$!; ' +
+  'wait $app; code=$?; while kill -0 $app 2>/dev/null; do wait $app; code=$?; done; exit $code'
+
 export function appContainerSpec(config, project, dirs, env) {
   // Naming any network replaces the engine-default (slirp) mode, so the
   // profile decides egress: restricted lists only Internal convoys (no
@@ -32,7 +46,7 @@ export function appContainerSpec(config, project, dirs, env) {
   const port = project.port
   return {
     Image: resolveRunImage(config, project),
-    Cmd: ['/bin/sh', '-c', project.start_command],
+    Cmd: ['/bin/sh', '-c', START_SHELL, 'sh', project.start_command],
     Env: Object.entries(env).map(([k, v]) => `${k}=${v}`),
     WorkingDir: posix.join('/app', (project.cwd ?? '').replaceAll('\\', '/')),
     Labels: { 'skeppa.project': project.slug },
@@ -80,6 +94,14 @@ export async function recreateAppContainer({ config, project, dirs, env, onLine 
   // Convoy networks the spec names must exist before the create call.
   await ensureProjectNetworks(engine, project)
   await capturePreviousLogs(engine, name, dirs, onLine)
+  // Stopped before it is removed: a forced remove kills the app outright,
+  // where a stop sends SIGTERM and gives it its grace period first. One that
+  // does not stop is removed anyway — the deploy goes on.
+  try {
+    await engine.stopContainer(name)
+  } catch (err) {
+    if (err.status !== 404) onLine(`⚠ the previous container did not stop cleanly: ${err.message}`)
+  }
   await engine.removeContainer(name)
   const id = await createContainerEnsuringImage({ engine, name, spec, db, onLine })
   await engine.startContainer(id)
