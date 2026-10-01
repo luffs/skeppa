@@ -675,6 +675,14 @@ td.commit-cell { width: 100%; max-width: 0; min-width: 240px; }
 .env-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .env-row .key { flex: 1 1 180px; width: auto; }
 .env-row .value { flex: 2 1 260px; width: auto; }
+.env-row { align-items: flex-start; }
+.env-row textarea.multiline { resize: vertical; white-space: pre; overflow-x: auto; }
+.env-text { width: 100%; white-space: pre; overflow-x: auto; resize: vertical; }
+.env-paste { margin-top: 18px; }
+.env-preview { margin: 10px 0 0; padding-left: 18px; font-size: 13px; display: flex; flex-direction: column; gap: 3px; }
+.env-preview .error { color: var(--red); }
+.env-preview .warn { color: var(--amber, var(--ink)); }
+.env-preview .hint { color: var(--dim); }
 
 /* ---- file viewer (freight) ---- */
 

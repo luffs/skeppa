@@ -97,7 +97,7 @@ first-run checklist waiting on the dashboard:
 3. **Moor a project** — pick repo + branch (or check "External repository" and paste any
    public git URL), give it a deploy script (e.g.
    `bun install && bun run build`) and a start command (e.g. `bun run start`; leave empty for
-   build-only projects), and add ENV vars under the project's Environment tab
+   build-only projects), and add ENV vars under the project's Manifest tab
 4. **Push to the branch** — the deploy starts by itself; watch the live log in the project view
 
 If a push doesn't start a deploy, open **Settings → GitHub App**: the panel lists GitHub's
@@ -117,6 +117,12 @@ Everything below is reference for once you're sailing.
   itself (e.g. Vite at build time), enable **"Write a plaintext .env file into the app"** in
   the project settings: the panel then maintains `shared/.env` (0600) plus a copy in the
   working dir, and deletes both when the toggle is turned off.
+- Many ENV vars at once: on the Manifest tab, **Paste variables** adds `.env` lines to the list
+  (a key already there gets the new value) without revealing the others, and **Edit as text**
+  shows the whole set as `.env` text to edit, rename or copy out. Both preview what a save
+  adds, changes and removes, and point at any line they cannot read. Only names and values are
+  stored, so comments and order are not kept. Multi-line values (a private key, say) are kept
+  intact and get a multi-line box in the rows.
 - Apps live in `APPS_DIR/<slug>/source` (git working copy); durable files go in
   `APPS_DIR/<slug>/shared`.
 - While a deploy runs, a second trigger queues (max 1; a newer one replaces it). Deploys are
