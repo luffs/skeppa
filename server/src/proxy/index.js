@@ -102,6 +102,12 @@ export function buildCaddyConfig(db, config = {}) {
             listen: [`:${httpPort}`],
             routes,
             automatic_https: { disable: true },
+            // The system Caddy in front (on this machine) is a proxy to trust:
+            // keep the X-Forwarded-For/-Proto/-Host it sends instead of
+            // overwriting them with 127.0.0.1 and "http", so an app still sees
+            // the client's address and that it came over https (Secure
+            // cookies, absolute URLs). Nobody else's headers are kept.
+            trusted_proxies: { source: 'static', ranges: ['127.0.0.1/32', '::1/128'] },
           },
         },
       },

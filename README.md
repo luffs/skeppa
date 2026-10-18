@@ -274,7 +274,9 @@ instance (pm2 process `skeppa-proxy`, plain HTTP, requires the `caddy` binary on
 user's PATH) routes `subdomain.<base domain>` → `localhost:<port>`, and the routed port is
 injected into the app's environment as `PORT`. Your system Caddy forwards the wildcard to it
 with the one static block the panel shows you, and keeps owning TLS — give the wildcard a
-DNS-01 certificate or add `tls { on_demand }` to the block.
+DNS-01 certificate or add `tls { on_demand }` to the block. The gate trusts the system Caddy
+on loopback (Caddy ≥ 2.6), so an app sees the `X-Forwarded-For`, `-Proto` and `-Host` it
+sent: the client's address, and `https`, not `127.0.0.1` and `http`.
 
 Tenant projects route under their owner's handle — `app.bob.example.com` — so subdomains
 only collide within one namespace. Each tenant that routes something adds one more

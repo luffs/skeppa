@@ -45,6 +45,8 @@ test('builds host routes plus a 404 fallback', () => {
   const server = cfg.apps.http.servers.skeppa
   expect(server.listen).toEqual([':8100'])
   expect(server.automatic_https.disable).toBe(true)
+  // The system Caddy on loopback is trusted to say who asked and over what
+  expect(server.trusted_proxies).toEqual({ source: 'static', ranges: ['127.0.0.1/32', '::1/128'] })
   expect(server.routes).toHaveLength(3) // 2 projects + fallback
   expect(server.routes[0].match[0].host).toEqual(['app.apps.example.com'])
   expect(server.routes[0].handle[0].upstreams).toEqual([{ dial: 'localhost:4001' }])
