@@ -95,6 +95,7 @@
         v-model:networks="form.networks"
         v-model:publish-dir="form.publish_dir"
         v-model:spa-fallback="form.spa_fallback"
+        v-model:gate-files="form.gate_files"
         :tenant="isTenant"
       />
 
@@ -104,6 +105,7 @@
         :handle="isTenant ? myHandle : ''"
         :domain="isTenant ? myDomain : ''"
         :static-site="form.runtime === 'static'"
+        :gate-files="form.runtime !== 'static' && form.gate_files"
       />
 
       <p v-if="error" class="error">{{ error }}</p>
@@ -167,6 +169,7 @@ export default {
         networks: '',
         publish_dir: 'dist',
         spa_fallback: false,
+        gate_files: false,
         subdomain: '',
         port: '',
       },

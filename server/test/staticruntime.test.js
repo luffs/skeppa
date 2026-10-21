@@ -10,6 +10,7 @@ import { setSetting } from '../src/db/settings.js'
 import { createLiveState } from '../src/live/state.js'
 import { projectRoutes } from '../src/routes/projects.js'
 import { buildCaddyConfig, createProxy, staticRoot } from '../src/proxy/index.js'
+import { HASHED_ASSET_PATTERN } from '../src/deploy/publish.js'
 import { DeployRunner } from '../src/deploy/runner.js'
 import { applyProjectAction } from '../src/deploy/control.js'
 import { resurrectApps } from '../src/deploy/resurrect.js'
@@ -110,14 +111,19 @@ test('a static project is routed to a file server on its snapshot; an app to its
   expect(root).toBe(join(config.appsDir, 'site', 'public'))
   const docs = byHost['docs.apps.example.com'][0]
   expect(docs.handler).toBe('subroute')
-  expect(docs.routes.map(r => r.handle[0].handler)).toEqual(['encode', 'file_server'])
+  // compressed; HTML revalidated, hashed assets kept for a year; then the files
+  expect(docs.routes.map(r => r.handle[0].handler)).toEqual(['encode', 'headers', 'headers', 'file_server'])
+  expect(docs.routes[1]).toEqual({ match: [{ path: ['*.html', '*/'] }], handle: [{ handler: 'headers', response: { set: { 'Cache-Control': ['no-cache'] } } }] })
+  expect(docs.routes[2].match[0].path_regexp.pattern).toBe(HASHED_ASSET_PATTERN)
+  expect(docs.routes[2].handle[0].response.set['Cache-Control']).toEqual(['public, max-age=31536000, immutable'])
   expect(docs.routes.at(-1).handle[0]).toEqual({ handler: 'file_server', root })
 
-  // the fallback: a path that is no file is rewritten to index.html, within the same root
+  // the fallback: a path that is no file is rewritten to index.html, within the
+  // same root — first, so the HTML rule sees /index.html
   const spaRoot = staticRoot(config, 'spa')
   const spa = byHost['spa.apps.example.com'][0]
-  expect(spa.routes.map(r => r.handle[0].handler)).toEqual(['encode', 'rewrite', 'file_server'])
-  expect(spa.routes[1]).toEqual({
+  expect(spa.routes.map(r => r.handle[0].handler)).toEqual(['rewrite', 'encode', 'headers', 'headers', 'file_server'])
+  expect(spa.routes[0]).toEqual({
     match: [{ file: { root: spaRoot, try_files: ['{http.request.uri.path}', '/index.html'] } }],
     handle: [{ handler: 'rewrite', uri: '{http.matchers.file.relative}' }],
   })

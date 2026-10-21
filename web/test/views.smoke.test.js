@@ -320,11 +320,15 @@ test('the new-project form offers its suggestions as one-click values', async ()
       expect(wrapper.vm.form.start_command).toBe('bun run start')
       expect(offers().length).toBe(0)
 
-      // clearing a field brings its offer back; a static site has no start command to offer
+      // clearing a field brings its offer back; a static site has no start command
+      // to offer, but offers where builds usually put a site instead of dist
       await wrapper.find('textarea').setValue('')
       wrapper.vm.form.runtime = 'static'
       await settle()
-      expect(offers().map(b => b.text().replace(/\s+/g, ' '))).toEqual(['Use bun install && bun run build'])
+      expect(offers().map(b => b.text().replace(/\s+/g, ' '))).toEqual(['Use bun install && bun run build', 'Use web/dist', 'Use client/dist'])
+      await offers()[1].trigger('click')
+      expect(wrapper.vm.form.publish_dir).toBe('web/dist')
+      expect(offers().map(b => b.text().replace(/\s+/g, ' ')).slice(1)).toEqual(['Use dist', 'Use client/dist'])
     },
   })
   expect(problems.join(' | ')).toBe('')
@@ -391,4 +395,31 @@ test('the new-project form defaults to a container and keeps pm2 behind a link',
     },
   })
   expect(tenant.problems).toEqual([])
+})
+
+// An app can have the gate serve its build output: the checkbox brings the
+// publish directory with it, and the routing preview says files come first.
+test('a container app can let the gate serve its build, which asks for a publish directory', async () => {
+  seedStore('admin')
+  store.live.proxy.baseDomain = 'apps.example.com'
+  const { problems } = await expectCleanRender(ProjectNewView, {
+    steps: async wrapper => {
+      const publishField = () => wrapper.findAll('label').some(l => l.text().startsWith('Publish directory'))
+      expect(wrapper.vm.form.runtime).toBe('container')
+      expect(publishField()).toBe(false)
+      const box = wrapper.findAll('label.check-label').find(l => l.text().includes("serve the build's files"))
+      await box.find('input').setValue(true)
+      expect(wrapper.vm.form.gate_files).toBe(true)
+      expect(publishField()).toBe(true)
+      wrapper.vm.form.subdomain = 'shop'
+      wrapper.vm.form.port = '4321'
+      await settle()
+      expect(wrapper.text()).toContain("→ the build's files, then localhost:4321")
+      // a static site has no such option — it is files only
+      wrapper.vm.form.runtime = 'static'
+      await settle()
+      expect(wrapper.text()).not.toContain("serve the build's files")
+    },
+  })
+  expect(problems.join(' | ')).toBe('')
 })

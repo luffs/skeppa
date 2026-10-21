@@ -10,6 +10,7 @@ import { getSetting } from '../db/settings.js'
 import { startOrReload, describe, deleteProcess } from '../deploy/pm2.js'
 import { APEX } from '../lib/validate.js'
 import { PROXY_PM2_NAME } from '../lib/runtime.js'
+import { HASHED_ASSET_PATTERN } from '../deploy/publish.js'
 
 export const PROXY_PROCESS = PROXY_PM2_NAME
 
@@ -25,7 +26,7 @@ export function proxyRouteRows(db) {
   return db.query(
     // The route follows what is deployed, not what the form says: a project
     // switched to static keeps its proxy route until a deploy has published.
-    `SELECT p.id, p.name, p.slug, p.subdomain, p.port, p.spa_fallback,
+    `SELECT p.id, p.name, p.slug, p.subdomain, p.port, p.spa_fallback, p.gate_files,
             CASE WHEN p.deployed_runtime != '' THEN p.deployed_runtime ELSE p.runtime END AS runtime,
             COALESCE(u.role, '') AS owner_role, COALESCE(u.handle, '') AS owner_handle, COALESCE(u.domain, '') AS owner_domain,
             COALESCE(u.username, '') AS owner_username
@@ -56,23 +57,65 @@ export function staticRoot(config, slug) {
   return join(config.appsDir, slug, 'public')
 }
 
-// A static site: compressed, served straight from its snapshot. With the
-// fallback on, a path that is no file is answered with index.html (the
-// Caddyfile's `try_files {path} /index.html`), which is what a client-side
-// router needs for a reload on /about to work.
-function staticHandlers(root, spaFallback) {
-  const routes = [
+// Serving files from a snapshot, compressed and with caching that fits
+// them: HTML is revalidated on every load (file_server sends an ETag, so
+// that is a 304, not a download) and so always points at the current build;
+// a content-hashed asset never changes under its name and is kept for a
+// year. Everything else keeps the browser's own heuristics.
+const setCache = value => ({ handler: 'headers', response: { set: { 'Cache-Control': [value] } } })
+
+function fileRoutes(root) {
+  return [
     { handle: [{ handler: 'encode', encodings: { zstd: {}, gzip: {} }, prefer: ['zstd', 'gzip'] }] },
+    { match: [{ path: ['*.html', '*/'] }], handle: [setCache('no-cache')] },
+    { match: [{ path_regexp: { pattern: HASHED_ASSET_PATTERN } }], handle: [setCache('public, max-age=31536000, immutable')] },
+    { handle: [{ handler: 'file_server', root }] },
   ]
+}
+
+// A static site, served straight from its snapshot. With the fallback on,
+// a path that is no file is answered with index.html (the Caddyfile's
+// `try_files {path} /index.html`), which is what a client-side router needs
+// for a reload on /about to work.
+function staticHandlers(root, spaFallback) {
+  const routes = []
   if (spaFallback) {
     routes.push({
       match: [{ file: { root, try_files: ['{http.request.uri.path}', '/index.html'] } }],
       handle: [{ handler: 'rewrite', uri: '{http.matchers.file.relative}' }],
     })
   }
-  routes.push({ handle: [{ handler: 'file_server', root }] })
-  return [{ handler: 'subroute', routes }]
+  return [{ handler: 'subroute', routes: [...routes, ...fileRoutes(root)] }]
 }
+
+// An app whose build output the gate serves (projects.gate_files): a GET or
+// HEAD for something that is in the snapshot is a file — a directory path
+// only when it has an index.html, so `/` is the build's index.html — and
+// everything else, every other method included, goes to the app as before.
+// The file matcher counts a try_files entry ending in / as a directory and
+// any other as a file, hence the two routes. With no snapshot (not
+// deployed with the option yet) nothing matches and this is a plain proxy.
+function gateFilesHandlers(root, port) {
+  const read = { method: ['GET', 'HEAD'] }
+  return [{
+    handler: 'subroute',
+    routes: [
+      {
+        match: [{ ...read, path: ['*/'], file: { root, try_files: ['{http.request.uri.path}index.html'] } }],
+        handle: [{ handler: 'rewrite', uri: '{http.matchers.file.relative}' }, { handler: 'subroute', routes: fileRoutes(root) }],
+        terminal: true,
+      },
+      {
+        match: [{ ...read, not: [{ path: ['*/'] }], file: { root, try_files: ['{http.request.uri.path}'] } }],
+        handle: [{ handler: 'subroute', routes: fileRoutes(root) }],
+        terminal: true,
+      },
+      { handle: [proxyTo(port)] },
+    ],
+  }]
+}
+
+const proxyTo = port => ({ handler: 'reverse_proxy', upstreams: [{ dial: `localhost:${port}` }] })
 
 // Full Caddy JSON config for the local instance. Returns null when no base
 // domain is configured (the feature is off). The admin endpoint must not use
@@ -86,7 +129,9 @@ export function buildCaddyConfig(db, config = {}) {
     match: [{ host: [routedHost(p, baseDomain)] }],
     handle: p.runtime === 'static'
       ? staticHandlers(staticRoot(config, p.slug), Boolean(p.spa_fallback))
-      : [{ handler: 'reverse_proxy', upstreams: [{ dial: `localhost:${p.port}` }] }],
+      : p.gate_files
+        ? gateFilesHandlers(staticRoot(config, p.slug), p.port)
+        : [proxyTo(p.port)],
   }))
   // Unmatched hosts get an explicit 404 instead of caddy's empty default.
   routes.push({
@@ -207,6 +252,8 @@ export function createProxy({
         owner_role: p.owner_role,
         // A static route serves files; there is no port to dial.
         static: p.runtime === 'static',
+        // An app route that answers with the build's files first.
+        files: p.runtime !== 'static' && Boolean(p.gate_files),
         port: p.port,
       })),
       config_path: configPath,

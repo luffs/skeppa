@@ -153,6 +153,7 @@
         v-model:networks="edit.networks"
         v-model:publish-dir="edit.publish_dir"
         v-model:spa-fallback="edit.spa_fallback"
+        v-model:gate-files="edit.gate_files"
         :tenant="isTenant"
         existing
       />
@@ -184,6 +185,7 @@
         :handle="project.owner_role === 'tenant' ? project.owner_handle : ''"
         :domain="project.owner_role === 'tenant' ? project.owner_domain : ''"
         :static-site="edit.runtime === 'static'"
+        :gate-files="edit.runtime !== 'static' && edit.gate_files"
         existing
       />
       <p v-if="saveError" class="error">{{ saveError }}</p>
@@ -454,6 +456,7 @@ export default {
         networks: p.networks ?? '',
         publish_dir: p.publish_dir ?? 'dist',
         spa_fallback: !!p.spa_fallback,
+        gate_files: !!p.gate_files,
       }
     },
     async save() {

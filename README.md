@@ -298,7 +298,8 @@ containers and static sites, built from repos of their own GitHub installation.
 For a site that is only files — a Vite build, generated docs, plain HTML — pick the
 **static site** runtime. There is no start command, no port and no process: the deploy
 script builds as usual (`bun install && bun run build`), and the panel then publishes the
-**publish directory** (default `dist`, relative to the working directory) for the harbor
+**publish directory** (default `dist`, relative to the working directory — `web/dist` or
+`client/dist` when the frontend has a folder of its own) for the harbor
 gate to serve under the project's subdomain, compressed. A static site needs the harbor
 gate and a subdomain; without one it is published but not reachable.
 
@@ -307,7 +308,14 @@ and swapped in whole — never the working tree. Visitors keep the previous vers
 build runs, a failed build changes nothing, and symlinks and dot-files (`.git`, `.env`)
 are never published, `.well-known` excepted. Turn on **Single-page app** for client-side
 routers: unknown paths are then answered with `index.html`, so a reload on `/about` loads
-the app instead of a 404.
+the app instead of a 404. A build that did not produce the publish directory fails the
+deploy, and the log names the built sites it found instead.
+
+The gate sends HTML with `Cache-Control: no-cache` (a 304 when nothing changed, so a
+reload always gets the current build) and content-hashed files under `/assets/` or
+`/static/` — `index-BxQ3abc1.js` — as `immutable` for a year. A publish keeps the
+previous build's hashed files for one more deploy: a page loaded before the deploy
+still lazy-loads its chunks by their old names, and finds them.
 
 An existing app can be switched to a static site, or back, without downtime: saving the
 runtime changes nothing that is live. The next successful deploy publishes (or starts) the
@@ -317,6 +325,22 @@ Until that deploy the project page says the change is pending.
 `VITE_*` and similar values are baked in at build time, so the project needs **Inject ENV
 into the deploy script** on (off by default for tenants). Tenants may use this runtime: a
 static site runs none of their code on the server once the build is done.
+
+### An app with its frontend served by the gate
+
+A container (or pm2) app whose server also hands out a built frontend can leave the files
+to the gate: **Let the harbor gate serve the build's files**. The publish directory is then
+published exactly like a static site's, before the app is restarted, and a `GET` or `HEAD`
+for a file that is in the snapshot — `/` and `index.html`, `/assets/…`, `favicon.ico` — is
+answered by the gate, compressed and cached as above. Everything else, every other method
+included, goes to the app as before: the API, server routes, and the app's own fallback for
+client-side routes. Until the first deploy with the option there is no snapshot, nothing
+matches, and the app answers everything. Switched off, the app gets everything back at
+once and the next deploy removes the snapshot.
+
+Use it only for files anyone may see: the gate does not ask the app, so a login the app
+puts in front of its `index.html` no longer applies. A file in the build with the same path
+as an app route wins over the route.
 
 ## Notifications
 

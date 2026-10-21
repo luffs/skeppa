@@ -28,7 +28,7 @@
       <a v-if="existing" :href="routedUrl" target="_blank" rel="noopener" class="mono" style="font-size: 12.5px">{{ routedUrl }}</a>
       <span v-else class="mono" style="font-size: 12.5px">{{ routedUrl }}</span>
       <template v-if="staticSite"> → the published files</template>
-      <template v-else-if="port"> → localhost:{{ port }} · the app gets <span class="mono" style="font-size: 12px">PORT={{ port }}</span></template>
+      <template v-else-if="port"> → <template v-if="gateFiles">the build's files, then </template>localhost:{{ port }} · the app gets <span class="mono" style="font-size: 12px">PORT={{ port }}</span></template>
       <template v-else> → the port assigned on save</template>
     </p>
     <p class="hint" v-else-if="subdomain && !baseDomain">
@@ -67,6 +67,8 @@ export default {
     port: { type: [String, Number], default: '' },
     // Static runtime: the gate serves files, so there is no port to set.
     staticSite: { type: Boolean, default: false },
+    // An app whose build output the gate answers with first.
+    gateFiles: { type: Boolean, default: false },
     existing: { type: Boolean, default: false },
   },
   emits: ['update:subdomain', 'update:port'],

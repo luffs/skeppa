@@ -270,8 +270,13 @@ export class DeployRunner {
     // .env (if that toggle is on) is written now, for the runtime only.
     if (!buildAccess) syncEnvFiles(this.db, this.config, project)
 
+    // Published before the app is touched: a build that did not produce
+    // the directory fails here, with the running app and its files as they
+    // were. For an app the gate serves the new files at once; the app
+    // follows seconds later, and the old chunks stay (publish.js).
+    if (project.runtime === 'static' || project.gate_files) this._publish(project, dirs, log)
     if (project.runtime === 'static') {
-      this._publish(project, dirs, log)
+      // nothing to start
     } else if (project.start_command?.trim()) {
       const appEnv = runtimeEnv(project, envVars)
       if (project.runtime === 'container') {
@@ -344,8 +349,8 @@ export class DeployRunner {
       rmSync(dirs.ecosystem, { force: true })
       if (was === 'pm2') await this._removeLeftoverPm2(project)
       if (was !== 'static') await this._removeStaleContainer(project.slug)
-    } else {
-      unpublishStatic(dirs.public) // left over from a static era
+    } else if (!project.gate_files) {
+      unpublishStatic(dirs.public) // left over from a static era, or from serving the app's files
     }
   }
 
@@ -358,11 +363,15 @@ export class DeployRunner {
     await this.pm2.deleteProcess(project.pm2_name)
   }
 
-  // Static runtime: nothing starts. What the build produced is copied into a
-  // panel-owned snapshot, which is what the harbor gate serves — see
-  // publish.js for why it is never the working tree itself.
+  // What the build produced is copied into a panel-owned snapshot, which is
+  // what the harbor gate serves — the whole site for the static runtime,
+  // the files in front of the app with gate_files. See publish.js for why it
+  // is never the working tree itself.
   _publish(project, dirs, log) {
-    log.line(`▸ publishing ${project.publish_dir || '.'}`)
+    const site = project.runtime === 'static'
+    log.line(site
+      ? `▸ publishing ${project.publish_dir || '.'}`
+      : `▸ publishing ${project.publish_dir || '.'} — the harbor gate answers with these files, the app with the rest`)
     let result
     try {
       result = publishStatic({ workDir: dirs.work, publishDir: project.publish_dir, target: dirs.public })
@@ -373,8 +382,9 @@ export class DeployRunner {
     log.line(`▸ published ${result.files} file${result.files === 1 ? '' : 's'} (${kb} kB)`)
     if (result.symlinks) log.line(`▸ left out ${result.symlinks} symlink${result.symlinks === 1 ? '' : 's'} — links are never published`)
     if (result.hidden) log.line(`▸ left out ${result.hidden} dot-file${result.hidden === 1 ? '' : 's'}/director${result.hidden === 1 ? 'y' : 'ies'}`)
-    if (!result.hasIndex) log.line('⚠ no index.html at the top of the published directory — the site root will be a 404')
-    if (!project.subdomain) log.line('⚠ no subdomain set — the site is published but not reachable until it has one (Rigging)')
+    if (result.carried) log.line(`▸ kept ${result.carried} hashed asset${result.carried === 1 ? '' : 's'} of the previous build, for pages that are still open`)
+    if (site && !result.hasIndex) log.line('⚠ no index.html at the top of the published directory — the site root will be a 404')
+    if (!project.subdomain) log.line(`⚠ no subdomain set — ${site ? 'the site is published' : 'the files are published'} but not reachable until it has one (Rigging)`)
   }
 
   // A container left behind after a container → pm2 runtime switch would keep

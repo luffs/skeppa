@@ -70,18 +70,61 @@
     </label>
   </template>
 
-  <template v-else-if="runtime === 'static'">
-    <label>Publish directory <span class="soft">(relative to the working directory — blank for the directory itself)</span></label>
+  <template v-else-if="runtime === 'pm2'">
+    <label>pm2 process name</label>
+    <input
+      :value="pm2Name"
+      class="code"
+      @input="$emit('update:pm2Name', $event.target.value)"
+    />
+  </template>
+
+  <template v-if="runtime !== 'static'">
+    <label class="check-label">
+      <input
+        type="checkbox"
+        :checked="gateFiles"
+        @change="$emit('update:gateFiles', $event.target.checked)"
+      />
+      Let the harbor gate serve the build's files
+    </label>
+    <p class="hint">
+      After the deploy script, the publish directory is copied into a snapshot, and a
+      <span class="mono">GET</span> for a file in it — <span class="mono">index.html</span>,
+      <span class="mono">/assets/…</span> — is answered by the gate, compressed and cached; every other
+      request goes to the app as before. Only for files anyone may see: the app's own login does not
+      guard them.<template v-if="existing"> Switched on, the files are served from the next deploy;
+      switched off, the app answers everything again at once.</template>
+    </p>
+  </template>
+
+  <template v-if="runtime === 'static' || gateFiles">
+    <label>Publish directory <span class="soft">(relative to the working subdirectory — blank for the directory itself)</span></label>
     <input
       :value="publishDir"
       class="code"
       placeholder="dist"
       @input="$emit('update:publishDir', $event.target.value)"
     />
-    <p class="hint">
-      What the build produces — <span class="mono">dist</span> for Vite, <span class="mono">build</span> or
-      <span class="mono">out</span> elsewhere. Dot-files and symlinks are never published.
+    <p class="suggest">
+      <button
+        v-for="dir in otherDirs"
+        :key="dir"
+        type="button"
+        class="secondary small"
+        @click="$emit('update:publishDir', dir)"
+      >
+        Use <span class="mono">{{ dir }}</span>
+      </button>
     </p>
+    <p class="hint">
+      What the build produces — <span class="mono">dist</span> for Vite, <span class="mono">web/dist</span> or
+      <span class="mono">client/dist</span> when the frontend has a folder of its own. A deploy that cannot
+      find it fails and names the built sites it did find. Dot-files and symlinks are never published.
+    </p>
+  </template>
+
+  <template v-if="runtime === 'static'">
     <label class="check-label">
       <input
         type="checkbox"
@@ -95,25 +138,18 @@
       <span class="mono">/about</span> loads the app instead of a 404.
     </p>
   </template>
-
-  <template v-else>
-    <label>pm2 process name</label>
-    <input
-      :value="pm2Name"
-      class="code"
-      @input="$emit('update:pm2Name', $event.target.value)"
-    />
-  </template>
 </template>
 
 <script>
 import ImagePicker from './ImagePicker.vue'
 
+const COMMON_PUBLISH_DIRS = ['dist', 'web/dist', 'client/dist']
+
 // What goes with the chosen runtime (RuntimeChoice.vue picks it): the build
-// sandbox image, and per runtime the run image and limits, the publish
-// directory, or the pm2 process name. Shared by
-// the new-project form and the project's Rigging tab so a change to how apps
-// build and run reaches both places at once.
+// sandbox image; per runtime the run image and limits or the pm2 process
+// name; and the publish directory, for a static site or an app whose build
+// output the gate serves. Shared by the new-project form and the project's
+// Rigging tab so a change to how apps build and run reaches both at once.
 export default {
   name: 'RuntimeFields',
   components: { ImagePicker },
@@ -128,6 +164,8 @@ export default {
     networks: { type: String, default: '' },
     publishDir: { type: String, default: 'dist' },
     spaFallback: { type: Boolean, default: false },
+    // An app (container or pm2) whose build output the gate serves.
+    gateFiles: { type: Boolean, default: false },
     // Tenant projects never run as a host process and get no host access —
     // the pm2 option and the host-access toggle disappear (the server
     // enforces both).
@@ -136,6 +174,13 @@ export default {
     existing: { type: Boolean, default: false },
   },
   emits: ['update:buildImage', 'update:runImage', 'update:pm2Name', 'update:memoryMb',
-    'update:networkProfile', 'update:hostAccess', 'update:networks', 'update:publishDir', 'update:spaFallback'],
+    'update:networkProfile', 'update:hostAccess', 'update:networks', 'update:publishDir', 'update:spaFallback', 'update:gateFiles'],
+  computed: {
+    // Where builds usually put a site, as one-click values; the current one
+    // is left out.
+    otherDirs() {
+      return COMMON_PUBLISH_DIRS.filter(dir => dir !== this.publishDir.trim())
+    },
+  },
 }
 </script>

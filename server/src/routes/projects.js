@@ -17,7 +17,7 @@ import { PROXY_PM2_NAME, isReservedPm2Name } from '../lib/runtime.js'
 
 const PROJECT_COLUMNS =
   'id, slug, name, repo_full_name, git_url, branch, deploy_script, build_image, run_image, runtime, pm2_name, start_command, cwd, ' +
-  'auto_deploy, write_env_file, build_env, subdomain, port, memory_mb, network_profile, host_access, networks, publish_dir, spa_fallback, deployed_runtime, head_sha, head_message, head_pushed_at, created_at'
+  'auto_deploy, write_env_file, build_env, subdomain, port, memory_mb, network_profile, host_access, networks, publish_dir, spa_fallback, gate_files, deployed_runtime, head_sha, head_message, head_pushed_at, created_at'
 
 const DEFAULT_LOG_LINES = 200
 const MAX_LOG_LINES = 2000
@@ -158,6 +158,7 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
       networks: typeof body.networks === 'string' ? body.networks.trim() : '',
       publish_dir: normalizePublishDir(body.publish_dir),
       spa_fallback: body.spa_fallback ? 1 : 0,
+      gate_files: body.gate_files ? 1 : 0,
     }
     // No webhook will ever fire for a plain-git project — keep the flag
     // honest instead of letting it promise something that cannot happen.
@@ -211,13 +212,13 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
       db.query('SELECT 1 FROM projects WHERE pm2_name = ?').get(n))
 
     const { lastInsertRowid } = db.query(
-      `INSERT INTO projects (slug, name, owner_id, repo_full_name, git_url, branch, deploy_script, build_image, run_image, runtime, pm2_name, start_command, cwd, auto_deploy, write_env_file, build_env, subdomain, port, memory_mb, network_profile, host_access, networks, publish_dir, spa_fallback)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO projects (slug, name, owner_id, repo_full_name, git_url, branch, deploy_script, build_image, run_image, runtime, pm2_name, start_command, cwd, auto_deploy, write_env_file, build_env, subdomain, port, memory_mb, network_profile, host_access, networks, publish_dir, spa_fallback, gate_files)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(slug, project.name, project.owner_id, project.repo_full_name, project.git_url, project.branch, project.deploy_script,
           project.build_image, project.run_image, project.runtime, project.pm2_name, project.start_command,
           project.cwd, project.auto_deploy, project.write_env_file, project.build_env, project.subdomain, project.port,
           project.memory_mb, project.network_profile, project.host_access, project.networks,
-          project.publish_dir, project.spa_fallback)
+          project.publish_dir, project.spa_fallback, project.gate_files)
     const id = Number(lastInsertRowid)
     if (project.port == null) {
       project.port = autoPort(db, id)
@@ -263,6 +264,7 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
       networks: 'networks' in body ? (typeof body.networks === 'string' ? body.networks.trim() : '') : project.networks,
       publish_dir: 'publish_dir' in body ? normalizePublishDir(body.publish_dir) : project.publish_dir,
       spa_fallback: 'spa_fallback' in body ? (body.spa_fallback ? 1 : 0) : project.spa_fallback,
+      gate_files: 'gate_files' in body ? (body.gate_files ? 1 : 0) : project.gate_files,
       owner_id: project.owner_id, // ownership never changes on edit
     }
     // Clearing the port (or saving a legacy project that never had one)
@@ -293,12 +295,12 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
     db.query(
       `UPDATE projects SET name = ?, repo_full_name = ?, branch = ?, deploy_script = ?, build_image = ?, run_image = ?, runtime = ?,
          start_command = ?, pm2_name = ?, cwd = ?, auto_deploy = ?, write_env_file = ?, build_env = ?, subdomain = ?, port = ?, memory_mb = ?,
-         network_profile = ?, host_access = ?, networks = ?, git_url = ?, publish_dir = ?, spa_fallback = ? WHERE id = ?`
+         network_profile = ?, host_access = ?, networks = ?, git_url = ?, publish_dir = ?, spa_fallback = ?, gate_files = ? WHERE id = ?`
     ).run(merged.name, merged.repo_full_name, merged.branch, merged.deploy_script, merged.build_image,
           merged.run_image, merged.runtime, merged.start_command, merged.pm2_name, merged.cwd, merged.auto_deploy,
           merged.write_env_file, merged.build_env, merged.subdomain, merged.port, merged.memory_mb,
           merged.network_profile, merged.host_access, merged.networks, merged.git_url,
-          merged.publish_dir, merged.spa_fallback, project.id)
+          merged.publish_dir, merged.spa_fallback, merged.gate_files, project.id)
     if (liveState.projects[project.id]) {
       liveState.projects[project.id].info = getProjectInfo(db, project.id)
     }
@@ -309,9 +311,12 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
       syncEnvFiles(db, config, getProject(project.id))
     }
     // The runtime decides what kind of route the gate holds (proxy or file
-    // server), and the fallback toggle its shape.
+    // server), and the fallback and gate-files toggles its shape. Turning
+    // gate_files on routes to a snapshot the next deploy makes — until then
+    // nothing in it matches and the app answers everything, as before.
     if (merged.subdomain !== project.subdomain || merged.port !== project.port ||
-        merged.runtime !== project.runtime || merged.spa_fallback !== project.spa_fallback) await applyProxy()
+        merged.runtime !== project.runtime || merged.spa_fallback !== project.spa_fallback ||
+        merged.gate_files !== project.gate_files) await applyProxy()
     return c.json(getProject(project.id))
   })
 

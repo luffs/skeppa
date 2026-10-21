@@ -2,7 +2,7 @@ import { test, expect } from 'bun:test'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, symlinkSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { publishStatic, unpublishStatic, PublishError } from '../src/deploy/publish.js'
+import { publishStatic, unpublishStatic, PublishError, findPublishCandidates, isHashedAsset } from '../src/deploy/publish.js'
 
 // The publish step is the security boundary of the static runtime: what it
 // copies is what the harbor gate serves to the internet.
@@ -99,4 +99,55 @@ test('unpublish removes the snapshot and any leftovers of a swap', () => {
   unpublishStatic(target)
   expect(existsSync(target)).toBe(false)
   expect(existsSync(`${target}.next`)).toBe(false)
+})
+
+// A page loaded before a deploy lazy-loads chunks by their old names. The
+// previous build's hashed assets stay for exactly one more deploy; anything
+// else the new build dropped is gone at once.
+test('old hashed assets are kept for one more deploy, and only those', () => {
+  const { root, target } = site({})
+  const build = files => site(files).work
+  publishStatic({ workDir: build({ 'dist/index.html': 'v1', 'dist/assets/index-AAAAAAA1.js': '1', 'dist/assets/logo.png': 'p', 'dist/old.html': 'x' }), publishDir: 'dist', target })
+
+  const second = publishStatic({ workDir: build({ 'dist/index.html': 'v2', 'dist/assets/index-BBBBBBB2.js': '2' }), publishDir: 'dist', target })
+  expect(second.carried).toBe(1)
+  expect(tree(target)).toEqual(['assets', 'assets/index-AAAAAAA1.js', 'assets/index-BBBBBBB2.js', 'index.html'])
+
+  // the third deploy drops what the second carried, and carries the second's own
+  const third = publishStatic({ workDir: build({ 'dist/index.html': 'v3', 'dist/assets/index-CCCCCCC3.js': '3' }), publishDir: 'dist', target })
+  expect(third.carried).toBe(1)
+  expect(tree(target)).toEqual(['assets', 'assets/index-BBBBBBB2.js', 'assets/index-CCCCCCC3.js', 'index.html'])
+
+  // a build that keeps its names carries nothing (B was carried last time,
+  // C is in the build), and leaves no list behind
+  const fourth = publishStatic({ workDir: build({ 'dist/index.html': 'v4', 'dist/assets/index-CCCCCCC3.js': '3' }), publishDir: 'dist', target })
+  expect(fourth.carried).toBe(0)
+  expect(tree(target)).toEqual(['assets', 'assets/index-CCCCCCC3.js', 'index.html'])
+  expect(existsSync(`${target}.carried`)).toBe(false)
+  unpublishStatic(target)
+  expect(readdirSync(root).filter(n => n.startsWith('public'))).toEqual([])
+})
+
+test('the hashed-asset rule: bundler output under assets/ or static/, nothing else', () => {
+  for (const yes of ['assets/index-BxQ3abc1.js', 'assets/chunks/About-Cq1_z9Xk.css', 'static/js/main.3f2a1b9c.js']) expect(isHashedAsset(yes)).toBe(true)
+  for (const no of ['index.html', 'assets/app.js', 'favicon-12345678.png', 'assets/index-BxQ3abc1.js.map', 'img/logo-12345678.png']) expect(isHashedAsset(no)).toBe(false)
+})
+
+test('a missing publish directory names the built sites it can see, not ones in node_modules or dot-dirs', () => {
+  const { work, target } = site({
+    'web/dist/index.html': 'a', 'client/dist/index.html': 'b', 'packages/docs/build/index.html': 'c',
+    'node_modules/pkg/dist/index.html': 'no', '.cache/dist/index.html': 'no', 'src/dist/readme.txt': 'no index',
+  })
+  expect(findPublishCandidates(work).sort()).toEqual(['client/dist', 'packages/docs/build', 'web/dist'])
+  const err = (() => {
+    try {
+      publishStatic({ workDir: work, publishDir: 'dist', target })
+    } catch (e) {
+      return e
+    }
+  })()
+  expect(err).toBeInstanceOf(PublishError)
+  expect(err.message).toStartWith('publish directory "dist" not found — did the build produce it? Built sites found at: ')
+  expect(err.message).toContain('web/dist')
+  expect(existsSync(target)).toBe(false)
 })
