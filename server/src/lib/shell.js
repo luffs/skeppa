@@ -30,7 +30,7 @@ export function resolveShell() {
 // Smallest environment a child process can run with: PATH, HOME, and the
 // handful of system variables Windows breaks without. The panel's own env
 // (MASTER_KEY!) must never leak into anything it spawns.
-function systemEnvBase() {
+export function systemEnvBase() {
   const env = { PATH: process.env.PATH ?? '' }
   if (process.platform === 'win32') {
     for (const key of [

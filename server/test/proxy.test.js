@@ -65,16 +65,41 @@ test('honors custom ports from settings', () => {
 
 // --- apply ------------------------------------------------------------------
 
-function proxyHarness(db, { adminOk = true, caddyFound = true } = {}) {
+// adminOk: true (accepts), false (unreachable) or a status the running gate
+// answers with. `version` is what `caddy version` prints; `valid` what
+// `caddy validate` decides.
+// A second harness writing into an existing data dir.
+function createProxyLike(harness, dataDir) {
+  const calls = { fetch: [], startOrReload: [], deleted: [], run: [] }
+  const proxy = createProxy({
+    db: harness.db,
+    config: { dataDir },
+    fetchFn: async () => ({ ok: false, status: 400, text: async () => 'unknown field' }),
+    run: args => (args[1] === 'version' ? { exitCode: 0, stdout: 'v2.8.4', stderr: '' } : { exitCode: 0, stdout: '', stderr: '' }),
+    pm2: { startOrReload: async file => calls.startOrReload.push(file), describe: async () => null, deleteProcess: async () => {} },
+    which: () => '/usr/bin/caddy',
+  })
+  return { proxy, calls }
+}
+
+function proxyHarness(db, { adminOk = true, caddyFound = true, version = 'v2.8.4 h1:abc=', valid = true } = {}) {
   const dataDir = mkdtempSync(join(tmpdir(), 'skeppa-proxy-'))
-  const calls = { fetch: [], startOrReload: [], deleted: [] }
+  const calls = { fetch: [], startOrReload: [], deleted: [], run: [] }
   const proxy = createProxy({
     db,
     config: { dataDir },
     fetchFn: async url => {
       calls.fetch.push(url)
-      if (!adminOk) throw new Error('ECONNREFUSED')
-      return { ok: true }
+      if (adminOk === false) throw new Error('ECONNREFUSED')
+      if (adminOk === true) return { ok: true }
+      return { ok: false, status: adminOk, text: async () => '{"error":"loading new config: unknown field \\"trusted_proxies\\""}' }
+    },
+    run: args => {
+      calls.run.push(args.slice(1, 2)[0])
+      if (args[1] === 'version') return { exitCode: 0, stdout: version, stderr: '' }
+      return valid
+        ? { exitCode: 0, stdout: '', stderr: 'Valid configuration' }
+        : { exitCode: 1, stdout: '', stderr: '{"level":"info"}\nError: loading http app module: unknown field "trusted_proxies"' }
     },
     pm2: {
       startOrReload: async file => calls.startOrReload.push(file),
@@ -83,7 +108,7 @@ function proxyHarness(db, { adminOk = true, caddyFound = true } = {}) {
     },
     which: () => (caddyFound ? '/usr/bin/caddy' : null),
   })
-  return { proxy, calls, dataDir }
+  return { proxy, calls, dataDir, db }
 }
 
 test('apply hot-reloads through the admin API and writes the config file', async () => {
@@ -108,6 +133,54 @@ test('apply cold-starts caddy under pm2 when the admin API is down', async () =>
   const ecoPath = join(dataDir, 'proxy', 'ecosystem.config.cjs')
   expect(calls.startOrReload).toEqual([ecoPath])
   expect(readFileSync(ecoPath, 'utf8')).toContain(PROXY_PROCESS)
+})
+
+test('a running gate that refuses the config keeps it: no restart, the accepted file stays', async () => {
+  const db = makeDb()
+  setSetting(db, 'proxy_base_domain', 'apps.example.com')
+  const { proxy, dataDir } = proxyHarness(db)
+  await proxy.apply()
+  const accepted = readFileSync(join(dataDir, 'proxy', 'caddy.json'), 'utf8')
+
+  addProject(db, { slug: 'app', subdomain: 'app', port: 4001 })
+  const refusing = proxyHarness(db, { adminOk: 400 })
+  // same data dir: the file the gate would come back with after a crash
+  const again = createProxyLike(refusing, dataDir)
+  await expect(again.proxy.apply()).rejects.toThrow(/refused the new config and keeps serving the previous one: 400/)
+  expect(again.calls.startOrReload).toEqual([]) // restarting would crash-loop it with every site down
+  expect(readFileSync(join(dataDir, 'proxy', 'caddy.json'), 'utf8')).toBe(accepted)
+  expect(existsSync(join(dataDir, 'proxy', 'caddy.next.json'))).toBe(false)
+  expect((await again.proxy.status()).last_error).toMatch(/refused/)
+})
+
+test('a cold start only happens with a config caddy validates', async () => {
+  const db = makeDb()
+  setSetting(db, 'proxy_base_domain', 'apps.example.com')
+  const { proxy, calls, dataDir } = proxyHarness(db, { adminOk: false, valid: false })
+  await expect(proxy.apply()).rejects.toThrow('caddy 2.8.4 cannot load the generated config, so the harbor gate was not started: Error: loading http app module: unknown field "trusted_proxies"')
+  expect(calls.run).toEqual(['version', 'validate'])
+  expect(calls.startOrReload).toEqual([])
+  expect(existsSync(join(dataDir, 'proxy', 'caddy.json'))).toBe(false)
+})
+
+test('the gate trusts the system Caddy only on Caddy 2.6.3 or later', async () => {
+  const db = makeDb()
+  setSetting(db, 'proxy_base_domain', 'apps.example.com')
+  const written = async version => {
+    const { proxy, dataDir } = proxyHarness(db, { version })
+    await proxy.apply()
+    const server = JSON.parse(readFileSync(join(dataDir, 'proxy', 'caddy.json'), 'utf8')).apps.http.servers.skeppa
+    const { caddy_version, forwarded_headers } = await proxy.status()
+    return { trusted: 'trusted_proxies' in server, caddy_version, forwarded_headers }
+  }
+  expect(await written('v2.4.6 h1:x=')).toEqual({ trusted: false, caddy_version: '2.4.6', forwarded_headers: false })
+  expect(await written('v2.5.2 h1:x=')).toEqual({ trusted: false, caddy_version: '2.5.2', forwarded_headers: false })
+  // Debian's and Ubuntu's package: refuses the field (tried against the real binary)
+  expect(await written('v2.6.2 h1:x=')).toEqual({ trusted: false, caddy_version: '2.6.2', forwarded_headers: false })
+  expect(await written('v2.6.3 h1:x=')).toEqual({ trusted: true, caddy_version: '2.6.3', forwarded_headers: true })
+  expect(await written('2.7.6')).toEqual({ trusted: true, caddy_version: '2.7.6', forwarded_headers: true }) // distro builds drop the v
+  expect(await written('v2.11.7 h1:x=')).toEqual({ trusted: true, caddy_version: '2.11.7', forwarded_headers: true })
+  expect(await written('(devel)')).toEqual({ trusted: false, caddy_version: '', forwarded_headers: false })
 })
 
 test('apply fails clearly when caddy is not installed', async () => {

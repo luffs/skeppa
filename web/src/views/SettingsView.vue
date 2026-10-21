@@ -363,11 +363,19 @@
 
         <p class="hint" style="margin-top: 12px">
           <template v-if="!gate.caddy_available">⚠ caddy binary not found on PATH.</template>
-          <template v-else-if="gate.process_status">proxy process: {{ gate.process_status }}</template>
+          <template v-else-if="gate.process_status">proxy process: {{ gate.process_status }}<template
+            v-if="gate.caddy_version"> · caddy {{ gate.caddy_version }}</template></template>
           <template v-else>proxy process not started yet — Apply will start it.</template>
         </p>
       </template>
 
+      <p v-if="gate && gate.caddy_available && !gate.forwarded_headers" class="hint">
+        ⚠ The gate's Caddy is {{ gate.caddy_version ? `${gate.caddy_version}, older than 2.6.3` : 'of an unknown version' }}, so it
+        cannot be told to trust only the system Caddy in front of it: apps see every request as plain
+        <span class="mono">http</span> from <span class="mono">127.0.0.1</span> (no Secure cookies by scheme, no client
+        addresses) — or, before 2.5, forwarded headers from anyone who reaches the gate's port. Upgrade the
+        <span class="mono">caddy</span> binary on the panel user's PATH (2.6.3 or later) and press Apply.
+      </p>
       <p v-if="gate && gate.last_error" class="error">{{ gate.last_error }}</p>
       <p v-if="gateError" class="error">{{ gateError }}</p>
       <p v-if="gateMessage" class="hint">{{ gateMessage }}</p>

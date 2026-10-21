@@ -5,12 +5,13 @@
 // permission domain. This instance speaks plain HTTP on localhost and is
 // managed as a pm2 process so it shows up in the Engine room.
 import { join } from 'node:path'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync, renameSync, rmSync, statSync } from 'node:fs'
 import { getSetting } from '../db/settings.js'
 import { startOrReload, describe, deleteProcess } from '../deploy/pm2.js'
 import { APEX } from '../lib/validate.js'
 import { PROXY_PM2_NAME } from '../lib/runtime.js'
 import { HASHED_ASSET_PATTERN } from '../deploy/publish.js'
+import { systemEnvBase } from '../lib/shell.js'
 
 export const PROXY_PROCESS = PROXY_PM2_NAME
 
@@ -117,11 +118,29 @@ function gateFilesHandlers(root, port) {
 
 const proxyTo = port => ({ handler: 'reverse_proxy', upstreams: [{ dial: `localhost:${port}` }] })
 
+// `caddy version` prints e.g. "v2.8.4 h1:…" (distro builds may drop the v).
+// null when there is nothing recognizable — a dev build, say.
+export function parseCaddyVersion(text) {
+  const m = /v?(\d+)\.(\d+)\.(\d+)/.exec(String(text ?? ''))
+  return m ? { major: Number(m[1]), minor: Number(m[2]), patch: Number(m[3]), text: `${m[1]}.${m[2]}.${m[3]}` } : null
+}
+
+// The server's trusted_proxies with an IP-source module is Caddy 2.6.3+
+// (tried: 2.6.2 — Debian's and Ubuntu's package — refuses the whole config
+// over that one field, 2.6.3 takes it). Unknown counts as too old: the
+// gate working matters more than forwarded headers.
+export const trustsProxies = version => {
+  if (!version) return false
+  const { major, minor, patch } = version
+  return major > 2 || (major === 2 && (minor > 6 || (minor === 6 && patch >= 3)))
+}
+
 // Full Caddy JSON config for the local instance. Returns null when no base
 // domain is configured (the feature is off). The admin endpoint must not use
 // caddy's default :2019 — that's usually taken by the system instance.
 // `config` (for APPS_DIR) is only needed once a static project is routed.
-export function buildCaddyConfig(db, config = {}) {
+// `trustLoopback` is off for a gate Caddy older than 2.6.3 (trustsProxies).
+export function buildCaddyConfig(db, config = {}, { trustLoopback = true } = {}) {
   const { baseDomain, httpPort, adminPort } = proxySettings(db)
   if (!baseDomain) return null
 
@@ -152,7 +171,7 @@ export function buildCaddyConfig(db, config = {}) {
             // overwriting them with 127.0.0.1 and "http", so an app still sees
             // the client's address and that it came over https (Secure
             // cookies, absolute URLs). Nobody else's headers are kept.
-            trusted_proxies: { source: 'static', ranges: ['127.0.0.1/32', '::1/128'] },
+            ...(trustLoopback ? { trusted_proxies: { source: 'static', ranges: ['127.0.0.1/32', '::1/128'] } } : {}),
           },
         },
       },
@@ -166,38 +185,92 @@ export function createProxy({
   pm2 = { startOrReload, describe, deleteProcess },
   fetchFn = fetch,
   which = exe => Bun.which(exe),
+  run = runCaddy,
 }) {
   const dir = join(config.dataDir, 'proxy')
+  // Always the last config the gate accepted, so a crash or a reboot
+  // brings back routes that work. A new one is tried as caddy.next.json.
   const configPath = join(dir, 'caddy.json')
+  const candidatePath = join(dir, 'caddy.next.json')
   const ecosystemPath = join(dir, 'ecosystem.config.cjs')
   let lastError = null
   let lastAppliedAt = null
 
+  // Asked once per binary — a new mtime means Caddy was upgraded in place.
+  const versions = new Map()
+  function caddyVersion(bin) {
+    if (!bin) return null
+    let key = bin
+    try {
+      key = `${bin}:${statSync(bin).mtimeMs}`
+    } catch {
+      // not stat-able (a test double, a vanished binary): cache by path
+    }
+    if (!versions.has(key)) {
+      let version = null
+      try {
+        version = parseCaddyVersion(run([bin, 'version']).stdout)
+      } catch {
+        // could not run it — unknown
+      }
+      versions.set(key, version)
+    }
+    return versions.get(key)
+  }
+
   // Regenerate the config from the DB and make the running instance match it:
   // hot-reload through the admin API when the instance is up, otherwise
   // (re)start it under pm2 — caddy reads the config file at startup.
+  //
+  // A running gate that REFUSES the config is not a gate that is down: it
+  // keeps serving the old routes, and restarting it would only make it read
+  // a config it cannot load and crash-loop with every site down. So a
+  // refusal is reported and nothing else happens; only an unreachable
+  // admin API leads to a (re)start, and then only with a config `caddy
+  // validate` has accepted.
   async function apply() {
     try {
-      const caddyConfig = buildCaddyConfig(db, config)
+      const caddyBin = which('caddy')
+      const version = caddyVersion(caddyBin)
+      const caddyConfig = buildCaddyConfig(db, config, { trustLoopback: trustsProxies(version) })
       if (!caddyConfig) return { applied: false, reason: 'no base domain configured' }
 
       mkdirSync(dir, { recursive: true })
-      writeFileSync(configPath, JSON.stringify(caddyConfig, null, 2) + '\n')
+      writeFileSync(candidatePath, JSON.stringify(caddyConfig, null, 2) + '\n')
+      const accept = () => renameSync(candidatePath, configPath)
+      const caddyName = `caddy${version ? ` ${version.text}` : ''}`
 
       const { adminPort } = proxySettings(db)
+      let res = null
       try {
-        const res = await fetchFn(`http://localhost:${adminPort}/load`, {
+        res = await fetchFn(`http://localhost:${adminPort}/load`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(caddyConfig),
           signal: AbortSignal.timeout(3000),
         })
-        if (!res.ok) throw new Error(`caddy admin API: ${res.status} ${await res.text()}`)
       } catch {
-        const caddyBin = which('caddy')
+        res = null // not reachable: started below
+      }
+      if (res && !res.ok) {
+        const detail = await res.text().catch(() => '')
+        rmSync(candidatePath, { force: true })
+        throw new Error(`the harbor gate (${caddyName}) refused the new config and keeps serving the previous one: ${res.status} ${detail}`.trim())
+      }
+      if (res) {
+        accept()
+      } else {
         if (!caddyBin) {
+          rmSync(candidatePath, { force: true })
           throw new Error('caddy binary not found on PATH — install caddy for the panel user')
         }
+        const check = run([caddyBin, 'validate', '--config', candidatePath])
+        if (check.exitCode !== 0) {
+          rmSync(candidatePath, { force: true })
+          const why = `${check.stderr}\n${check.stdout}`.split('\n').map(l => l.trim()).find(l => /^(Error|validate):/.test(l)) ?? `exit ${check.exitCode}`
+          throw new Error(`${caddyName} cannot load the generated config, so the harbor gate was not started: ${why}`)
+        }
+        accept()
         const eco = {
           apps: [{
             name: PROXY_PROCESS,
@@ -240,6 +313,10 @@ export function createProxy({
       http_port: settings.httpPort,
       admin_port: settings.adminPort,
       caddy_available: !!which('caddy'),
+      // '' when unknown. Below 2.6.3 the gate cannot trust the system Caddy's
+      // forwarded headers, and the UI says what that costs.
+      caddy_version: caddyVersion(which('caddy'))?.text ?? '',
+      forwarded_headers: trustsProxies(caddyVersion(which('caddy'))),
       process_status: proc?.pm2_env?.status ?? null,
       routes: proxyRouteRows(db).map(p => ({
         project_id: p.id,
@@ -263,4 +340,11 @@ export function createProxy({
   }
 
   return { apply, stop, status }
+}
+
+// Runs the caddy binary for `version` and `validate`, with the minimal
+// environment everything the panel spawns gets.
+function runCaddy(args) {
+  const res = Bun.spawnSync(args, { env: systemEnvBase(), stdout: 'pipe', stderr: 'pipe' })
+  return { exitCode: res.exitCode, stdout: res.stdout.toString(), stderr: res.stderr.toString() }
 }
