@@ -275,9 +275,20 @@ user's PATH) routes `subdomain.<base domain>` → `localhost:<port>`, and the ro
 injected into the app's environment as `PORT`. Your system Caddy forwards the wildcard to it
 with the one static block the panel shows you, and keeps owning TLS — give the wildcard a
 DNS-01 certificate or add `tls { on_demand }` to the block. The gate trusts the system Caddy
-on loopback (Caddy ≥ 2.6.3; with an older one — Debian and Ubuntu package 2.6.2 — the panel
-leaves that out and Rigging says what it costs), so an app sees the `X-Forwarded-For`, `-Proto` and `-Host` it
-sent: the client's address, and `https`, not `127.0.0.1` and `http`.
+on loopback, so an app sees the `X-Forwarded-For`, `-Proto` and `-Host` it sent: the client's
+address, and `https`, not `127.0.0.1` and `http`.
+
+That takes **Caddy 2.6.3 or later** — install it from
+[Caddy's own apt repository](https://caddyserver.com/docs/install#debian-ubuntu-raspbian):
+Ubuntu 24.04 and Debian 12 ship 2.6.2. An older gate still routes, serves files and caches
+the same way; the panel leaves the trust setting out (an older Caddy refuses the whole config
+over it) and Rigging → Harbor gate shows a warning, because apps then see every request as
+plain `http` from `127.0.0.1` — no Secure cookies decided by the scheme, `http://` in
+absolute URLs, and no client addresses for rate limits or logs. Before 2.5 Caddy passes the
+headers through instead, from anyone who can reach the gate's port directly. After upgrading
+Caddy, run `pm2 restart skeppa-proxy` before pressing Apply: the gate keeps running the old
+binary until it is restarted, and that one would refuse the newer config (it keeps serving its
+current routes, and Rigging shows the refusal).
 
 Tenant projects route under their owner's handle — `app.bob.example.com` — so subdomains
 only collide within one namespace. Each tenant that routes something adds one more
