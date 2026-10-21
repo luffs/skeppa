@@ -19,12 +19,12 @@ const NEW_PROJECT_FORM = {
   auto_deploy: true,
 }
 
-function setup() {
+function setup(extraConfig = {}) {
   const db = new Database(':memory:')
   migrate(db, fileURLToPath(new URL('../src/db/migrations', import.meta.url)))
   const app = projectRoutes({
     db,
-    config: { appsDir: '/srv/apps', selfPm2Name: 'skeppa' },
+    config: { appsDir: '/srv/apps', selfPm2Name: 'skeppa', ...extraConfig },
     liveState: createLiveState(),
   })
   return { db, app }
@@ -44,7 +44,7 @@ test('the new-project form creates a project with sane defaults for every added 
     pm2_name: 'my-app',
     branch: 'main',
     auto_deploy: 1,
-    runtime: 'pm2', // host process unless explicitly switched
+    runtime: 'pm2', // no container engine configured here — see below
     build_image: null, // panel default
     run_image: null,
     subdomain: null,
@@ -54,6 +54,15 @@ test('the new-project form creates a project with sane defaults for every added 
   const row = db.query('SELECT * FROM projects WHERE id = ?').get(created.id)
   expect(row.write_env_file).toBe(0) // off for new projects; ENV is injected
   expect(row.auto_start).toBe(1) // start at boot until stopped from the panel
+})
+
+test('with a container engine configured, an unspecified runtime is a container', async () => {
+  const { app } = setup({ containerSocket: '/run/user/1000/podman/podman.sock' })
+  const created = await (await create(app, NEW_PROJECT_FORM)).json()
+  expect(created.runtime).toBe('container')
+  // an explicit choice still wins
+  const host = await (await create(app, { ...NEW_PROJECT_FORM, name: 'Host', pm2_name: 'host', runtime: 'pm2' })).json()
+  expect(host.runtime).toBe('pm2')
 })
 
 test('the form can opt into the container runtime and routing at creation time', async () => {

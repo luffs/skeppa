@@ -651,8 +651,9 @@ td.commit-cell { width: 100%; max-width: 0; min-width: 240px; }
 
 .proc-logs { border-top: 1px solid var(--line); padding: 14px 18px 16px; }
 .log-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
-.log-streams { display: flex; gap: 6px; }
-.log-streams button {
+.log-streams, .segmented { display: flex; gap: 6px; }
+.segmented { flex-wrap: wrap; }
+.log-streams button, .segmented button {
   background: transparent;
   color: var(--dim);
   border: 1px solid var(--line);
@@ -662,8 +663,8 @@ td.commit-cell { width: 100%; max-width: 0; min-width: 240px; }
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
-.log-streams button:hover { background: var(--hover-tint); color: var(--ink); }
-.log-streams button.active { background: var(--ink); color: var(--cream); border-color: var(--ink); }
+.log-streams button:hover, .segmented button:hover { background: var(--hover-tint); color: var(--ink); }
+.log-streams button.active, .segmented button.active { background: var(--ink); color: var(--cream); border-color: var(--ink); }
 .log-streams .dot { margin-left: 7px; width: 6px; height: 6px; vertical-align: middle; }
 .log-toolbar .spacer { flex: 1; }
 .log-meta { font-family: var(--mono); font-size: 11px; color: var(--dim); }
@@ -812,6 +813,9 @@ td.commit-cell { width: 100%; max-width: 0; min-width: 240px; }
 /* ---- misc ---- */
 
 .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+/* An inline link inside a hint — the global `a` is ink-coloured. */
+.text-link { color: var(--accent); }
+.text-link:hover { text-decoration: underline; }
 .row > * { margin: 0; }
 
 /* ---- narrow screens ---- */

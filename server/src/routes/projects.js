@@ -143,7 +143,8 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
       deploy_script: body.deploy_script ?? '',
       build_image: normalizeImage(body.build_image),
       run_image: normalizeImage(body.run_image),
-      runtime: body.runtime ?? 'pm2',
+      // A container wherever there is an engine to run it.
+      runtime: body.runtime ?? (config.containerSocket ? 'container' : 'pm2'),
       start_command: body.start_command ?? '',
       pm2_name: body.pm2_name?.trim() || slugify(body.name ?? ''),
       cwd: body.cwd?.trim() || null,

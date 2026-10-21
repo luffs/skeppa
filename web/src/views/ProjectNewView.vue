@@ -46,6 +46,8 @@
       <label>Name</label>
       <input v-model="form.name" placeholder="My app" @input="syncPm2Name" />
 
+      <RuntimeChoice :runtime="form.runtime" :tenant="isTenant" @update:runtime="pickRuntime" />
+
       <label>Deploy script</label>
       <textarea v-model="form.deploy_script" class="code" rows="4" :placeholder="suggested.deploy"></textarea>
       <!-- The placeholder is a suggestion, not a default: nothing runs that was
@@ -83,7 +85,7 @@
       <input v-model="form.cwd" class="code" placeholder="apps/api" />
 
       <RuntimeFields
-        v-model:runtime="form.runtime"
+        :runtime="form.runtime"
         v-model:build-image="form.build_image"
         v-model:run-image="form.run_image"
         v-model:pm2-name="form.pm2_name"
@@ -117,12 +119,13 @@
 <script>
 import { api } from '../api.js'
 import { store } from '../store.js'
+import RuntimeChoice from '../components/RuntimeChoice.vue'
 import RuntimeFields from '../components/RuntimeFields.vue'
 import RoutingFields from '../components/RoutingFields.vue'
 
 export default {
   name: 'ProjectNewView',
-  components: { RuntimeFields, RoutingFields },
+  components: { RuntimeChoice, RuntimeFields, RoutingFields },
   data() {
     return {
       repos: [],
@@ -131,6 +134,7 @@ export default {
       error: '',
       busy: false,
       pm2NameTouched: false,
+      runtimeTouched: false,
       externalRepo: false,
       isTenant: store.user?.role === 'tenant',
       myHandle: store.user?.handle ?? '',
@@ -153,8 +157,8 @@ export default {
         // Set here rather than in Rigging afterwards: these decide what the
         // very first deploy does. The .env-file toggle has a working default
         // and stays in the project settings.
-        // tenants deploy in containers only; the server enforces it too
-        runtime: store.user?.role === 'tenant' ? 'container' : 'pm2',
+        // A container, unless this panel has no engine at all (noEngine).
+        runtime: 'container',
         build_image: '',
         run_image: '',
         memory_mb: '',
@@ -177,7 +181,19 @@ export default {
       this.reposLoading = false
     }
   },
+  computed: {
+    // An admin's panel started without a container socket: a container
+    // default would only fail the first deploy, so pm2 is the default there.
+    noEngine() {
+      const system = store.live?.system
+      return !this.isTenant && Boolean(system?.appsDir) && !system.containerSocket
+    },
+  },
   methods: {
+    pickRuntime(runtime) {
+      this.form.runtime = runtime
+      this.runtimeTouched = true
+    },
     onRepoPicked() {
       const repo = this.repos.find(r => r.full_name === this.form.repo_full_name)
       if (repo) {
@@ -221,6 +237,14 @@ export default {
     },
   },
   watch: {
+    // The system facts may arrive after the form opened; follow them until
+    // someone has picked a runtime themselves.
+    noEngine: {
+      immediate: true,
+      handler(none) {
+        if (!this.runtimeTouched) this.form.runtime = none ? 'pm2' : 'container'
+      },
+    },
     'form.pm2_name'(val) {
       // Consider the field "touched" once it diverges from the auto-generated value.
       const auto = this.form.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')

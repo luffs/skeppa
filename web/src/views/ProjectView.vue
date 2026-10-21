@@ -134,6 +134,7 @@
         </label>
         <p class="hint">When off, pushes only show up as "commits ahead" — deploy manually.</p>
       </template>
+      <RuntimeChoice v-model:runtime="edit.runtime" :tenant="isTenant" existing />
       <label>Deploy script</label>
       <textarea v-model="edit.deploy_script" class="code" rows="4"></textarea>
       <p class="hint">⚠ Runs as a shell script on the server — only trusted commands.</p>
@@ -142,7 +143,7 @@
         <input v-model="edit.start_command" class="code" />
       </template>
       <RuntimeFields
-        v-model:runtime="edit.runtime"
+        :runtime="edit.runtime"
         v-model:build-image="edit.build_image"
         v-model:run-image="edit.run_image"
         v-model:pm2-name="edit.pm2_name"
@@ -234,6 +235,7 @@ import EnvEditor from '../components/EnvEditor.vue'
 import Pm2Logs from '../components/Pm2Logs.vue'
 import CommitMessage from '../components/CommitMessage.vue'
 import SourceFiles from '../components/SourceFiles.vue'
+import RuntimeChoice from '../components/RuntimeChoice.vue'
 import RuntimeFields from '../components/RuntimeFields.vue'
 import RoutingFields from '../components/RoutingFields.vue'
 import { api } from '../api.js'
@@ -245,7 +247,7 @@ const RUNTIME_LABEL = { pm2: 'a pm2 process', container: 'a container', static: 
 
 export default {
   name: 'ProjectView',
-  components: { StatusBadge, DeployLog, CommitMessage, EnvEditor, Pm2Logs, SourceFiles, RuntimeFields, RoutingFields },
+  components: { StatusBadge, DeployLog, CommitMessage, EnvEditor, Pm2Logs, SourceFiles, RuntimeChoice, RuntimeFields, RoutingFields },
   props: { id: { type: String, required: true } },
   data() {
     return {

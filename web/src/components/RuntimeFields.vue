@@ -2,25 +2,6 @@
   <!-- No wrapper element: the fields are siblings of the form's own labels, so
        they keep the shared vertical rhythm (a wrapper would make the first
        label a :first-child and zero its top margin). -->
-  <label>Runtime</label>
-  <select :value="runtime" class="code" @change="$emit('update:runtime', $event.target.value)">
-    <option v-if="!tenant" value="pm2">pm2 — host process</option>
-    <option value="container">container — rootless podman</option>
-    <option value="static">static site — files only, no process</option>
-  </select>
-  <p class="hint" v-if="runtime === 'container'">
-    The start command runs in a disposable container: source read-only at
-    <span class="mono">/app</span>, <span class="mono">shared/</span> writable at
-    <span class="mono">/data</span>, the app port published on localhost.<template v-if="existing">
-    Takes effect on the next deploy or restart.</template>
-  </p>
-  <p class="hint" v-if="runtime === 'static'">
-    Nothing runs: after the deploy script, the publish directory is copied into a snapshot
-    that the harbor gate serves under the project's subdomain. Visitors keep the previous
-    version until a build has finished, and a failed build changes nothing.<template v-if="existing">
-    Takes effect on the next deploy — whatever serves the project now keeps serving it until then.</template>
-  </p>
-
   <label>Build image</label>
   <ImagePicker
     :model-value="buildImage"
@@ -128,15 +109,16 @@
 <script>
 import ImagePicker from './ImagePicker.vue'
 
-// Runtime picker plus the images and names that go with it — the build sandbox
-// image, and per runtime either the run image or the pm2 process name. Shared by
+// What goes with the chosen runtime (RuntimeChoice.vue picks it): the build
+// sandbox image, and per runtime the run image and limits, the publish
+// directory, or the pm2 process name. Shared by
 // the new-project form and the project's Rigging tab so a change to how apps
 // build and run reaches both places at once.
 export default {
   name: 'RuntimeFields',
   components: { ImagePicker },
   props: {
-    runtime: { type: String, default: 'pm2' },
+    runtime: { type: String, default: 'container' },
     buildImage: { type: String, default: '' },
     runImage: { type: String, default: '' },
     pm2Name: { type: String, default: '' },
@@ -153,7 +135,7 @@ export default {
     // Wording differs slightly for a project that already exists.
     existing: { type: Boolean, default: false },
   },
-  emits: ['update:runtime', 'update:buildImage', 'update:runImage', 'update:pm2Name', 'update:memoryMb',
+  emits: ['update:buildImage', 'update:runImage', 'update:pm2Name', 'update:memoryMb',
     'update:networkProfile', 'update:hostAccess', 'update:networks', 'update:publishDir', 'update:spaFallback'],
 }
 </script>

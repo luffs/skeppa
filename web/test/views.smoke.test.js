@@ -265,8 +265,9 @@ test('a static project shows no process controls, and its Rigging asks for a pub
   seedStore('tenant')
   const form = await expectCleanRender(ProjectNewView, {
     steps: async wrapper => {
-      const runtimes = wrapper.findAll('select option').map(o => o.attributes('value')).filter(v => ['pm2', 'container', 'static'].includes(v))
-      expect(runtimes).toEqual(['container', 'static']) // never a host process
+      const runtimes = wrapper.findAll('.segmented button').map(b => b.text())
+      expect(runtimes).toEqual(['Container app', 'Static site']) // never a host process
+      expect(wrapper.find('.text-link').exists()).toBe(false)
     },
   })
   expect(form.problems.join(' | ')).toBe('')
@@ -350,4 +351,44 @@ test('removing a crew member who owns projects offers to move them, showing what
     },
   })
   expect(problems.join(' | ')).toBe('')
+})
+
+// A new project is a container by default; pm2 waits behind a link for an
+// admin and does not exist for a tenant. A panel with no engine at all
+// defaults an admin to pm2 instead of a deploy that cannot work.
+test('the new-project form defaults to a container and keeps pm2 behind a link', async () => {
+  const labels = wrapper => wrapper.findAll('.segmented button').map(b => b.text())
+
+  seedStore('admin')
+  const admin = await expectCleanRender(ProjectNewView, {
+    steps: async wrapper => {
+      expect(wrapper.vm.form.runtime).toBe('container')
+      expect(labels(wrapper)).toEqual(['Container app', 'Static site'])
+      await wrapper.find('.text-link').trigger('click')
+      expect(labels(wrapper)).toEqual(['Container app', 'Static site', 'Host process (pm2)'])
+      await wrapper.findAll('.segmented button')[1].trigger('click')
+      expect(wrapper.vm.form.runtime).toBe('static')
+    },
+  })
+  expect(admin.problems).toEqual([])
+
+  seedStore('admin')
+  store.live.system.containerSocket = ''
+  const bare = await expectCleanRender(ProjectNewView, {
+    steps: async wrapper => {
+      expect(wrapper.vm.form.runtime).toBe('pm2')
+      expect(labels(wrapper)).toContain('Host process (pm2)')
+    },
+  })
+  expect(bare.problems).toEqual([])
+
+  seedStore('tenant')
+  const tenant = await expectCleanRender(ProjectNewView, {
+    steps: async wrapper => {
+      expect(wrapper.vm.form.runtime).toBe('container')
+      expect(labels(wrapper)).toEqual(['Container app', 'Static site'])
+      expect(wrapper.find('.text-link').exists()).toBe(false)
+    },
+  })
+  expect(tenant.problems).toEqual([])
 })
