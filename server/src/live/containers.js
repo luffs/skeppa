@@ -64,6 +64,10 @@ async function describe(engine, entry) {
     memory: roundMem(stats?.memory),
     cpu: roundCpu(stats?.cpu),
     image: entry.Image ?? '',
+    // The exact image behind that name. The tag it was started from may point
+    // somewhere else by now (a pull), and the client tells those apart by
+    // joining this against the store listing.
+    imageId: entry.ImageID ?? '',
     state: entry.State ?? '',
     createdAt: typeof entry.Created === 'number' ? entry.Created * 1000 : null,
     ports: portLabels(entry),

@@ -38,6 +38,19 @@ export function getManagedImages(db) {
   }))
 }
 
+// The image's own identity, straight out of the listing. A floating tag says
+// none of it: `:1` is a pointer, and two servers on the same tag can hold
+// different images. The digest is what the copy actually is, `createdAt` how
+// old it is, and the OCI label the version string — when the author published
+// one, which many images do not.
+const OCI_VERSION_LABEL = 'org.opencontainers.image.version'
+
+// 'docker.io/oven/bun@sha256:ab…' → 'sha256:ab…'; '' when the image was built
+// here and never came from a registry.
+function repoDigest(img) {
+  return (img.RepoDigests ?? []).map(entry => entry.split('@')[1]).find(Boolean) ?? ''
+}
+
 export function toLocalImages(db, list) {
   return list.map(img => {
     const tags = (img.RepoTags ?? []).filter(t => t !== '<none>:<none>')
@@ -45,6 +58,13 @@ export function toLocalImages(db, list) {
       id: img.Id,
       tags,
       size: img.Size ?? null,
+      // Unknown has to be '' rather than null for the strings: a null is a
+      // deletion on the wire, and the client cannot tell the key never
+      // arrived from the key being removed.
+      digest: repoDigest(img),
+      version: img.Labels?.[OCI_VERSION_LABEL] ?? '',
+      // Seconds in the listing, ms everywhere in the panel.
+      createdAt: typeof img.Created === 'number' ? img.Created * 1000 : null,
       dangling: tags.length === 0,
       managed: tags.some(t => t.startsWith(MANAGED_PREFIX)),
       used_by: [...new Set(tags.flatMap(ref => projectsUsing(db, ref)))],

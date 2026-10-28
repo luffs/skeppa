@@ -102,3 +102,40 @@ test('syncManagedImages refreshes used_by without touching the engine', async ()
   expect(liveState.images.local).toHaveLength(1) // the listing is left alone
   expect(liveState.images.storeListed).toBe(true)
 })
+
+// A floating tag says nothing about which image it currently points at. These
+// three facts ride along in the listing the poller already makes, so the
+// Shipyard can name the copy without a second call per image.
+test('carries the image own identity: digest, build date and version label', async () => {
+  const db = makeDb()
+  const liveState = createLiveState()
+  initLiveState(liveState, db, {})
+
+  await syncImages(db, liveState, fakeEngine([
+    {
+      Id: 'sha256:aaa',
+      RepoTags: ['docker.io/oven/bun:1'],
+      RepoDigests: ['docker.io/oven/bun@sha256:dddeeefff'],
+      Labels: { 'org.opencontainers.image.version': '1.4.4', other: 'x' },
+      Created: 1_700_000_000,
+      Size: 1,
+    },
+    // Built here from a Containerfile: no registry digest, no labels at all.
+    { Id: 'sha256:bbb', RepoTags: ['localhost/skeppa/bun-node:latest'], Labels: null, Size: 2 },
+  ]))
+
+  const pulled = liveState.images.local.find(l => l.id === 'sha256:aaa')
+  expect(pulled.digest).toBe('sha256:dddeeefff')
+  expect(pulled.version).toBe('1.4.4')
+  expect(pulled.createdAt).toBe(1_700_000_000_000)
+
+  // Unknown is '' for the strings — a null would reach the stores as a
+  // deletion, which the client cannot tell from a key that never arrived.
+  const built = liveState.images.local.find(l => l.id === 'sha256:bbb')
+  expect(built.digest).toBe('')
+  expect(built.version).toBe('')
+  // And the number simply vanishes: assigning null to the proxy is a deletion,
+  // which is the sanctioned way to say "unknown" for a number — `img.createdAt`
+  // is falsy either way at the other end.
+  expect(built.createdAt).toBeUndefined()
+})

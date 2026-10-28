@@ -170,6 +170,14 @@
                      only when it says more — exited, created, paused. -->
                 <span v-if="c.state && c.state !== 'running'"><i>state</i>{{ c.state }}</span>
                 <span class="proc-image" :title="c.image"><i>image</i>{{ shortImage(c.image) || '—' }}</span>
+                <!-- The tag moved under a running container: worth saying, but
+                     it is not an error — the app is fine, just not on the new
+                     image until something restarts it. -->
+                <span
+                  v-if="c.imageSuperseded"
+                  class="chip amber"
+                  title="The tag now points at a different image in the store — restart to run the newer one"
+                >superseded</span>
                 <span v-if="c.ports?.length"><i>ports</i>{{ c.ports.join(' · ') }}</span>
               </div>
               <div class="proc-actions">
@@ -198,6 +206,7 @@ import { store, appUrlFor } from '../store.js'
 import { api } from '../api.js'
 import { confirmDialog } from '../lib/dialog.js'
 import { bytes, uptimeSince, timeAgo } from '../lib/format.js'
+import { runsSupersededImage } from '../lib/images.js'
 
 // The engine counts only the restarts its own on-failure policy performed, so
 // this is a crash counter, not an activity log: restarting from here recreates
@@ -321,6 +330,7 @@ export default {
             memPercent: limit && c.memory != null
               ? Math.min(100, Math.round((c.memory / (limit * 1024 * 1024)) * 100))
               : null,
+            imageSuperseded: runsSupersededImage(store.live.images, c),
           }
         })
         .sort((a, b) => a.name.localeCompare(b.name))

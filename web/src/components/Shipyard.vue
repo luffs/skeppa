@@ -98,6 +98,11 @@
               <td class="mono" style="font-size: 12.5px">
                 {{ img.tags.length ? img.tags.join(', ') : '(dangling)' }}
                 <span v-if="img.managed" class="chip blue" style="margin-left: 6px">managed</span>
+                <!-- What the tag above does not say: which image this actually
+                     is, and how old this copy of it is. -->
+                <div class="image-facts" v-if="imageFacts(img).length">
+                  <span v-for="fact in imageFacts(img)" :key="fact">{{ fact }}</span>
+                </div>
               </td>
               <td class="mono" style="font-size: 12.5px">{{ bytes(img.size) }}</td>
               <td class="hint" style="font-size: 13px">{{ img.used_by.join(', ') || '—' }}</td>
@@ -210,6 +215,15 @@ export default {
   methods: {
     bytes,
     timeAgo,
+    // Only what this image genuinely carries: most registry images publish no
+    // version label at all, and one built here has no registry digest.
+    imageFacts(img) {
+      const facts = []
+      if (img.version) facts.push(`v${img.version}`)
+      if (img.createdAt) facts.push(`built ${timeAgo(img.createdAt)}`)
+      if (img.digest) facts.push(img.digest.replace(/^sha256:/, '').slice(0, 12))
+      return facts
+    },
     projectLink(slug) {
       const hit = Object.values(store.live.projects ?? {}).find(p => p.info?.slug === slug)
       return hit ? `/projects/${hit.info.id}` : '/'
@@ -339,3 +353,16 @@ export default {
   },
 }
 </script>
+
+<style scoped>
+/* A dim second line inside the image cell: facts about the image itself,
+   subordinate to the reference above them. */
+.image-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: var(--dim);
+}
+</style>

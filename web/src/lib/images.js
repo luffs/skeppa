@@ -74,6 +74,22 @@ export function suggestedImages(images, offered = []) {
   return [...new Set([...fromBases(images), ...COMMON_IMAGES])].filter(ref => !taken.has(ref))
 }
 
+// Engines disagree on whether an image id wears the `sha256:` prefix, so
+// compare the digest itself.
+const bareId = id => String(id ?? '').replace(/^sha256:/, '')
+
+// True when a container is running an image its own tag no longer points at —
+// something pulled or rebuilt the tag underneath it, and a restart would move
+// the app onto the newer image. Both ids have to be known: an engine that
+// listed neither says nothing, and silence must not read as "up to date".
+export function runsSupersededImage(images, container) {
+  const running = bareId(container?.imageId)
+  if (!running) return false
+  const inStore = (images?.local ?? []).find(img => img.tags.includes(container?.image))
+  const current = bareId(inStore?.id)
+  return !!current && current !== running
+}
+
 // A ref in the reserved namespace — built from a Containerfile, never pulled.
 // True even when no definition matches, which is exactly the case worth
 // warning about.

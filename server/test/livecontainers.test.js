@@ -84,6 +84,7 @@ test('joins the listing with per-container stats', async () => {
     restarts: 2,
     pid: 4242,
     image: 'localhost/skeppa/bun:latest',
+    imageId: '',
     state: 'running',
     createdAt: 1_700_000_000_000,
     ports: ['4100/tcp'],
@@ -114,4 +115,17 @@ test('an unreachable engine reports no listing at all, not an empty one', async 
     containers: null,
     error: 'no container engine socket configured',
   })
+})
+
+// The name a container was started from can point at a different image by now.
+// Keeping the id next to it is what lets the client say so.
+test('keeps the exact image id beside the image name', async () => {
+  const { containers } = await collectContainers(fakeEngine([
+    entry('skeppa-app-blog', { Image: 'docker.io/oven/bun:1', ImageID: 'sha256:aaa' }),
+    entry('skeppa-app-old'), // an engine that listed no id says nothing
+  ]))
+
+  expect(containers['skeppa-app-blog'].image).toBe('docker.io/oven/bun:1')
+  expect(containers['skeppa-app-blog'].imageId).toBe('sha256:aaa')
+  expect(containers['skeppa-app-old'].imageId).toBe('')
 })
