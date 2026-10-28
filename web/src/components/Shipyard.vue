@@ -20,13 +20,7 @@
           <div class="proc-title">
             <span class="proc-name">{{ img.name }}</span>
             <span class="proc-tags">
-              <router-link
-                v-for="slug in img.used_by"
-                :key="slug"
-                :to="projectLink(slug)"
-                class="chip"
-                style="cursor: pointer"
-              >{{ slug }} ↗</router-link>
+              <ImageUsers v-if="img.used_by.length" :image-refs="[img.ref]" :slugs="img.used_by" />
               <span v-if="img.exists === false" class="chip amber" title="Not in the engine store — rebuilt automatically when needed">not built</span>
               <StatusBadge v-if="img.last_build_status" :status="img.last_build_status" />
             </span>
@@ -105,7 +99,11 @@
                 </div>
               </td>
               <td class="mono" style="font-size: 12.5px">{{ bytes(img.size) }}</td>
-              <td class="hint" style="font-size: 13px">{{ img.used_by.join(', ') || '—' }}</td>
+              <td style="font-size: 13px">
+                <!-- One row can be the default build image of everything on
+                     the server, so the names collapse behind a count. -->
+                <ImageUsers :image-refs="img.tags" :slugs="img.used_by" />
+              </td>
               <td style="text-align: right; white-space: nowrap">
                 <button
                   v-if="img.tags.length && !img.managed"
@@ -153,6 +151,7 @@
 
 <script>
 import StatusBadge from './StatusBadge.vue'
+import ImageUsers from './ImageUsers.vue'
 import { api } from '../api.js'
 import { confirmDialog } from '../lib/dialog.js'
 import { store } from '../store.js'
@@ -165,7 +164,7 @@ const TEMPLATE = `FROM docker.io/oven/bun:1
 
 export default {
   name: 'Shipyard',
-  components: { StatusBadge },
+  components: { StatusBadge, ImageUsers },
   data() {
     return {
       error: '',
@@ -223,10 +222,6 @@ export default {
       if (img.createdAt) facts.push(`built ${timeAgo(img.createdAt)}`)
       if (img.digest) facts.push(img.digest.replace(/^sha256:/, '').slice(0, 12))
       return facts
-    },
-    projectLink(slug) {
-      const hit = Object.values(store.live.projects ?? {}).find(p => p.info?.slug === slug)
-      return hit ? `/projects/${hit.info.id}` : '/'
     },
     toggle(img) {
       if (this.opened === img.id) {

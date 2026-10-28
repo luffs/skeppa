@@ -12,29 +12,36 @@ import { managedRef, MANAGED_PREFIX } from '../containers/images.js'
 
 const IMAGE_COLUMNS = 'id, name, containerfile, last_built_at, last_build_status'
 
-// Which projects genuinely depend on an image ref. run_image only counts for
-// the container runtime — a pm2 project never reaches resolveRunImage, so a
-// value left behind by a runtime switch is not a use, and counting it would
-// block the delete (and list the project as a user) on behalf of something
-// that cannot run the image. build_image counts unconditionally: the build
-// sandbox is a panel-wide setting that can be turned on without touching the
-// project.
-export function projectsUsing(db, ref) {
+// Which projects genuinely depend on an image ref — the same two questions
+// the deploy itself asks: `build_image || BUILD_IMAGE` for the sandbox
+// (deploy/sandbox.js) and `run_image || build_image || BUILD_IMAGE` for the
+// container (containers/runtime.js resolveRunImage). An empty field is not
+// "no image", it is the default one, so the default has to count the projects
+// that never named it — otherwise the image almost everything builds in is
+// the one listed as used by nobody, and nothing warns before it is deleted.
+// run_image only counts for the container runtime: a pm2 project never
+// reaches resolveRunImage, so a value left behind by a runtime switch is not
+// a use. build_image counts unconditionally — the build sandbox is a
+// panel-wide setting that can be turned on without touching the project.
+export function projectsUsing(db, ref, defaultImage = '') {
+  if (!ref) return []
   return db.query(
     `SELECT slug FROM projects
-     WHERE build_image = ? OR (run_image = ? AND runtime = 'container')`
-  ).all(ref, ref).map(r => r.slug)
+     WHERE COALESCE(NULLIF(build_image, ''), ?) = ?
+        OR (runtime = 'container' AND COALESCE(NULLIF(run_image, ''), NULLIF(build_image, ''), ?) = ?)
+     ORDER BY slug`
+  ).all(defaultImage, ref, defaultImage, ref).map(r => r.slug)
 }
 
 // The DB half: definitions and who uses them. Deliberately no `exists`/`size`
 // — those are engine facts, and a lazy-watch diff cannot carry a null inside
 // an array (the key is simply dropped), so "unknown" would be indistinguishable
 // from "not built". The client joins them against `local` instead.
-export function getManagedImages(db) {
+export function getManagedImages(db, defaultImage = '') {
   return db.query(`SELECT ${IMAGE_COLUMNS} FROM images ORDER BY name`).all().map(row => ({
     ...row,
     ref: managedRef(row.name),
-    used_by: projectsUsing(db, managedRef(row.name)),
+    used_by: projectsUsing(db, managedRef(row.name), defaultImage),
   }))
 }
 
@@ -51,7 +58,7 @@ function repoDigest(img) {
   return (img.RepoDigests ?? []).map(entry => entry.split('@')[1]).find(Boolean) ?? ''
 }
 
-export function toLocalImages(db, list) {
+export function toLocalImages(db, list, defaultImage = '') {
   return list.map(img => {
     const tags = (img.RepoTags ?? []).filter(t => t !== '<none>:<none>')
     return {
@@ -67,7 +74,7 @@ export function toLocalImages(db, list) {
       createdAt: typeof img.Created === 'number' ? img.Created * 1000 : null,
       dangling: tags.length === 0,
       managed: tags.some(t => t.startsWith(MANAGED_PREFIX)),
-      used_by: [...new Set(tags.flatMap(ref => projectsUsing(db, ref)))],
+      used_by: [...new Set(tags.flatMap(ref => projectsUsing(db, ref, defaultImage)))].sort(),
     }
   })
 }
@@ -98,10 +105,15 @@ export function imagesDefaults(db = null, config = {}) {
   }
 }
 
+// The panel's default build image, as LiveState already carries it — so the
+// sync functions below need no config of their own and cannot drift from the
+// value the client is told about.
+const defaultImageOf = liveState => liveState.images?.defaultImage ?? ''
+
 // Definitions only — no engine call. For the things that change `used_by`
 // without touching the image itself: a project created, edited or deleted.
 export function syncManagedImages(db, liveState) {
-  liveState.images.managed = getManagedImages(db)
+  liveState.images.managed = getManagedImages(db, defaultImageOf(liveState))
 }
 
 // Both halves. `engine` may be null (no socket configured), which is reported
@@ -110,7 +122,7 @@ export async function syncImages(db, liveState, engine) {
   const images = liveState.images
   try {
     if (!engine) throw new Error('no container engine socket configured')
-    images.local = toLocalImages(db, await engine.listImages())
+    images.local = toLocalImages(db, await engine.listImages(), defaultImageOf(liveState))
     images.storeListed = true
     images.engineError = ''
   } catch (err) {

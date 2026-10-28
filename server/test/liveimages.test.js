@@ -139,3 +139,59 @@ test('carries the image own identity: digest, build date and version label', asy
   // is falsy either way at the other end.
   expect(built.createdAt).toBeUndefined()
 })
+
+// The panel's default build image is the one nearly every project actually
+// uses, and almost none of them name it — an empty field is not "no image".
+// Counting only the explicit ones left the busiest image in the store listed
+// as used by nobody, with nothing in the way of deleting it.
+test('used_by counts the projects that inherit the default image', async () => {
+  const db = makeDb()
+  const add = (slug, cols) => {
+    const keys = Object.keys(cols)
+    db.query(
+      `INSERT INTO projects (slug, name, repo_full_name, branch, pm2_name${keys.map(k => ', ' + k).join('')})
+       VALUES (?, ?, 'o/r', 'main', ?${keys.map(() => ', ?').join('')})`
+    ).run(slug, slug, slug, ...keys.map(k => cols[k]))
+  }
+  // Names nothing: builds in the default, and runs it too (resolveRunImage
+  // falls through run_image and build_image to the same value).
+  add('inherits', { runtime: 'container' })
+  // A host process still builds in the default — the sandbox is panel-wide.
+  add('pm2-app', { runtime: 'pm2' })
+  // Runs something else, but still builds in the default.
+  add('other-run', { runtime: 'container', run_image: 'docker.io/library/node:22' })
+  // Named the default explicitly: counted once, not twice.
+  add('explicit', { runtime: 'pm2', build_image: 'docker.io/oven/bun:1' })
+  // Builds elsewhere, so the default is nothing to it.
+  add('elsewhere', { runtime: 'pm2', build_image: 'docker.io/library/node:22' })
+  // A run_image left behind by a switch back to pm2 is not a use: nothing
+  // will ever run it, and counting it would block the image's delete.
+  add('switched', { runtime: 'pm2', build_image: 'docker.io/library/node:22', run_image: 'docker.io/oven/bun:1' })
+
+  const liveState = createLiveState()
+  initLiveState(liveState, db, { buildImage: 'docker.io/oven/bun:1' })
+  await syncImages(db, liveState, fakeEngine([
+    { Id: 'sha256:aaa', RepoTags: ['docker.io/oven/bun:1'], Size: 1 },
+    { Id: 'sha256:bbb', RepoTags: ['docker.io/library/node:22'], Size: 1 },
+  ]))
+
+  const byTag = ref => liveState.images.local.find(l => l.tags.includes(ref)).used_by
+  expect(byTag('docker.io/oven/bun:1')).toEqual(['explicit', 'inherits', 'other-run', 'pm2-app'])
+  expect(byTag('docker.io/library/node:22')).toEqual(['elsewhere', 'other-run', 'switched'])
+})
+
+// Without a default configured, an empty field resolves to nothing at all —
+// and must not therefore match every image in the store.
+test('an empty default image matches nothing', async () => {
+  const db = makeDb()
+  db.query(
+    `INSERT INTO projects (slug, name, repo_full_name, branch, pm2_name, runtime)
+     VALUES ('bare', 'Bare', 'o/r', 'main', 'bare', 'container')`
+  ).run()
+  const liveState = createLiveState()
+  initLiveState(liveState, db, {}) // no BUILD_IMAGE
+  await syncImages(db, liveState, fakeEngine([
+    { Id: 'sha256:aaa', RepoTags: ['docker.io/oven/bun:1'], Size: 1 },
+  ]))
+  expect(liveState.images.local[0].used_by).toEqual([])
+})

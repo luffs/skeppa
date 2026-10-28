@@ -110,3 +110,93 @@ describe('the system view flags a container left behind by its tag', () => {
     wrapper.unmount()
   })
 })
+
+// --- who uses an image, and which of them a restart actually moves ----------
+import { imageUsers } from '../src/lib/images.js'
+
+describe('how each project depends on an image', () => {
+  const images = { defaultImage: 'docker.io/oven/bun:1' }
+  const project = (id, slug, info, status = 'online') => ({
+    info: { id, slug, name: slug, build_image: '', run_image: '', deployed_runtime: '', ...info },
+    pm2: { status },
+  })
+  const projects = {
+    1: project(1, 'inherits', { runtime: 'container', deployed_runtime: 'container' }),
+    2: project(2, 'stopped', { runtime: 'container', deployed_runtime: 'container' }, 'stopped'),
+    3: project(3, 'host-app', { runtime: 'pm2', deployed_runtime: 'pm2' }),
+    4: project(4, 'switching', { runtime: 'container', deployed_runtime: 'static' }),
+    5: project(5, 'other-run', { runtime: 'container', deployed_runtime: 'container', run_image: 'docker.io/library/node:22' }),
+  }
+  const of = (slug, refs = ['docker.io/oven/bun:1']) =>
+    imageUsers(images, projects, refs, [slug])[0]
+
+  // Naming nothing means the default twice over: the sandbox builds in it and
+  // resolveRunImage falls through to it.
+  test('an empty field is the default, for both the build and the run', () => {
+    expect(of('inherits')).toMatchObject({ id: 1, builds: true, runs: true, restartable: true })
+  })
+
+  test('a host process only ever builds in it', () => {
+    expect(of('host-app')).toMatchObject({ builds: true, runs: false, restartable: false })
+  })
+
+  // Restart is start-if-stopped, and auto_start follows it — so offering it
+  // for a stopped app would quietly undo someone's decision.
+  test('a stopped container is listed but not restarted', () => {
+    expect(of('stopped')).toMatchObject({ runs: true, restartable: false })
+  })
+
+  // runtime is what the next deploy will do, deployed_runtime what exists:
+  // a project switched to `container` in the form is still a static site
+  // until the deploy, so there is no container to recreate.
+  test('a runtime change that has not deployed yet has nothing to recreate', () => {
+    expect(of('switching')).toMatchObject({ runs: true, restartable: false })
+  })
+
+  test('a run image of its own leaves only the build dependency', () => {
+    expect(of('other-run')).toMatchObject({ builds: true, runs: false, restartable: false })
+    expect(of('other-run', ['docker.io/library/node:22']))
+      .toMatchObject({ builds: false, runs: true, restartable: true })
+  })
+
+  // One store entry can wear several tags, and used_by is the union of them.
+  test('any of the entry tags counts', () => {
+    expect(of('inherits', ['docker.io/library/node:22', 'docker.io/oven/bun:1']).runs).toBe(true)
+  })
+
+  // The server decides who uses an image; a slug this client cannot resolve
+  // is still one of them.
+  test('an unresolvable slug is listed without a claim', () => {
+    expect(imageUsers(images, projects, ['docker.io/oven/bun:1'], ['gone'])[0])
+      .toEqual({ slug: 'gone', id: null, name: 'gone', builds: false, runs: false, restartable: false })
+  })
+})
+
+describe('the Shipyard keeps a long user list out of the way', () => {
+  test('shows a few names, hides the rest behind a count, and offers one restart', async () => {
+    seed()
+    const slugs = ['a-one', 'b-two', 'c-three', 'd-four', 'e-five']
+    store.live.projects = Object.fromEntries(slugs.map((slug, i) => [i + 1, {
+      info: {
+        id: i + 1, slug, name: slug, build_image: '', run_image: '',
+        runtime: 'container', deployed_runtime: 'container',
+      },
+      // Only the first three are running, so only those can be recreated.
+      pm2: { status: i < 3 ? 'online' : 'stopped' },
+    }]))
+    store.live.images.local = [{
+      id: 'sha256:aaa', tags: ['docker.io/oven/bun:1'], size: 1,
+      dangling: false, managed: false, used_by: slugs,
+    }]
+
+    const wrapper = mount(Shipyard, { global: { stubs, mocks } })
+    const cell = wrapper.find('tbody tr td:nth-child(3)')
+    expect(cell.findAll('a.chip')).toHaveLength(3)
+    expect(cell.find('.more').text()).toBe('+2')
+    expect(cell.find('button.secondary').text()).toBe('Restart 3')
+
+    await cell.find('.more').trigger('click')
+    expect(cell.findAll('a.chip')).toHaveLength(5)
+    wrapper.unmount()
+  })
+})

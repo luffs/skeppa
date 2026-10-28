@@ -44,12 +44,12 @@ export function imageRoutes({ db, config, liveState = null, containerClient = nu
   }
 
   app.get('/', async c => {
-    const managed = getManagedImages(db)
+    const managed = getManagedImages(db, config.buildImage)
     let local = []
     let storeListed = false
     let engineError = null
     try {
-      local = toLocalImages(db, await engine().listImages())
+      local = toLocalImages(db, await engine().listImages(), config.buildImage)
       storeListed = true
     } catch (err) {
       engineError = err.message
@@ -105,7 +105,7 @@ export function imageRoutes({ db, config, liveState = null, containerClient = nu
     if (ref.startsWith(MANAGED_PREFIX)) {
       return c.json({ error: 'managed images are removed from their Shipyard card' }, 400)
     }
-    const usedBy = projectsUsing(db, ref)
+    const usedBy = projectsUsing(db, ref, config.buildImage)
     if (usedBy.length) return c.json({ error: `image is used by: ${usedBy.join(', ')}` }, 400)
     try {
       await engine().removeImage(ref)
@@ -178,7 +178,7 @@ export function imageRoutes({ db, config, liveState = null, containerClient = nu
     const image = getImage(c.req.param('id'))
     if (!image) return c.json({ error: 'not found' }, 404)
     const ref = managedRef(image.name)
-    const usedBy = projectsUsing(db, ref)
+    const usedBy = projectsUsing(db, ref, config.buildImage)
     if (usedBy.length) {
       return c.json({ error: `image is used by: ${usedBy.join(', ')}` }, 400)
     }

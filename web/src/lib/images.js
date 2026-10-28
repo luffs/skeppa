@@ -97,3 +97,42 @@ export function isManagedRef(images, ref) {
   const prefix = images?.managedPrefix
   return !!prefix && typeof ref === 'string' && ref.startsWith(prefix)
 }
+
+// How each project in an image's `used_by` list depends on it. The server
+// decides *who* uses an image (live/images.js projectsUsing, the same list
+// that gates the delete); this reads the same two fields to say *how*, which
+// is what tells a restart ("recreate the container on the image in the store")
+// apart from a deploy (the only thing that re-runs a build in a new sandbox).
+// An empty field means the panel default, exactly as the server reads it.
+export function imageUsers(images, projects, refs, slugs) {
+  const bySlug = new Map(
+    Object.values(projects ?? {}).filter(p => p?.info?.slug).map(p => [p.info.slug, p])
+  )
+  const fallback = images?.defaultImage ?? ''
+  // One entry in the engine's store can wear several tags, and the server's
+  // `used_by` is the union over all of them, so "how" is asked of the set.
+  const wanted = new Set((refs ?? []).filter(Boolean))
+  return (slugs ?? []).map(slug => {
+    const live = bySlug.get(slug)
+    const info = live?.info
+    // A slug with no project in the mirror is still a user the server counted
+    // — list it, say nothing about it.
+    if (!info) return { slug, id: null, name: slug, builds: false, runs: false, restartable: false }
+    const runs = info.runtime === 'container' && wanted.has(info.run_image || info.build_image || fallback)
+    return {
+      slug,
+      id: info.id,
+      name: info.name,
+      builds: wanted.has(info.build_image || fallback),
+      runs,
+      // Restart is a recreate, so it is how a container moves onto a newly
+      // pulled image — but only one that is a container *now*
+      // (deployed_runtime is what exists, runtime what the next deploy will
+      // do) and is actually running: restarting would also start, and silently
+      // undo, something that was deliberately stopped.
+      restartable: runs
+        && (info.deployed_runtime || info.runtime) === 'container'
+        && live.pm2?.status === 'online',
+    }
+  })
+}
