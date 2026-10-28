@@ -3,11 +3,12 @@ import { Database } from 'bun:sqlite'
 import { fileURLToPath } from 'node:url'
 import { LazyWatch } from 'lazy-watch'
 import { createHub } from 'lazy-storage/server'
-import { assertModel, registerSet } from 'lazy-storage/core'
 import { createNetwork } from 'lazy-storage/testing'
 import { migrate } from '../src/db/migrate.js'
 import { createLiveState, initLiveState, projectDefaults, getProjectInfo } from '../src/live/state.js'
-import { createLiveStores, canOpenStore, FLEET_REGISTERS, PANEL_REGISTERS } from '../src/live/stores.js'
+import { createLiveStores, canOpenStore, STORE_SHAPES } from '../src/live/stores.js'
+import { createLiveTransport } from '../src/live/transport.js'
+import { createSession, COOKIE_NAME } from '../src/auth/sessions.js'
 
 // LiveState served as lazy-storage stores (live/stores.js): the layout that
 // replaces the Hub's per-socket scoping, and the bridge that keeps the
@@ -131,16 +132,18 @@ test('who may open what', () => {
   expect(canOpenStore(null, 'harbor')).toBe(false)
 })
 
-test('every array of records LiveState carries is a declared register', () => {
-  const { liveState } = setup()
-  liveState.system.containers.x = { state: 'running', image: 'i', ports: ['4101->3000/tcp'] }
-  liveState.images.local = [{ id: 'sha', tags: ['a:1'], size: 1, createdAt: 'x', managed: false }]
-  liveState.images.managed = [{ name: 'n', ref: 'r', used_by: [] }]
-  liveState.projects[1].recentDeployments = [{ id: 1, status: 'success' }]
-  const regs = registerSet([...FLEET_REGISTERS, ...PANEL_REGISTERS])
-  // the library's own model check: throws on an undeclared array of objects
-  expect(() => assertModel(LazyWatch.snapshot(liveState), regs)).not.toThrow()
-  expect(() => assertModel({ projects: { 1: { recentDeployments: [{ id: 1 }] } } }, registerSet([]))).toThrow()
+// A store is collections of records and singletons, and a client that
+// declares a different top level is answered with `shape-mismatch` — so the
+// copy in web/src/live.js has to follow a change here. `users` and
+// `projects` are keyed sets of records; the rest are one record each, and
+// `lines` could not be a collection at all since its values are strings.
+test('the declared store shapes are the ones the client mirrors', () => {
+  expect(STORE_SHAPES).toEqual({
+    panel: { initial: { system: {}, users: {}, images: {} }, singletons: ['system', 'images'] },
+    harbor: { initial: { proxy: {} }, singletons: ['proxy'] },
+    fleet: { initial: { projects: {} }, singletons: [] },
+    deploy: { initial: { lines: {} }, singletons: ['lines'] },
+  })
 })
 
 // Through lazy-storage's own hub and an in-memory network: what a browser
@@ -150,11 +153,13 @@ test('a tenant mirror follows its own fleet, is refused the rest, and cannot wri
   const net = createNetwork({
     session: ({ send, user }) => createHub(id => live.get(id), { send, user, authorize: live.canOpen }),
   })
-  const mirror = opts => ({ initial: { projects: {} }, undo: false, presence: false, ...opts })
-  const mine = net.client(mirror({ store: 'fleet-2', registers: FLEET_REGISTERS }), { user: bob })
-  const theirs = net.client(mirror({ store: 'fleet-1', registers: FLEET_REGISTERS }), { user: bob })
-  const panel = net.client(mirror({ store: 'panel', initial: {}, registers: PANEL_REGISTERS }), { user: bob })
-  const harbor = net.client(mirror({ store: 'harbor', initial: { proxy: {} }, registers: [] }), { user: bob })
+  // Every client declares the store's shape as the server does, or it is
+  // answered with shape-mismatch instead of the store.
+  const mirror = opts => ({ ...STORE_SHAPES.fleet, undo: false, presence: false, ...opts })
+  const mine = net.client(mirror({ store: 'fleet-2' }), { user: bob })
+  const theirs = net.client(mirror({ store: 'fleet-1' }), { user: bob })
+  const panel = net.client(mirror({ store: 'panel', ...STORE_SHAPES.panel }), { user: bob })
+  const harbor = net.client(mirror({ store: 'harbor', ...STORE_SHAPES.harbor }), { user: bob })
   await net.settle()
 
   expect(Object.keys(mine.state.projects)).toEqual(['2'])
@@ -198,7 +203,7 @@ test('a running deployment is a store: owner-gated, the backlog on open, lines a
   const net = createNetwork({
     session: ({ send, user }) => createHub(id => live.get(id), { send, user, authorize: live.canOpen }),
   })
-  const follow = (store, user) => net.client({ store, initial: { lines: {} }, undo: false, presence: false }, { user })
+  const follow = (store, user) => net.client({ store, ...STORE_SHAPES.deploy, undo: false, presence: false }, { user })
   const theirs = follow('deploy-1', bob)
   const mine = follow('deploy-2', bob)
   const admins = follow('deploy-1', admin)
@@ -226,7 +231,7 @@ test('the admin opens every fleet; a project created later shows up in the right
   const net = createNetwork({
     session: ({ send, user }) => createHub(id => live.get(id), { send, user, authorize: live.canOpen }),
   })
-  const open = store => net.client({ store, initial: { projects: {} }, registers: FLEET_REGISTERS, undo: false, presence: false }, { user: admin })
+  const open = store => net.client({ store, ...STORE_SHAPES.fleet, undo: false, presence: false }, { user: admin })
   const fleet1 = open('fleet-1')
   const fleet2 = open('fleet-2')
   await net.settle()
@@ -253,7 +258,7 @@ test('a project that changes hands leaves the old fleet and arrives whole in the
   const net = createNetwork({
     session: ({ send, user }) => createHub(id => live.get(id), { send, user, authorize: live.canOpen }),
   })
-  const follow = (store, user) => net.client({ store, initial: { projects: {} }, registers: FLEET_REGISTERS, mirror: true }, { user })
+  const follow = (store, user) => net.client({ store, ...STORE_SHAPES.fleet, mirror: true }, { user })
   const bobsFleet = follow('fleet-2', bob)
   const capsFleet = follow('fleet-1', admin)
   await net.settle()
@@ -269,4 +274,63 @@ test('a project that changes hands leaves the old fleet and arrives whole in the
   expect(moved.pm2.status).toBe('online') // not just the fields that changed
   expect(moved.recentDeployments.map(d => d.id)).toEqual([7])
   expect(Object.keys(capsFleet.state.projects).sort()).toEqual(['1', '2'])
+})
+
+// The tests above build their hub with `authorize: live.canOpen` themselves;
+// this one goes through transport.js, the wiring the server actually runs —
+// session cookie → user → canOpen. A store at 64 KB or more reaches a browser
+// over this HTTP route rather than the socket, and a deploy log echoes ENV
+// values, so the route has to refuse exactly what the socket refuses.
+test('the snapshot route authenticates by session cookie and authorizes per store', async () => {
+  const { db, live } = setup({
+    // wired exactly as index.js wires it
+    canReadDeployment: (user, deploymentId) => {
+      if (user.role === 'admin') return true
+      const row = db.query('SELECT p.owner_id FROM deployments d JOIN projects p ON p.id = d.project_id WHERE d.id = ?').get(deploymentId)
+      return row?.owner_id === user.id
+    },
+  })
+  db.query(`INSERT INTO deployments (project_id, "trigger", log) VALUES (1, 'manual', '')`).run() // the admin's, id 1
+  db.query(`INSERT INTO deployments (project_id, "trigger", log) VALUES (2, 'manual', '')`).run() // bob's, id 2
+  live.openLog(1)
+  live.appendLog(1, 'ADMIN_SECRET=x')
+  live.openLog(2)
+  live.appendLog(2, 'building')
+
+  const transport = createLiveTransport({ db, liveStores: live })
+  const cookies = {
+    admin: `${COOKIE_NAME}=${createSession(db, 1)}`,
+    bob: `${COOKIE_NAME}=${createSession(db, 2)}`,
+    anon: null,
+    stale: `${COOKIE_NAME}=${'0'.repeat(64)}`,
+  }
+  const status = async (who, path) => {
+    const headers = cookies[who] ? { cookie: cookies[who] } : {}
+    const res = await transport.upgrade(new Request(`http://panel${path}`, { headers }), {})
+    return res?.status ?? res
+  }
+
+  // No session, or one that does not exist: nothing at all.
+  expect(await status('anon', '/live/snapshot/harbor')).toBe(401)
+  expect(await status('stale', '/live/snapshot/harbor')).toBe(401)
+
+  // A tenant: harbor and their own fleet and deploy log, nothing else.
+  expect(await status('bob', '/live/snapshot/harbor')).toBe(200)
+  expect(await status('bob', '/live/snapshot/fleet-2')).toBe(200)
+  expect(await status('bob', '/live/snapshot/deploy-2')).toBe(200)
+  expect(await status('bob', '/live/snapshot/panel')).toBe(403)
+  expect(await status('bob', '/live/snapshot/fleet-1')).toBe(403)
+  expect(await status('bob', '/live/snapshot/deploy-1')).toBe(403)
+
+  // The admin opens everything — and the body is the store.
+  for (const id of ['panel', 'harbor', 'fleet-1', 'fleet-2', 'deploy-1', 'deploy-2']) {
+    expect(await status('admin', `/live/snapshot/${id}`)).toBe(200)
+  }
+  const body = await (await transport.upgrade(
+    new Request('http://panel/live/snapshot/deploy-1', { headers: { cookie: cookies.admin } }), {}
+  )).json()
+  expect(Object.values(body.state.lines)).toEqual(['ADMIN_SECRET=x'])
+
+  // Anything outside /live is Hono's.
+  expect(await status('admin', '/api/projects')).toBeNull()
 })

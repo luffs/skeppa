@@ -10,22 +10,22 @@
         "eslint": "^10.8.1",
         "eslint-plugin-vue": "^10.10.0",
         "globals": "^17.11.0",
-        "lazy-storage": "0.11.0",
+        "lazy-storage": "1.0.3",
       },
     },
     "server": {
       "name": "@skeppa/server",
       "dependencies": {
         "hono": "^4.6.0",
-        "lazy-storage": "0.11.0",
-        "lazy-watch": "^6.2.1",
+        "lazy-storage": "1.0.3",
+        "lazy-watch": "^7.0.2",
       },
     },
     "web": {
       "name": "@skeppa/web",
       "dependencies": {
-        "lazy-storage": "0.11.0",
-        "lazy-watch": "^6.2.1",
+        "lazy-storage": "1.0.3",
+        "lazy-watch": "^7.0.2",
         "vue": "^3.5.41",
         "vue-router": "^5.2.0",
       },
@@ -315,9 +315,9 @@
 
     "keyv": ["keyv@4.5.4", "", { "dependencies": { "json-buffer": "3.0.1" } }, "sha512-oxVHkHR/EJf2CNXnWxRLW6mg7JyCCUcG0DtEGmL2ctUo1PNTin1PUil+r/+4r5MpVgC/fn1kjsx7mjSujKqIpw=="],
 
-    "lazy-storage": ["lazy-storage@0.11.0", "", { "dependencies": { "lazy-watch": "^6.2.1" }, "peerDependencies": { "react": ">=18", "vue": ">=3.2", "ws": ">=8" }, "optionalPeers": ["react", "vue", "ws"] }, "sha512-qVh3ahNGgDrixhFYA9L1Jk3+t+4FRp5qfRdv5MmlyuhoFPF0yiBfrCRcG6Xc9KFxgv4bmpauy8QRcRZFSghJHg=="],
+    "lazy-storage": ["lazy-storage@1.0.3", "", { "dependencies": { "lazy-watch": "^7.0.2" }, "peerDependencies": { "react": ">=18", "vue": ">=3.2", "ws": ">=8" }, "optionalPeers": ["react", "vue", "ws"] }, "sha512-RTVkSseiH4J6foRWQZHOboKIyxUMjThquV56VwmDGzRzILrHjWta39+NgX74SqaHpZNX/cPBSpFDAhCjgJxoSA=="],
 
-    "lazy-watch": ["lazy-watch@6.2.1", "", {}, "sha512-RRe1iPFWl5MK068lPr/WnGry3fLN+saMhDXv8rlIy6IDdSj2u+n+x4M2qoJgXyllbEvRvxCXtr+uWMB/vOiE0Q=="],
+    "lazy-watch": ["lazy-watch@7.0.2", "", {}, "sha512-7Od1btkMycaIT42jz0AiV3zwOt+C1tTmot43ADjzV4PyLElPdx6u9hPl7+Jydj/FGYf7tLyBGiIl7vYttPa2wA=="],
 
     "levn": ["levn@0.4.1", "", { "dependencies": { "prelude-ls": "^1.2.1", "type-check": "~0.4.0" } }, "sha512-+bT2uH4E5LGE7h/n3evcS/sQlJXCpIp6ym8OWJ5eV6+67Dsql/LaaT7qJBAt2rzfoa/5QBGBhxDix1dMt2kQKQ=="],
 

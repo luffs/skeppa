@@ -52,16 +52,19 @@ const connection = createConnection({
 connection.on('status', status => console.log(`# socket ${status}`))
 connection.on('closed', closed => closed && console.log(`# socket closed: ${closed.code} ${closed.message}`))
 
-// Each kind of store declares its arrays of records (server/src/live/stores.js)
-const registersFor = id => {
-  if (id === 'panel') return ['images/managed', 'images/local']
-  if (id.startsWith('fleet-')) return ['projects/*/recentDeployments']
-  return [] // harbor, deploy-<id>
+// Every client declares the store's top level as the server declares it
+// (server/src/live/stores.js STORE_SHAPES), or it is answered with
+// `shape-mismatch` instead of the store.
+const shapeFor = id => {
+  if (id === 'panel') return { initial: { system: {}, users: {}, images: {} }, singletons: ['system', 'images'] }
+  if (id === 'harbor') return { initial: { proxy: {} }, singletons: ['proxy'] }
+  if (id.startsWith('fleet-')) return { initial: { projects: {} }, singletons: [] }
+  return { initial: { lines: {} }, singletons: ['lines'] } // deploy-<id>
 }
 
 let pendingSnapshots = wanted.length
 for (const id of wanted) {
-  const db = createClient({ connection, store: id, initial: {}, registers: registersFor(id), undo: false, presence: false })
+  const db = createClient({ connection, store: id, ...shapeFor(id), undo: false, presence: false })
   db.on('closed', closed => {
     console.log(`# ${id}: closed — ${closed.code}: ${closed.message}`)
     if (once && --pendingSnapshots === 0) process.exit(0)

@@ -20,10 +20,17 @@ import { api } from './api.js'
 // A running deployment's log is a store of its own, deploy-<id>, on the same
 // socket (subscribeLogs below).
 
-// Arrays of records travel as whole values and both sides declare them; the
-// server reports a mismatch on every snapshot.
-export const FLEET_REGISTERS = ['projects/*/recentDeployments']
-export const PANEL_REGISTERS = ['images/managed', 'images/local']
+// The store shapes, declared exactly as the server declares them
+// (server/src/live/stores.js STORE_SHAPES, where a test pins them): a client
+// whose top level differs is answered with `shape-mismatch` instead of the
+// store. `users` and `projects` are collections of records keyed by id; the
+// rest are one record each, `lines` necessarily so — its values are strings.
+export const SHAPES = {
+  panel: { initial: { system: {}, users: {}, images: {} }, singletons: ['system', 'images'] },
+  harbor: { initial: { proxy: {} }, singletons: ['proxy'] },
+  fleet: { initial: { projects: {} }, singletons: [] },
+  deploy: { initial: { lines: {} }, singletons: ['lines'] },
+}
 
 const panel = reactive({ system: {}, users: {}, images: {} })
 const harbor = reactive({ proxy: {} })
@@ -52,9 +59,9 @@ function refreshReady() {
   store.ready = clients.size > 0 && [...clients.keys()].every(id => online.has(id))
 }
 
-function open(id, initial, registers, mirror, onBatch = () => {}) {
+function open(id, shape, mirror, onBatch = () => {}) {
   if (clients.has(id)) return
-  const db = createClient({ connection, store: id, initial, registers, mirror: true })
+  const db = createClient({ connection, store: id, ...shape, mirror: true })
   clients.set(id, db)
   db.watch(diff => {
     LazyWatch.patch(mirror, diff)
@@ -97,7 +104,7 @@ function syncFleets(ids) {
   for (const id of wanted) {
     if (fleets[id]) continue
     fleets[id] = reactive({ projects: {} })
-    open(`fleet-${id}`, { projects: {} }, FLEET_REGISTERS, fleets[id])
+    open(`fleet-${id}`, SHAPES.fleet, fleets[id])
   }
   refreshReady()
 }
@@ -118,7 +125,7 @@ export function subscribeLogs(deploymentId, fn) {
       console.warn(`live: not connected — no log stream for deployment ${deploymentId}`)
       return () => {}
     }
-    const db = createClient({ connection, store: `deploy-${deploymentId}`, initial: { lines: {} }, mirror: true })
+    const db = createClient({ connection, store: `deploy-${deploymentId}`, ...SHAPES.deploy, mirror: true })
     entry = { db, listeners: new Set(), seen: new Set(), synced: false }
     logClients.set(deploymentId, entry)
     const emit = event => {
@@ -165,9 +172,9 @@ export function connectLive() {
   connection.on('closed', closed => {
     if (closed?.code === 'unauthorized') api.onUnauthorized?.()
   })
-  open('harbor', { proxy: {} }, [], harbor)
+  open('harbor', SHAPES.harbor, harbor)
   if (store.user.role === 'admin') {
-    open('panel', { system: {}, users: {}, images: {} }, PANEL_REGISTERS, panel, db => syncFleets(Object.keys(db.state.users ?? {})))
+    open('panel', SHAPES.panel, panel, db => syncFleets(Object.keys(db.state.users ?? {})))
   } else {
     syncFleets([store.user.id])
   }

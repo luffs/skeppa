@@ -1,6 +1,6 @@
 import { LazyWatch } from 'lazy-watch'
 import { createStore } from 'lazy-storage/server'
-import { setAt, valueAt } from 'lazy-storage/core'
+import { valueAt } from 'lazy-storage/core'
 
 // LiveState, served as lazy-storage stores.
 //
@@ -27,13 +27,20 @@ import { setAt, valueAt } from 'lazy-storage/core'
 // the API from then on. Deploy logs echo ENV values, so who may open one is
 // the caller's rule (index.js: admins, or the project's owner).
 
-// Arrays of records travel as whole values and must be declared; an
-// undeclared one is refused by the store. Primitive arrays (loadavg, a
-// container's ports, an image's tags) may sit anywhere. A client opening a
-// store declares the same list, or the server reports a mismatch.
-export const FLEET_REGISTERS = ['projects/*/recentDeployments']
-export const PANEL_REGISTERS = ['images/managed', 'images/local']
-export const HARBOR_REGISTERS = []
+// A store is collections of records and singletons, and both sides declare
+// the same top level or the server answers `shape-mismatch`. `users` and
+// `projects` are collections — records keyed by id, added and deleted on
+// their own. `system`, `images`, `proxy` and a deploy log's `lines` are one
+// record each: a bag of fields, not a keyed set, and `lines` could not be a
+// collection at all since its values are strings. The client declares the
+// same (web/src/live.js) — arrays need no declaration of their own, an array
+// being a leaf written whole.
+export const STORE_SHAPES = {
+  panel: { initial: { system: {}, users: {}, images: {} }, singletons: ['system', 'images'] },
+  harbor: { initial: { proxy: {} }, singletons: ['proxy'] },
+  fleet: { initial: { projects: {} }, singletons: [] },
+  deploy: { initial: { lines: {} }, singletons: ['lines'] },
+}
 
 const FLEET_ID = /^fleet-\d+$/
 const DEPLOY_ID = /^deploy-(\d+)$/
@@ -48,10 +55,9 @@ export function canOpenStore(user, id) {
   return id === fleetId(user.id)
 }
 
-function mirrorStore(initial, registers) {
+function mirrorStore(shape) {
   return createStore({
-    initial,
-    registers,
+    ...shape,
     readOnly: true, // clients only read; an op a client sends is refused and it resyncs
     rateLimit: false,
   })
@@ -91,11 +97,11 @@ export function createLiveStores({
     stores.set(id, store)
     return store
   }
-  add('panel', mirrorStore({ system: {}, users: {}, images: {} }, PANEL_REGISTERS))
-  add('harbor', mirrorStore({ proxy: {} }, HARBOR_REGISTERS))
+  add('panel', mirrorStore(STORE_SHAPES.panel))
+  add('harbor', mirrorStore(STORE_SHAPES.harbor))
 
   const ensureFleet = ownerId =>
-    stores.get(fleetId(ownerId)) ?? add(fleetId(ownerId), mirrorStore({ projects: {} }, FLEET_REGISTERS))
+    stores.get(fleetId(ownerId)) ?? add(fleetId(ownerId), mirrorStore(STORE_SHAPES.fleet))
 
   function dropFleet(ownerId) {
     const store = stores.get(fleetId(ownerId))
@@ -120,35 +126,32 @@ export function createLiveStores({
     return LazyWatch.isProxy(value) ? LazyWatch.snapshot(value) : value
   }
 
-  // patchFrom takes the batch as lazy-watch emitted it — array fragments are
-  // replaced with the whole arrays read from LiveState (every store's tree
-  // is a subtree of it at the same paths) — and patches as the server, which
-  // is the authority: a record recreated under a deleted key (a container
-  // after a deploy, a pm2 process started again by hand) lands, and nothing
-  // here should ever be refused. Should the merge refuse a leaf anyway, the
-  // store would sit silently behind LiveState for good (the next batch only
-  // carries what changed since), so it is written again from the live value
-  // on the next turn, and reported if that keeps failing.
-  function write(id, diff, attempt = 0) {
+  // lazy-watch records an array edit as a fragment (a `$splice`, a length, a
+  // handful of indices) and a store takes an array whole, so every array goes
+  // in as it stands: each store's tree is a subtree of LiveState at the same
+  // paths, so wherever the live value is an array it replaces what the diff
+  // holds there, and how LiveState edited it stops mattering at the wire.
+  function wholeArrays(node, path) {
+    if (node === null || typeof node !== 'object') return node
+    if (Array.isArray(valueAt(liveState, path))) return current(path)
+    if (Array.isArray(node)) return node // already whole, with nothing live behind it
+    const out = {}
+    for (const [key, value] of Object.entries(node)) out[key] = wholeArrays(value, [...path, key])
+    return out
+  }
+
+  // The server's own write: stamped now and applied without checks, so a
+  // record recreated under a deleted key (a container after a deploy, a pm2
+  // process started again by hand) lands, and nothing here is ever refused.
+  // LiveState is the authority and this only carries it across.
+  function write(id, diff) {
     const store = stores.get(id)
     if (!store) return
-    let result
     try {
-      result = store.patchFrom(diff, liveState)
+      store.patch(wholeArrays(diff, []))
     } catch (err) {
       onError(new Error(`live store ${id}: ${err.message}`, { cause: err }))
-      return
     }
-    if (!result.rejected.length) return
-    if (attempt >= 3) {
-      onError(new Error(`live store ${id}: gave up on ${result.rejected.map(p => p.join('/')).join(', ')}`))
-      return
-    }
-    setTimeout(() => {
-      const repair = {}
-      for (const path of result.rejected) setAt(repair, path, current(path))
-      write(id, repair, attempt + 1)
-    }, 2)
   }
 
   function route(diff) {
@@ -222,7 +225,7 @@ export function createLiveStores({
   // --- deploy logs -----------------------------------------------------------
   function openLog(deploymentId) {
     if (logs.has(deploymentId)) return
-    const store = mirrorStore({ lines: {} }, [])
+    const store = mirrorStore(STORE_SHAPES.deploy)
     add(deployStoreId(deploymentId), store)
     logs.set(deploymentId, { store, seq: 0 })
   }
