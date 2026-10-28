@@ -1,30 +1,31 @@
 <template>
-  <span class="image-users" v-if="users.length">
-    <router-link
-      v-for="u in shown"
-      :key="u.slug"
-      :to="u.id ? `/projects/${u.id}` : '/'"
-      class="chip"
-      :title="roleOf(u)"
-    >{{ u.slug }} ↗</router-link>
+  <div class="image-users">
+<!-- Only the projects that actually run the image. A project that merely
+         builds in it says nothing about what is running, and listing every one
+         of them buried the few lines that did. -->
+    <div class="user" v-for="u in runners" :key="u.slug" :class="{ off: !u.restartable }">
+      <router-link :to="u.id ? `/projects/${u.id}` : '/'" class="name mono">{{ u.slug }} ↗</router-link>
+      <span class="state" :class="{ stale: u.imageState === 'stale' }">{{ stateOf(u) }}</span>
+      <span class="reason">{{ u.reason }}</span>
+    </div>
 
-    <!-- The count only appears once the list is long enough to be in the way;
-         a handful of names is more useful than a number that hides them. -->
-    <button v-if="hidden" class="more" @click="expanded = !expanded">
-      {{ expanded ? 'show fewer' : `+${hidden}` }}
-    </button>
+    <!-- The rest, accounted for in one line so the count in the row above
+         still adds up. -->
+    <p class="rest" v-if="buildOnly.length">
+      {{ buildOnly.length }} {{ buildOnly.length === 1 ? 'other only builds' : 'others only build' }} in it
+    </p>
 
-    <button
-      v-if="restartable.length"
-      class="secondary small"
-      :disabled="busy"
-      :title="`Recreate ${restartable.map(u => u.slug).join(', ')} on the image now in the store`"
-      @click="restartAll"
-    >{{ busy ? 'Restarting…' : `Restart ${restartable.length}` }}</button>
-
-    <span v-if="note" class="hint">{{ note }}</span>
-  </span>
-  <span v-else class="hint">—</span>
+    <div class="foot">
+      <button
+        v-if="target.list.length"
+        class="secondary small"
+        :disabled="busy"
+        :title="`Recreate ${target.list.map(u => u.slug).join(', ')} on the image now in the store`"
+        @click="restart"
+      >{{ busy ? 'Restarting…' : target.label }}</button>
+      <span v-if="note" class="hint">{{ note }}</span>
+    </div>
+  </div>
 </template>
 
 <script>
@@ -32,9 +33,6 @@ import { api } from '../api.js'
 import { confirmDialog } from '../lib/dialog.js'
 import { store } from '../store.js'
 import { imageUsers } from '../lib/images.js'
-
-// How many names fit before a count serves better than the list.
-const SHOWN = 3
 
 export default {
   name: 'ImageUsers',
@@ -46,40 +44,50 @@ export default {
     slugs: { type: Array, default: () => [] },
   },
   data() {
-    return { expanded: false, busy: false, note: '' }
+    return { busy: false, note: '' }
   },
   computed: {
     users() {
-      return imageUsers(store.live.images, store.live.projects, this.imageRefs, this.slugs)
+      return imageUsers(store.live, this.imageRefs, this.slugs)
     },
-    shown() {
-      return this.expanded ? this.users : this.users.slice(0, SHOWN)
+    runners() {
+      return this.users.filter(u => u.runs)
     },
-    hidden() {
-      return Math.max(0, this.users.length - SHOWN)
+    buildOnly() {
+      return this.users.filter(u => !u.runs)
     },
-    // Only the ones a restart actually moves onto the new image. Everything
-    // else in the list either builds in the image (a deploy's job) or is not
-    // running, and offering one button for all of them would promise what it
-    // cannot do.
-    restartable() {
-      return this.users.filter(u => u.restartable)
+    // What a restart here is for, in three cases. Containers the engine says
+    // are behind the store are the whole point, so they win — and the button
+    // disappears as they are dealt with. When the engine cannot say (no image
+    // id, or a tag the store does not list), the blunt "everything running"
+    // stays on offer: silence is not permission to hide the action. When it
+    // can say and nothing is behind, there is nothing to do.
+    target() {
+      const restartable = this.users.filter(u => u.restartable)
+      const stale = restartable.filter(u => u.imageState === 'stale')
+      if (stale.length) return { list: stale, label: `Restart outdated (${stale.length})` }
+      if (restartable.some(u => u.imageState === 'unknown')) {
+        return { list: restartable, label: `Restart running (${restartable.length})` }
+      }
+      return { list: [], label: '' }
     },
   },
   methods: {
-    roleOf(u) {
-      if (u.builds && u.runs) return 'Builds and runs in this image'
-      if (u.runs) return 'Runs in this image'
-      if (u.builds) return 'Builds in this image — a deploy is what picks a new one up'
-      return 'Uses this image'
+    // Only the drift, and only when the engine could actually tell: an empty
+    // cell here says "no claim", never "up to date".
+    stateOf(u) {
+      if (u.imageState === 'stale') return 'behind the store'
+      if (u.imageState === 'current') return 'up to date'
+      return ''
     },
     // Restart is recreate (deploy/control.js), so this is the panel's way of
     // saying "run on what the store holds now". One request per project, in
     // order: a bulk endpoint would hide which of them failed.
-    async restartAll() {
-      const names = this.restartable.map(u => u.slug)
+    async restart() {
+      const list = this.target.list
+      const names = list.map(u => u.slug)
       const ok = await confirmDialog(
-        `Restart ${names.length} running container${names.length === 1 ? '' : 's'} (${names.join(', ')}) ` +
+        `Restart ${names.length} container${names.length === 1 ? '' : 's'} (${names.join(', ')}) ` +
         `on the current ${this.imageRefs.join(', ') || 'image'}?`,
         { confirmLabel: 'Restart' }
       )
@@ -87,7 +95,7 @@ export default {
       this.busy = true
       this.note = ''
       const failed = []
-      for (const u of this.restartable) {
+      for (const u of list) {
         try {
           await api.post(`/api/projects/${u.id}/pm2/restart`)
         } catch (err) {
@@ -104,28 +112,47 @@ export default {
 </script>
 
 <style scoped>
-/* Inline and wrapping, so the same element works inside a table cell and in
-   the flex row of chips on an image card. */
+/* The grid lives on the list, not on each project, so the tracks are sized
+   once across every row — a grid per row sizes its own max-content columns
+   and the list comes out ragged. Hence `display: contents` below: each
+   project's four cells become direct children of this grid. */
 .image-users {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
+  display: grid;
+  grid-template-columns: minmax(140px, max-content) max-content 1fr;
+  gap: 2px 16px;
+  align-items: baseline;
+  padding: 4px 0 2px;
+  font-size: 12.5px;
 }
+.user { display: contents; }
+.user > * { padding: 3px 0; }
+/* A restart cannot help this one — it is still a user of the image, and still
+   a link, just not something the button below will touch. The dimming goes on
+   the cells because `display: contents` leaves the row itself no box. */
+.user.off > * { opacity: 0.55; }
 
-/* A count that reads as part of the chip row rather than as another button. */
-.more {
-  padding: 3px 9px;
-  border-radius: 999px;
-  border: 1px dashed var(--line);
-  background: none;
-  color: var(--dim);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
+.name { white-space: nowrap; }
+.reason, .state { color: var(--dim); }
+.rest { grid-column: 1 / -1; margin: 4px 0 0; color: var(--dim); }
+.state.stale { color: var(--amber); font-weight: 600; }
+
+.foot {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
 }
-.more:hover { color: var(--ink); border-color: var(--dim); }
-.image-users a.chip,
-.more { cursor: pointer; }
+.foot:empty { display: none; }
+
+@media (max-width: 620px) {
+  /* No room for four columns; each project becomes a small block instead, and
+     the rows go back to carrying their own box so the dimming has something
+     to sit on. */
+  .image-users { display: block; }
+  .user { display: block; padding: 6px 0; }
+  .user > * { display: block; padding: 0; }
+  .user.off { opacity: 0.55; }
+  .user.off > * { opacity: 1; }
+}
 </style>

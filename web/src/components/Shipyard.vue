@@ -20,7 +20,8 @@
           <div class="proc-title">
             <span class="proc-name">{{ img.name }}</span>
             <span class="proc-tags">
-              <ImageUsers v-if="img.used_by.length" :image-refs="[img.ref]" :slugs="img.used_by" />
+              <UsedBySummary :counts="counts([img.ref], img.used_by)" :open="usersOpen === `m${img.id}`"
+                @toggle="toggleUsers(`m${img.id}`)" />
               <span v-if="img.exists === false" class="chip amber" title="Not in the engine store — rebuilt automatically when needed">not built</span>
               <StatusBadge v-if="img.last_build_status" :status="img.last_build_status" />
             </span>
@@ -31,6 +32,9 @@
           </div>
           <div class="proc-meta">
             <span class="proc-image"><i>ref</i>{{ img.ref }}</span>
+          </div>
+          <div class="proc-users" v-if="usersOpen === `m${img.id}`">
+            <ImageUsers :image-refs="[img.ref]" :slugs="img.used_by" />
           </div>
           <div class="proc-actions">
             <button class="secondary" @click="toggle(img)">{{ opened === img.id ? 'Close' : 'Edit' }}</button>
@@ -88,7 +92,8 @@
             <tr><th>Image</th><th>Size</th><th>Used by</th><th></th></tr>
           </thead>
           <tbody>
-            <tr v-for="img in localImages" :key="img.id">
+            <template v-for="img in localImages" :key="img.id">
+            <tr>
               <td class="mono" style="font-size: 12.5px">
                 {{ img.tags.length ? img.tags.join(', ') : '(dangling)' }}
                 <span v-if="img.managed" class="chip blue" style="margin-left: 6px">managed</span>
@@ -100,9 +105,12 @@
               </td>
               <td class="mono" style="font-size: 12.5px">{{ bytes(img.size) }}</td>
               <td style="font-size: 13px">
-                <!-- One row can be the default build image of everything on
-                     the server, so the names collapse behind a count. -->
-                <ImageUsers :image-refs="img.tags" :slugs="img.used_by" />
+                <!-- One row can be the default build image of every project on
+                     the server, so the row only counts them; the list opens
+                     underneath, where it has the width to say something about
+                     each one. -->
+                <UsedBySummary :counts="counts(img.tags, img.used_by)" :open="usersOpen === `l${img.id}`"
+                  @toggle="toggleUsers(`l${img.id}`)" />
               </td>
               <td style="text-align: right; white-space: nowrap">
                 <button
@@ -124,6 +132,12 @@
                 >✕</button>
               </td>
             </tr>
+            <tr v-if="usersOpen === `l${img.id}`" class="users-row">
+              <td colspan="4">
+                <ImageUsers :image-refs="img.tags" :slugs="img.used_by" />
+              </td>
+            </tr>
+            </template>
           </tbody>
         </table>
       </div>
@@ -152,10 +166,11 @@
 <script>
 import StatusBadge from './StatusBadge.vue'
 import ImageUsers from './ImageUsers.vue'
+import UsedBySummary from './UsedBySummary.vue'
 import { api } from '../api.js'
 import { confirmDialog } from '../lib/dialog.js'
 import { store } from '../store.js'
-import { managedWithStore, suggestedImages } from '../lib/images.js'
+import { managedWithStore, suggestedImages, imageUserCounts } from '../lib/images.js'
 import { bytes, timeAgo } from '../lib/format.js'
 
 const TEMPLATE = `FROM docker.io/oven/bun:1
@@ -164,7 +179,7 @@ const TEMPLATE = `FROM docker.io/oven/bun:1
 
 export default {
   name: 'Shipyard',
-  components: { StatusBadge, ImageUsers },
+  components: { StatusBadge, ImageUsers, UsedBySummary },
   data() {
     return {
       error: '',
@@ -177,6 +192,7 @@ export default {
       newName: '',
       newRef: '',
       adding: false,
+      usersOpen: null,
       pruning: false,
       pulling: null,
       removing: null,
@@ -214,6 +230,14 @@ export default {
   methods: {
     bytes,
     timeAgo,
+    counts(refs, slugs) {
+      return imageUserCounts(store.live, refs, slugs)
+    },
+    // One list open at a time: two of them push the rows around more than
+    // either is worth.
+    toggleUsers(key) {
+      this.usersOpen = this.usersOpen === key ? null : key
+    },
     // Only what this image genuinely carries: most registry images publish no
     // version label at all, and one built here has no registry digest.
     imageFacts(img) {
@@ -350,6 +374,19 @@ export default {
 </script>
 
 <style scoped>
+/* The open project list: a row of its own under the table row it belongs
+   to, and a block under the head of an image card. Both are the same panel,
+   set apart from what they hang off rather than boxed in again. */
+.users-row > td {
+  padding-top: 0;
+  border-top: 0;
+}
+.proc-users {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line-soft);
+}
+
 /* A dim second line inside the image cell: facts about the image itself,
    subordinate to the reference above them. */
 .image-facts {

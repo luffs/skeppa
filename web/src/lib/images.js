@@ -78,16 +78,22 @@ export function suggestedImages(images, offered = []) {
 // compare the digest itself.
 const bareId = id => String(id ?? '').replace(/^sha256:/, '')
 
-// True when a container is running an image its own tag no longer points at —
-// something pulled or rebuilt the tag underneath it, and a restart would move
-// the app onto the newer image. Both ids have to be known: an engine that
-// listed neither says nothing, and silence must not read as "up to date".
-export function runsSupersededImage(images, container) {
+// Where a running container stands against the tag it was started from:
+// 'stale' when something pulled or rebuilt that tag underneath it (a restart
+// moves the app onto the newer image), 'current' when the two ids agree, and
+// 'unknown' whenever either id is missing — an engine that listed neither
+// says nothing, and silence must never be rendered as "up to date".
+export function containerImageState(images, container) {
   const running = bareId(container?.imageId)
-  if (!running) return false
+  if (!running) return 'unknown'
   const inStore = (images?.local ?? []).find(img => img.tags.includes(container?.image))
   const current = bareId(inStore?.id)
-  return !!current && current !== running
+  if (!current) return 'unknown'
+  return current === running ? 'current' : 'stale'
+}
+
+export function runsSupersededImage(images, container) {
+  return containerImageState(images, container) === 'stale'
 }
 
 // A ref in the reserved namespace — built from a Containerfile, never pulled.
@@ -98,41 +104,71 @@ export function isManagedRef(images, ref) {
   return !!prefix && typeof ref === 'string' && ref.startsWith(prefix)
 }
 
+// What the table row shows instead of the list: how many projects depend on
+// the image, and how many of them are running something older than the store
+// holds. The second number is the one worth a colour — it is the only one a
+// button can do anything about.
+export function imageUserCounts(live, refs, slugs) {
+  const users = imageUsers(live, refs, slugs)
+  return { total: users.length, outdated: users.filter(u => u.imageState === 'stale').length }
+}
+
+const UNKNOWN_USER = { id: null, name: '', builds: false, runs: false, restartable: false, imageState: 'unknown' }
+
 // How each project in an image's `used_by` list depends on it. The server
 // decides *who* uses an image (live/images.js projectsUsing, the same list
 // that gates the delete); this reads the same two fields to say *how*, which
 // is what tells a restart ("recreate the container on the image in the store")
 // apart from a deploy (the only thing that re-runs a build in a new sandbox).
 // An empty field means the panel default, exactly as the server reads it.
-export function imageUsers(images, projects, refs, slugs) {
+//
+// `reason` is why a restart would not help, and it is the point of the list
+// as much as the names are: the count on the button is smaller than the count
+// of names, and without a reason per name the difference is unaccountable.
+export function imageUsers(live, refs, slugs) {
+  const images = live?.images
   const bySlug = new Map(
-    Object.values(projects ?? {}).filter(p => p?.info?.slug).map(p => [p.info.slug, p])
+    Object.values(live?.projects ?? {}).filter(p => p?.info?.slug).map(p => [p.info.slug, p])
+  )
+  // The engine's own view of what each project is running right now, which is
+  // the only thing that can say whether a tag moved underneath it.
+  const containerOf = new Map(
+    Object.values(live?.system?.containers ?? {}).filter(c => c?.slug).map(c => [c.slug, c])
   )
   const fallback = images?.defaultImage ?? ''
   // One entry in the engine's store can wear several tags, and the server's
   // `used_by` is the union over all of them, so "how" is asked of the set.
   const wanted = new Set((refs ?? []).filter(Boolean))
   return (slugs ?? []).map(slug => {
-    const live = bySlug.get(slug)
-    const info = live?.info
+    const project = bySlug.get(slug)
+    const info = project?.info
     // A slug with no project in the mirror is still a user the server counted
     // — list it, say nothing about it.
-    if (!info) return { slug, id: null, name: slug, builds: false, runs: false, restartable: false }
+    if (!info) return { ...UNKNOWN_USER, slug, name: slug, reason: '' }
+    const builds = wanted.has(info.build_image || fallback)
     const runs = info.runtime === 'container' && wanted.has(info.run_image || info.build_image || fallback)
+    // deployed_runtime is what exists, runtime what the next deploy will do.
+    const isContainer = (info.deployed_runtime || info.runtime) === 'container'
+    const online = project.pm2?.status === 'online'
+    // Restart is a recreate, so it is how a container moves onto a newly
+    // pulled image — but only for one that is a container now and is actually
+    // running: restarting also starts, and would silently undo a deliberate
+    // stop.
+    const restartable = runs && isContainer && online
     return {
       slug,
       id: info.id,
       name: info.name,
-      builds: wanted.has(info.build_image || fallback),
+      builds,
       runs,
-      // Restart is a recreate, so it is how a container moves onto a newly
-      // pulled image — but only one that is a container *now*
-      // (deployed_runtime is what exists, runtime what the next deploy will
-      // do) and is actually running: restarting would also start, and silently
-      // undo, something that was deliberately stopped.
-      restartable: runs
-        && (info.deployed_runtime || info.runtime) === 'container'
-        && live.pm2?.status === 'online',
+      restartable,
+      imageState: runs ? containerImageState(images, containerOf.get(slug)) : 'unknown',
+      // Short, because the usage column next to it already says how the
+      // project uses the image; this only has to say what to do instead.
+      reason: restartable ? ''
+        : !runs ? (builds ? 'needs a deploy, not a restart' : 'does not run it')
+          : !isContainer ? 'not deployed as a container yet'
+            : 'stopped',
     }
   })
 }

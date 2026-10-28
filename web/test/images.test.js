@@ -115,20 +115,32 @@ describe('the system view flags a container left behind by its tag', () => {
 import { imageUsers } from '../src/lib/images.js'
 
 describe('how each project depends on an image', () => {
-  const images = { defaultImage: 'docker.io/oven/bun:1' }
   const project = (id, slug, info, status = 'online') => ({
     info: { id, slug, name: slug, build_image: '', run_image: '', deployed_runtime: '', ...info },
     pm2: { status },
   })
-  const projects = {
-    1: project(1, 'inherits', { runtime: 'container', deployed_runtime: 'container' }),
-    2: project(2, 'stopped', { runtime: 'container', deployed_runtime: 'container' }, 'stopped'),
-    3: project(3, 'host-app', { runtime: 'pm2', deployed_runtime: 'pm2' }),
-    4: project(4, 'switching', { runtime: 'container', deployed_runtime: 'static' }),
-    5: project(5, 'other-run', { runtime: 'container', deployed_runtime: 'container', run_image: 'docker.io/library/node:22' }),
+  const live = {
+    images: {
+      defaultImage: 'docker.io/oven/bun:1',
+      // The tag resolves to sha256:new in the store.
+      local: [{ id: 'sha256:new', tags: ['docker.io/oven/bun:1'] }],
+    },
+    projects: {
+      1: project(1, 'inherits', { runtime: 'container', deployed_runtime: 'container' }),
+      2: project(2, 'stopped', { runtime: 'container', deployed_runtime: 'container' }, 'stopped'),
+      3: project(3, 'host-app', { runtime: 'pm2', deployed_runtime: 'pm2' }),
+      4: project(4, 'switching', { runtime: 'container', deployed_runtime: 'static' }),
+      5: project(5, 'other-run', { runtime: 'container', deployed_runtime: 'container', run_image: 'docker.io/library/node:22' }),
+    },
+    system: {
+      containers: {
+        'skeppa-app-inherits': { slug: 'inherits', image: 'docker.io/oven/bun:1', imageId: 'sha256:old' },
+        'skeppa-app-stopped': { slug: 'stopped', image: 'docker.io/oven/bun:1', imageId: 'sha256:new' },
+      },
+    },
   }
   const of = (slug, refs = ['docker.io/oven/bun:1']) =>
-    imageUsers(images, projects, refs, [slug])[0]
+    imageUsers(live, refs, [slug])[0]
 
   // Naming nothing means the default twice over: the sandbox builds in it and
   // resolveRunImage falls through to it.
@@ -138,19 +150,22 @@ describe('how each project depends on an image', () => {
 
   test('a host process only ever builds in it', () => {
     expect(of('host-app')).toMatchObject({ builds: true, runs: false, restartable: false })
+    expect(of('host-app').reason).toBe('needs a deploy, not a restart')
   })
 
   // Restart is start-if-stopped, and auto_start follows it — so offering it
   // for a stopped app would quietly undo someone's decision.
   test('a stopped container is listed but not restarted', () => {
-    expect(of('stopped')).toMatchObject({ runs: true, restartable: false })
+    expect(of('stopped')).toMatchObject({ runs: true, restartable: false, reason: 'stopped' })
   })
 
   // runtime is what the next deploy will do, deployed_runtime what exists:
   // a project switched to `container` in the form is still a static site
   // until the deploy, so there is no container to recreate.
   test('a runtime change that has not deployed yet has nothing to recreate', () => {
-    expect(of('switching')).toMatchObject({ runs: true, restartable: false })
+    expect(of('switching')).toMatchObject({
+      runs: true, restartable: false, reason: 'not deployed as a container yet',
+    })
   })
 
   test('a run image of its own leaves only the build dependency', () => {
@@ -167,13 +182,36 @@ describe('how each project depends on an image', () => {
   // The server decides who uses an image; a slug this client cannot resolve
   // is still one of them.
   test('an unresolvable slug is listed without a claim', () => {
-    expect(imageUsers(images, projects, ['docker.io/oven/bun:1'], ['gone'])[0])
-      .toEqual({ slug: 'gone', id: null, name: 'gone', builds: false, runs: false, restartable: false })
+    expect(imageUsers(live, ['docker.io/oven/bun:1'], ['gone'])[0]).toEqual({
+      slug: 'gone', id: null, name: 'gone',
+      builds: false, runs: false, restartable: false, imageState: 'unknown', reason: '',
+    })
+  })
+
+  // The tag moved under a running container: the one case where a restart is
+  // not just allowed but the thing to do.
+  test('says which container is behind the image its tag now points at', () => {
+    expect(of('inherits').imageState).toBe('stale')
+    expect(of('stopped').imageState).toBe('current')
+  })
+
+  // An engine with no container for the project, or none listed at all, says
+  // nothing — and nothing must not render as "up to date".
+  test('claims nothing about a project the engine did not list', () => {
+    expect(of('other-run', ['docker.io/library/node:22']).imageState).toBe('unknown')
+    expect(imageUsers({ ...live, system: {} }, ['docker.io/oven/bun:1'], ['inherits'])[0].imageState)
+      .toBe('unknown')
+  })
+
+  // A project that does not run the image has no container of this image to
+  // be behind on, whatever it happens to be running.
+  test('says nothing about the container of a project that only builds in it', () => {
+    expect(of('host-app').imageState).toBe('unknown')
   })
 })
 
-describe('the Shipyard keeps a long user list out of the way', () => {
-  test('shows a few names, hides the rest behind a count, and offers one restart', async () => {
+describe('the Shipyard keeps a long user list out of the row', () => {
+  test('the row counts, and the list opens in a row of its own', async () => {
     seed()
     const slugs = ['a-one', 'b-two', 'c-three', 'd-four', 'e-five']
     store.live.projects = Object.fromEntries(slugs.map((slug, i) => [i + 1, {
@@ -191,12 +229,71 @@ describe('the Shipyard keeps a long user list out of the way', () => {
 
     const wrapper = mount(Shipyard, { global: { stubs, mocks } })
     const cell = wrapper.find('tbody tr td:nth-child(3)')
-    expect(cell.findAll('a.chip')).toHaveLength(3)
-    expect(cell.find('.more').text()).toBe('+2')
-    expect(cell.find('button.secondary').text()).toBe('Restart 3')
+    expect(cell.find('button.used-by').text()).toContain('5 projects')
+    // Nothing of the list itself until it is asked for.
+    expect(wrapper.find('tr.users-row').exists()).toBe(false)
 
-    await cell.find('.more').trigger('click')
-    expect(cell.findAll('a.chip')).toHaveLength(5)
+    await cell.find('button.used-by').trigger('click')
+    const panel = wrapper.find('tr.users-row')
+    expect(panel.findAll('.user')).toHaveLength(5)
+    expect(panel.find('td').attributes('colspan')).toBe('4')
+    // The engine listed no containers, so it cannot say which are behind —
+    // and the blunt action stays on offer rather than disappearing.
+    expect(panel.find('button.secondary').text()).toBe('Restart running (3)')
+
+    await cell.find('button.used-by').trigger('click')
+    expect(wrapper.find('tr.users-row').exists()).toBe(false)
+    wrapper.unmount()
+  })
+})
+
+describe('the Shipyard aims the restart at what is actually behind', () => {
+  // Four running containers on one tag, two of them left behind by a pull.
+  // The button exists to finish that pull, so it targets those two — and the
+  // dimmed chips account for the names it does not touch.
+  test('restarts the outdated containers, and accounts for everything it skips', async () => {
+    seed()
+    const slugs = ['a-stale', 'b-stale', 'c-current', 'd-stopped', 'e-host']
+    store.live.projects = Object.fromEntries(slugs.map((slug, i) => [i + 1, {
+      info: {
+        id: i + 1, slug, name: slug, build_image: '', run_image: '',
+        runtime: i === 4 ? 'pm2' : 'container',
+        deployed_runtime: i === 4 ? 'pm2' : 'container',
+      },
+      pm2: { status: i === 3 ? 'stopped' : 'online' },
+    }]))
+    store.live.images.local = [{
+      id: 'sha256:new', tags: ['docker.io/oven/bun:1'], size: 1,
+      dangling: false, managed: false, used_by: slugs,
+    }]
+    store.live.system.containers = Object.fromEntries(slugs.slice(0, 4).map(slug => [
+      `skeppa-app-${slug}`,
+      { slug, image: 'docker.io/oven/bun:1', imageId: slug.endsWith('stale') ? 'sha256:old' : 'sha256:new' },
+    ]))
+
+    const wrapper = mount(Shipyard, { global: { stubs, mocks } })
+    const cell = wrapper.find('tbody tr td:nth-child(3)')
+    // The outdated count is the one thing the row says beyond how many.
+    expect(cell.find('.outdated').text()).toBe('2 outdated')
+
+    await cell.find('button.used-by').trigger('click')
+    const panel = wrapper.find('tr.users-row')
+    expect(panel.find('button.secondary').text()).toBe('Restart outdated (2)')
+
+    // Only the four that run the image; the host process that merely builds
+    // in it is one line at the end, not a row of its own.
+    const rows = panel.findAll('.user')
+    expect(rows.map(r => r.find('.name').text())).toEqual(
+      ['a-stale ↗', 'b-stale ↗', 'c-current ↗', 'd-stopped ↗']
+    )
+    expect(rows.map(r => r.find('.state').text()))
+      .toEqual(['behind the store', 'behind the store', 'up to date', 'up to date'])
+    // Dim means "a restart cannot help this one". The one already on the
+    // store's image stays plain: it is simply fine, which is not the same as
+    // being out of reach.
+    expect(rows.map(r => r.classes().includes('off'))).toEqual([false, false, false, true])
+    expect(rows[3].find('.reason').text()).toBe('stopped')
+    expect(panel.find('.rest').text()).toBe('1 other only builds in it')
     wrapper.unmount()
   })
 })
