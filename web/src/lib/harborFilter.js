@@ -5,11 +5,21 @@ import { vesselState } from './vessels.js'
 // (lib/vessels.js), so "2 need attention" in the summary and the two rows
 // it leads to can never disagree.
 
-// A state filter, and which vessel states it lets through.
+// A state filter, and which vessel states it lets through: its name on the
+// filter's chip, and how a sentence says it ("… among those that are idle").
+// The summary offers the first two; the map's legend the ones in
+// LEGEND_FILTERS, each in the colour its ships have (`swatch`, a vessel state).
 export const STATE_FILTERS = {
-  attention: { label: 'need attention', states: ['down', 'failed', 'ahead'] },
-  running: { label: 'running', states: ['running'] },
+  attention: { label: 'need attention', that: 'need attention', states: ['down', 'failed', 'ahead'] },
+  running: { label: 'running', that: 'are running', states: ['running'], swatch: 'running' },
+  ahead: { label: 'new commits', that: 'have new commits', states: ['ahead'], swatch: 'ahead' },
+  trouble: { label: 'down or failed', that: 'are down or failed', states: ['down', 'failed'], swatch: 'down' },
+  underway: { label: 'under way', that: 'are under way', states: ['underway'], swatch: 'underway' },
+  idle: { label: 'idle', that: 'are idle', states: ['idle'], swatch: 'idle' },
 }
+
+// The map's legend, in this order: between them every vessel state, once.
+export const LEGEND_FILTERS = ['running', 'ahead', 'trouble', 'underway', 'idle']
 
 export const filterWords = query => String(query ?? '').toLowerCase().split(/\s+/).filter(Boolean)
 

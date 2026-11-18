@@ -1,5 +1,6 @@
 import { test, expect } from 'vitest'
-import { filterWords, matchesSearch, matchesState, stateCounts } from '../src/lib/harborFilter.js'
+import { filterWords, matchesSearch, matchesState, stateCounts, STATE_FILTERS, LEGEND_FILTERS } from '../src/lib/harborFilter.js'
+import { VESSEL_STATES } from '../src/lib/vessels.js'
 
 // The harbor's filter: words in any order over name, repository, branch,
 // pier and owner; states the same as the rows' (lib/vessels.js).
@@ -28,5 +29,19 @@ test('the state filters let through the states the rows show', () => {
   expect(matchesState(down, 'running')).toBe(false)
   expect(matchesState(down, '')).toBe(true)
   expect(matchesState(down, 'nonsense')).toBe(true)
-  expect(stateCounts([ahead, down, failed, fine, null])).toEqual({ attention: 3, running: 1 })
+  expect(stateCounts([ahead, down, failed, fine, null])).toEqual({ attention: 3, running: 1, ahead: 1, trouble: 2, underway: 0, idle: 1 })
+})
+
+test('the legend filters cover every vessel state exactly once, each with its colour and wording', () => {
+  const covered = LEGEND_FILTERS.flatMap(key => STATE_FILTERS[key].states)
+  expect([...covered].sort()).toEqual(VESSEL_STATES.map(s => s.key).sort())
+  for (const key of LEGEND_FILTERS) {
+    expect(STATE_FILTERS[key].states).toContain(STATE_FILTERS[key].swatch)
+    expect(STATE_FILTERS[key].that).toMatch(/^(are|have) /)
+  }
+  const underway = live({ currentDeployment: { id: 1, status: 'running' } })
+  expect(matchesState(underway, 'underway')).toBe(true)
+  expect(matchesState(underway, 'running')).toBe(false)
+  expect(matchesState(null, 'idle')).toBe(true)
+  expect(matchesState(live({ lastDeployment: { status: 'failed' } }), 'trouble')).toBe(true)
 })

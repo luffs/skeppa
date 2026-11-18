@@ -1,0 +1,637 @@
+<template>
+  <div ref="wrap" class="harbor-map">
+    <div class="hm-stage">
+      <svg
+        ref="svg"
+        class="hm-svg"
+        :class="{ dragging: drag, settling }"
+        :viewBox="`0 0 ${layout.width} ${layout.height}`"
+        :width="layout.width"
+        :height="layout.height"
+        role="group"
+        aria-label="The harbor as a map — each ship a project"
+      >
+        <defs>
+          <linearGradient id="hm-depth" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" class="hm-stop-shallow" /><stop offset="1" class="hm-stop-deep" />
+          </linearGradient>
+          <pattern id="hm-waves" width="56" height="28" patternUnits="userSpaceOnUse">
+            <path class="hm-wave" d="M3 8 q5 -4 10 0 t10 0" /><path class="hm-wave" d="M31 22 q5 -4 10 0 t10 0" />
+          </pattern>
+          <pattern id="hm-stone" width="18" height="12" patternUnits="userSpaceOnUse">
+            <path class="hm-stone-line" d="M0 0.5 H18 M0 6.5 H18 M5 0.5 V6.5 M14 6.5 V12" />
+          </pattern>
+          <linearGradient id="hm-beam" gradientUnits="userSpaceOnUse" x1="0" y1="0" :x2="BEAM" y2="0">
+            <stop offset="0" class="hm-stop-beam" stop-opacity="1" /><stop offset="1" class="hm-stop-beam" stop-opacity="0" />
+          </linearGradient>
+          <radialGradient id="hm-glow">
+            <stop offset="0" class="hm-stop-glow" stop-opacity="0.85" /><stop offset="1" class="hm-stop-glow" stop-opacity="0" />
+          </radialGradient>
+        </defs>
+
+        <!-- the water: deeper further out, small waves drifting across -->
+        <rect x="0" y="0" :width="layout.width" :height="layout.height" fill="url(#hm-depth)" />
+        <rect class="hm-waves" x="-56" y="0" :width="layout.width + 112" :height="layout.height" fill="url(#hm-waves)" />
+
+        <g v-if="layout.rose" class="hm-rose" :transform="`translate(${layout.rose.x} ${layout.rose.y})`">
+          <circle :r="layout.rose.r" /><circle :r="layout.rose.r * 0.74" />
+          <circle class="hm-rose-ticks" :r="layout.rose.r * 0.87" :stroke-width="layout.rose.r * 0.1" :stroke-dasharray="roseTicks" />
+          <path class="hm-rose-minor" :d="rose.minor" /><path class="hm-rose-major" :d="rose.major" /><path class="hm-rose-shade" :d="rose.shade" />
+          <text class="hm-rose-n" :y="-layout.rose.r - 5" text-anchor="middle">N</text>
+        </g>
+
+        <g v-for="f in layout.fleets" :key="f.key" class="hm-fleet">
+          <!-- the quay: the shore along the top, a mole further out -->
+          <g v-for="(q, i) in f.quays" :key="`q${i}`" class="hm-quay-g">
+            <rect class="hm-cast" :x="q.x + (q.shore ? 0 : 2)" :y="q.y + 4" :width="q.w" :height="q.h" :rx="q.shore ? 0 : 9" />
+            <rect class="hm-quay" :x="q.x" :y="q.y" :width="q.w" :height="q.h" :rx="q.shore ? 0 : 9" />
+            <rect :x="q.x" :y="q.y" :width="q.w" :height="q.h" :rx="q.shore ? 0 : 9" fill="url(#hm-stone)" />
+            <line class="hm-quay-edge" :x1="q.x + (q.shore ? 0 : 8)" :x2="q.x + q.w - (q.shore ? 0 : 8)" :y1="q.y + q.h - 1.5" :y2="q.y + q.h - 1.5" />
+            <line class="hm-bollards" :x1="q.x + 22" :x2="q.x + q.w - 22" :y1="q.y + q.h - 7" :y2="q.y + q.h - 7" />
+          </g>
+          <text class="hm-fleet-label" :x="f.labelX" :y="f.labelY">{{ f.label }}<tspan v-if="f.detail" class="hm-fleet-detail" dx="10">{{ f.detail }}</tspan></text>
+
+          <!-- while a ship is dragged, the piers it may moor at say so -->
+          <g
+            v-for="j in f.jetties"
+            :key="`j${j.pierId}`"
+            class="hm-jetty-g"
+            :class="{ 'can-drop': canMoor(f, j), 'drop-on': canMoor(f, j) && drag.target.pierId === j.pierId }"
+          >
+            <rect class="hm-drop-halo" :x="j.x - 5" :y="j.y - 36" :width="j.w + 10" :height="j.h + 41" rx="7" />
+            <rect class="hm-cast" :x="j.x + 3" :y="j.y" :width="j.w" :height="j.h + 3" rx="3" />
+            <rect class="hm-jetty" :x="j.x" :y="j.y - 3" :width="j.w" :height="j.h + 3" rx="3" />
+            <!-- planks across the jetty -->
+            <line class="hm-planks" :x1="j.cx" :x2="j.cx" :y1="j.y + 1" :y2="j.y + j.h - 3" />
+            <!-- a bollard at every berth, either side -->
+            <template v-if="!j.empty">
+              <line class="hm-piles" :x1="j.x" :x2="j.x" :y1="j.firstY" :y2="j.firstY + (j.berths - 1) * ROW + 0.01" />
+              <line class="hm-piles" :x1="j.x + j.w" :x2="j.x + j.w" :y1="j.firstY" :y2="j.firstY + (j.berths - 1) * ROW + 0.01" />
+            </template>
+            <!-- the lantern at the jetty's head -->
+            <circle class="hm-lantern-glow" :cx="j.cx" :cy="j.y + j.h - 7" r="22" fill="url(#hm-glow)" />
+            <circle class="hm-lantern" :cx="j.cx" :cy="j.y + j.h - 7" r="2.6" />
+            <!-- the pier's shed on the quay, its name on the roof -->
+            <rect class="hm-shed" :x="j.cx - signWidth(j) / 2" :y="j.y - 31" :width="signWidth(j)" height="21" rx="3" />
+            <text class="hm-pier-name" :x="j.cx" :y="j.y - 16.5" text-anchor="middle">{{ pierLabel(j) }}</text>
+            <text v-if="j.empty" class="hm-empty" :x="j.cx" :y="j.y + j.h + 16" text-anchor="middle">nothing moored here yet</text>
+          </g>
+
+          <g v-if="f.anchorage" class="hm-anchorage" :class="{ 'can-drop': canAnchor(f), 'drop-on': canAnchor(f) && drag.target.kind === 'anchor' }">
+            <rect class="hm-anchor-area" :x="f.anchorage.x" :y="f.anchorage.y" :width="f.anchorage.w" :height="f.anchorage.h" rx="14" />
+            <!-- lateral marks at its corners: red to port, green to starboard -->
+            <circle class="hm-mark port" :cx="f.anchorage.x" :cy="f.anchorage.y + 14" r="3.4" />
+            <circle class="hm-mark port" :cx="f.anchorage.x" :cy="f.anchorage.y + f.anchorage.h - 14" r="3.4" />
+            <circle class="hm-mark starboard" :cx="f.anchorage.x + f.anchorage.w" :cy="f.anchorage.y + 14" r="3.4" />
+            <circle class="hm-mark starboard" :cx="f.anchorage.x + f.anchorage.w" :cy="f.anchorage.y + f.anchorage.h - 14" r="3.4" />
+            <g class="hm-anchor-icon" :transform="`translate(${f.anchorage.x + 20} ${f.anchorage.labelY - 4})`">
+              <circle cy="-5.5" r="1.6" /><path d="M0 -4 V5 M-3 -1.5 H3 M-5 1 Q-5 5 0 5 Q5 5 5 1" />
+            </g>
+            <text class="hm-anchor-label" :x="f.anchorage.x + 31" :y="f.anchorage.labelY">At anchor</text>
+          </g>
+
+          <a
+            v-for="(s, i) in f.ships"
+            :key="s.id"
+            :href="`/projects/${s.id}`"
+            tabindex="0"
+            class="hm-ship"
+            :class="shipClasses(s)"
+            :style="{ '--i': i % 7, transform: shipTransform(s) }"
+            :aria-label="`${s.project.name}, ${statusOf(s)}`"
+            @click.prevent="openProject(s)"
+            @pointerdown="onPress($event, s, f)"
+            @dragstart.prevent
+            @contextmenu="onContextMenu"
+            @mouseenter="showCard(s)"
+            @mouseleave="hideSoon"
+            @focus="showCard(s)"
+            @blur="hideSoon"
+          >
+            <title>{{ titleOf(s) }}</title>
+            <!-- at anchor the whole ship swings about its buoy -->
+            <g class="hm-sway">
+              <rect class="hm-hit" x="0" y="-2" :width="SHIP_L" :height="SHIP_B + NAME_H + 2" />
+              <g v-if="s.side === 'anchor'" class="hm-chain">
+                <path :d="`M${shape(s).L - 1} ${SHIP_B / 2} H${ANCHOR_X}`" />
+                <circle class="hm-buoy" :cx="ANCHOR_X" :cy="SHIP_B / 2" r="3.6" />
+              </g>
+              <!-- under way a ship has cast off: it glides out from its jetty, and back in -->
+              <g class="hm-berth" :style="{ transform: `translateX(${castOff(s)}px)` }">
+                <g class="hm-bob">
+                  <!-- drawn bow to the right; a ship on the jetty's left is mirrored -->
+                  <g :transform="s.dir < 0 ? `translate(${SHIP_L} 0) scale(-1 1)` : null">
+                    <!-- a wake behind the stern under way; otherwise made fast -->
+                    <g v-if="stateOf(s) === 'underway'" class="hm-wake">
+                      <path d="M-2 6 L-16 1" /><path d="M-3 13 H-18" /><path d="M-2 20 L-16 25" />
+                    </g>
+                    <path v-else-if="s.side !== 'anchor'" class="hm-lines" :d="`M2 6 L${-BERTH} ${SHIP_B / 2} L2 ${SHIP_B - 6}`" />
+                    <HarborShip :runtime="runtimeOf(s)" :stacks="stacksOf(s)" :worn="wornOf(s)" />
+                    <!-- new commits waiting: a pennant flying -->
+                    <g v-if="stateOf(s) === 'ahead'" class="hm-pennant" :transform="`translate(${Math.round(shape(s).L * 0.7)} 2)`">
+                      <path class="hm-staff" d="M0 0 V-8" /><path class="hm-flag" d="M0 -8 L-11 -5.5 L0 -3 Z" />
+                    </g>
+                  </g>
+                </g>
+                <text class="hm-name" :x="s.dir < 0 ? SHIP_L - 1 : 1" :y="SHIP_B + 11" :text-anchor="s.dir < 0 ? 'end' : 'start'">{{ shortName(s) }}</text>
+                <!-- what just happened to it, for a moment: rings on the water as it
+                     makes port or new commits come in, a red flare when a voyage fails -->
+                <g
+                  v-if="events[s.id]"
+                  :key="events[s.id].n"
+                  class="hm-event"
+                  :class="events[s.id].kind"
+                  :transform="`translate(${s.dir < 0 ? SHIP_L - shape(s).L / 2 : shape(s).L / 2} ${SHIP_B / 2})`"
+                >
+                  <circle class="hm-ripple" r="18" /><circle class="hm-ripple late" r="18" />
+                  <g v-if="events[s.id].kind === 'flare'" class="hm-flare">
+                    <path class="hm-flare-trail" d="M0 -4 V-30" />
+                    <path class="hm-flare-star" d="M0 -47 V-29 M-9 -38 H9 M-6.4 -44.4 L6.4 -31.6 M-6.4 -31.6 L6.4 -44.4" />
+                  </g>
+                </g>
+              </g>
+            </g>
+          </a>
+
+          <!-- a fleet with nothing at anchor has no anchorage to point at: while
+               one of its moored ships is dragged, its open water says what it is -->
+          <g
+            v-if="canAnchor(f) && !f.anchorage"
+            class="hm-anchor-here"
+            :class="{ 'drop-on': drag.target.kind === 'anchor' }"
+            :transform="`translate(${layout.width / 2} ${f.water + 12})`"
+          >
+            <rect x="-84" y="-10" width="168" height="20" rx="10" /><text y="3.5" text-anchor="middle">Open water — at anchor</text>
+          </g>
+        </g>
+
+        <!-- the lighthouse at the end of the shore, its beam sweeping the harbor -->
+        <g v-if="layout.light" class="hm-light" :transform="`translate(${layout.light.x} ${layout.light.y})`">
+          <circle class="hm-cast" cx="2" cy="4" r="15" />
+          <circle class="hm-quay" r="15" /><circle r="15" fill="url(#hm-stone)" />
+          <g class="hm-beam">
+            <path :d="beamPath" fill="url(#hm-beam)" /><path :d="beamPath" fill="url(#hm-beam)" transform="rotate(180)" />
+          </g>
+          <circle class="hm-tower" r="8" /><circle class="hm-tower-band" r="5.2" /><circle class="hm-tower-lamp" r="2.6" />
+        </g>
+
+        <!-- A ship being dragged: the free berth at the pier under it, and the
+             ship itself under the pointer, saying what letting go does. -->
+        <template v-if="drag">
+          <g v-if="drag.target.kind === 'pier'" class="hm-slot" :transform="`translate(${drag.target.slot.x} ${drag.target.slot.y})`">
+            <path :d="shape(drag.ship).hull" :transform="drag.target.slot.dir < 0 ? `translate(${SHIP_L} 0) scale(-1 1)` : null" />
+          </g>
+          <g class="hm-ship hm-ghost" :class="[`state-${stateOf(drag.ship)}`, { refused: drag.target.kind === 'foreign' || drag.target.kind === 'none' }]" :transform="`translate(${drag.x - drag.gx} ${drag.y - drag.gy})`">
+            <g :transform="drag.ship.dir < 0 ? `translate(${SHIP_L} 0) scale(-1 1)` : null">
+              <HarborShip :runtime="runtimeOf(drag.ship)" :stacks="stacksOf(drag.ship)" :worn="wornOf(drag.ship)" />
+            </g>
+            <text class="hm-name" :x="drag.ship.dir < 0 ? SHIP_L - 1 : 1" :y="SHIP_B + 11" :text-anchor="drag.ship.dir < 0 ? 'end' : 'start'">{{ shortName(drag.ship) }}</text>
+            <text v-if="dragHint" class="hm-drop-hint" :x="SHIP_L / 2" :y="SHIP_B + 27" text-anchor="middle">{{ dragHint }}</text>
+          </g>
+        </template>
+      </svg>
+
+      <!-- The row the list would show, over the ship pointed at or focused:
+           its status, what happened, its one button and its ⋮ menu. -->
+      <div
+        v-if="card"
+        class="harbor-card"
+        :style="cardStyle"
+        @mouseenter="keepCard"
+        @mouseleave="hideSoon"
+        @focusin="keepCard"
+        @focusout="hideSoon"
+      >
+        <div class="vessel-rows"><ProjectRow :project="card.project" /></div>
+      </div>
+    </div>
+
+    <!-- What the map's colours and ships mean. The colours are the state
+         filter too: a click shows just those vessels, a second one all again. -->
+    <div class="hm-legend">
+      <div class="hm-keys" role="group" aria-label="Show only the vessels that">
+        <button
+          v-for="k in stateKeys"
+          :key="k.key"
+          type="button"
+          class="hm-key"
+          :class="[`state-${k.swatch}`, { active: k.active }]"
+          :aria-pressed="k.active ? 'true' : 'false'"
+          :disabled="!k.count && !k.active"
+          :title="k.active ? 'Show every vessel again' : `Show only the vessels that ${k.that}`"
+          @click="$emit('toggle-state', k.key)"
+        ><span class="hm-key-hull"></span>{{ k.label }}<span class="hm-key-count">{{ k.count }}</span></button>
+      </div>
+      <!-- the kind of ship tells the runtime: only the kinds in this harbor -->
+      <div class="hm-kinds">
+        <span v-for="k in kinds" :key="k.runtime" class="hm-kind">
+          <svg :viewBox="`-1 -1 ${k.L + 5} ${SHIP_B + 6}`" :width="(k.L + 5) / 2" :height="(SHIP_B + 6) / 2" aria-hidden="true"><HarborShip :runtime="k.runtime" /></svg>
+          {{ k.label }}<span v-if="k.note" class="hm-kind-note">{{ k.note }}</span>
+        </span>
+      </div>
+      <!-- only where there is somewhere to drag to -->
+      <p v-if="hasPiers" class="hm-drag-tip">Drag a ship to another of its fleet's piers to moor it there, or out into open water to leave it at anchor.</p>
+    </div>
+  </div>
+</template>
+
+<script>
+import ProjectRow from './ProjectRow.vue'
+import HarborShip from './HarborShip.vue'
+import { liveProject } from '../store.js'
+import { vesselState, statusWord } from '../lib/vessels.js'
+import { STATE_FILTERS, LEGEND_FILTERS } from '../lib/harborFilter.js'
+import { bytes } from '../lib/format.js'
+import { performAction } from '../lib/vesselActions.js'
+import { layoutHarbor, dropTarget, shipName, shipKind, cargoStacks, isWorn, SHIP_KINDS, SHIP_L, SHIP_B, NAME_H, BERTH, ROW, CHAIN } from '../lib/harborMap.js'
+
+const CARD_W = 440
+const CAST_OFF = 7 // how far a ship under way has left its berth
+const ANCHOR_X = SHIP_L + CHAIN // an anchored ship's buoy, ahead of its berth
+const BEAM = 340 // how far the lighthouse reaches
+const EVENT_MS = 3400 // how long what just happened to a ship stays on the water
+const DRAG_START = 6 // how far a pressed ship is moved before that is a drag and not a click
+const HOLD_MS = 320 // how long a finger rests on a ship before it is picked up — sooner, it is a scroll
+const HOLD_SLACK = 10 // how far that finger may wander meanwhile
+const SETTLE_MS = 900 // how long ships glide to their new berths after a move
+
+// A four-pointed star about the origin, turned `turn` degrees: its outline,
+// and the half of every point that a compass rose fills in.
+function star(tip, waist, turn) {
+  const at = (deg, r) => {
+    const a = ((deg + turn - 90) * Math.PI) / 180
+    return `${(Math.cos(a) * r).toFixed(2)} ${(Math.sin(a) * r).toFixed(2)}`
+  }
+  let outline = ''
+  let shade = ''
+  for (let k = 0; k < 4; k++) {
+    outline += `${k ? 'L' : 'M'}${at(k * 90, tip)} L${at(k * 90 + 45, waist)} `
+    shade += `M0 0 L${at(k * 90, tip)} L${at(k * 90 + 45, waist)} Z `
+  }
+  return { outline: `${outline}Z`, shade }
+}
+
+// The harbor as a map (lib/harborMap.js lays it out): the quay along the
+// top, a jetty per pier reaching down from it, the projects moored on both
+// sides as ships — the kind of ship telling the runtime, its colour and lamp
+// the state — and the projects at no pier at anchor. A ship is a link to its
+// project; a pointer or focus on it brings up the row the list would show.
+// Search and the state filter dim what does not match rather than take it
+// away, so the harbor keeps its shape. What changes while the map is open
+// shows as it happens: a ship glides out as its deploy starts and back in
+// when it ends — rings on the water if it made port, a red flare if not —
+// and a pennant goes up on one with new commits. A ship can be dragged to
+// another pier of its own fleet, or out into its open water to leave it at
+// anchor — the move the ⋮ menu offers too, which is what the keyboard has
+// (a pier is its owner's, so another fleet's refuses it). Under it a legend: what the colours
+// mean — each one a state filter, asked for with `toggle-state` — and what
+// the kinds of ship mean.
+export default {
+  name: 'HarborMap',
+  components: { ProjectRow, HarborShip },
+  props: {
+    // The whole harbor, unfiltered: [{ key, label, detail, piers, loose }].
+    fleets: { type: Array, required: true },
+    // Ids the search and filter let through; null when nothing filters.
+    matches: { type: Object, default: null },
+    // The state filter in force ('' for none), and how many vessels each
+    // filter would show (lib/harborFilter.js stateCounts).
+    stateFilter: { type: String, default: '' },
+    counts: { type: Object, default: () => ({}) },
+  },
+  emits: ['toggle-state'],
+  data() {
+    return {
+      SHIP_L, SHIP_B, NAME_H, BERTH, ROW, ANCHOR_X, BEAM,
+      width: 900,
+      card: null,
+      hideTimer: null,
+      // What just happened to a ship: { <id>: { kind: 'arrived' | 'flare' | 'hail', n } }.
+      events: {},
+      // The ship being dragged: { ship, fleet (its fleet's key), x, y (the
+      // pointer, in map units), gx, gy (where on its berth it was taken
+      // hold of), target (lib/harborMap.js dropTarget) }.
+      drag: null,
+      // The id of a ship whose move is being saved, and whether ships glide
+      // to their berths rather than jump: on while a move settles.
+      moving: null,
+      settling: false,
+    }
+  },
+  computed: {
+    layout() {
+      return layoutHarbor(this.fleets, this.width)
+    },
+    // The rose's stars: a large one to the cardinal points, a small one between.
+    rose() {
+      const r = this.layout.rose?.r ?? 0
+      const major = star(r * 0.98, r * 0.15, 0)
+      return { major: major.outline, shade: major.shade, minor: star(r * 0.56, r * 0.12, 45).outline }
+    },
+    // 72 marks around the rose, one every five degrees.
+    roseTicks() {
+      const step = (2 * Math.PI * (this.layout.rose?.r ?? 0) * 0.87) / 72
+      return `0.9 ${(step - 0.9).toFixed(3)}`
+    },
+    beamPath() {
+      return `M0 0 L${BEAM} -36 L${BEAM} 36 Z`
+    },
+    // What the events are read from: every ship's state, and how its last
+    // voyage ended.
+    signals() {
+      const out = {}
+      for (const f of this.layout.fleets) {
+        for (const s of f.ships) out[s.id] = { state: this.stateOf(s), outcome: this.live(s)?.lastDeployment?.status ?? '' }
+      }
+      return out
+    },
+    // The legend's colours, each a state filter with its count.
+    stateKeys() {
+      return LEGEND_FILTERS.map(key => ({ key, ...STATE_FILTERS[key], count: this.counts[key] ?? 0, active: this.stateFilter === key }))
+    },
+    // The kinds of ship in this harbor, for the legend.
+    kinds() {
+      const here = new Set(this.layout.fleets.flatMap(f => f.ships.map(s => shipKind(this.runtimeOf(s)))))
+      return Object.keys(SHIP_KINDS).filter(k => here.has(k)).map(k => ({ runtime: k, label: SHIP_KINDS[k].label, note: SHIP_KINDS[k].note ?? '', L: SHIP_KINDS[k].L }))
+    },
+    hasPiers() {
+      return this.layout.fleets.some(f => f.jetties.length)
+    },
+    // What letting go of the dragged ship would do, in words.
+    dragHint() {
+      const t = this.drag?.target
+      if (!t) return ''
+      if (t.kind === 'pier') return `Moor at ${shipName(t.name, 26)}`
+      if (t.kind === 'anchor') return 'Leave at anchor'
+      if (t.kind === 'foreign') return 'Not its fleet — only its own piers'
+      return ''
+    },
+    cardStyle() {
+      const s = this.card
+      if (!s) return {}
+      const w = Math.min(CARD_W, this.layout.width - 16)
+      const left = Math.max(8, Math.min(s.x - 10, this.layout.width - w - 8))
+      // under the ship and its name, unless that runs off the bottom of the map
+      const below = s.y + SHIP_B + NAME_H + 6
+      return below + 90 > this.layout.height
+        ? { left: `${left}px`, width: `${w}px`, bottom: `${this.layout.height - s.y + 10}px` }
+        : { left: `${left}px`, width: `${w}px`, top: `${below}px` }
+    },
+  },
+  watch: {
+    // A change of state since the last look is an event. The first look
+    // (created) is only the baseline: a harbor opened on a failed project
+    // fires no flare.
+    signals: {
+      handler(now) {
+        for (const [id, sig] of Object.entries(now)) {
+          const before = this.seen[id]
+          this.seen[id] = sig
+          if (!before || before.state === sig.state) continue
+          if (before.state === 'underway') this.signal(id, sig.outcome === 'failed' ? 'flare' : sig.outcome === 'success' ? 'arrived' : '')
+          else if (sig.state === 'ahead') this.signal(id, 'hail')
+        }
+        for (const id of Object.keys(this.seen)) if (!(id in now)) delete this.seen[id]
+      },
+    },
+  },
+  created() {
+    // not reactive: bookkeeping for the watcher above, which starts from how things are now
+    this.seen = { ...this.signals }
+    this.eventTimers = new Set()
+    this.eventCount = 0
+    // a press on a ship that may become a drag, and the click to ignore after one
+    this.press = null
+    this.swallowClick = false
+    this.settleTimer = null
+  },
+  mounted() {
+    this.measure()
+    // not passive: a finger dragging a ship must not scroll the page under it
+    this.$refs.svg.addEventListener('touchmove', this.onTouchMove, { passive: false })
+    if (typeof ResizeObserver !== 'undefined') {
+      this.observer = new ResizeObserver(() => this.measure())
+      this.observer.observe(this.$refs.wrap)
+    }
+  },
+  unmounted() {
+    this.observer?.disconnect()
+    clearTimeout(this.hideTimer)
+    clearTimeout(this.settleTimer)
+    for (const t of this.eventTimers) clearTimeout(t)
+    this.endPress()
+    this.$refs.svg?.removeEventListener('touchmove', this.onTouchMove)
+  },
+  methods: {
+    // Shows `kind` at a ship for a moment; a newer event there replaces it.
+    signal(id, kind) {
+      if (!kind) return
+      const n = ++this.eventCount
+      this.events[id] = { kind, n }
+      const timer = setTimeout(() => {
+        this.eventTimers.delete(timer)
+        if (this.events[id]?.n === n) delete this.events[id]
+      }, EVENT_MS)
+      this.eventTimers.add(timer)
+    },
+    // Laid out for the width it has, at 1:1.
+    measure() {
+      const w = this.$refs.wrap?.clientWidth
+      if (w) this.width = w
+    },
+    live(s) {
+      return liveProject(s.id)
+    },
+    stateOf(s) {
+      return vesselState(this.live(s))
+    },
+    statusOf(s) {
+      return statusWord(this.live(s))
+    },
+    runtimeOf(s) {
+      return s.project.deployed_runtime || s.project.runtime
+    },
+    shape(s) {
+      return SHIP_KINDS[shipKind(this.runtimeOf(s))]
+    },
+    shipClasses(s) {
+      return [
+        `state-${this.stateOf(s)}`,
+        `rt-${this.runtimeOf(s)}`,
+        `side-${s.side}`,
+        {
+          dim: this.matches && !this.matches.has(s.id),
+          pointed: this.card?.id === s.id,
+          lifted: this.drag?.ship.id === s.id,
+          pending: this.moving === s.id,
+        },
+      ]
+    },
+    // Where a ship lies, as a CSS transform rather than an attribute, so that
+    // it can glide to a new berth after a move (.settling); a ship at anchor
+    // is swung about its buoy.
+    shipTransform(s) {
+      const swing = s.rot
+        ? ` translate(${ANCHOR_X}px, ${SHIP_B / 2}px) rotate(${s.rot}deg) translate(${-ANCHOR_X}px, ${-SHIP_B / 2}px)`
+        : ''
+      return `translate(${s.x}px, ${s.y}px)${swing}`
+    },
+    // A ship under way has cast off: a little out from its jetty, bow first.
+    castOff(s) {
+      return this.stateOf(s) === 'underway' && s.side !== 'anchor' ? s.dir * CAST_OFF : 0
+    },
+    // How many of a container ship's three stacks are on deck: its memory in use.
+    stacksOf(s) {
+      return cargoStacks(this.live(s))
+    },
+    wornOf(s) {
+      return isWorn(this.live(s))
+    },
+    // The tooltip: the status, and what the ship's cargo and scrapes stand for.
+    titleOf(s) {
+      const live = this.live(s)
+      const parts = [`${s.project.name} — ${this.statusOf(s)}`]
+      if (shipKind(this.runtimeOf(s)) === 'container' && this.stacksOf(s)) {
+        parts.push(`${bytes(live.pm2.memory)}${live.info?.memory_mb ? ` of ${live.info.memory_mb} MB` : ''} memory`)
+      }
+      if (this.wornOf(s)) parts.push(`restarted ${live.pm2.restarts} times since its last deploy`)
+      return parts.join(' · ')
+    },
+    // What fits under the ship, along its berth.
+    shortName(s) {
+      return shipName(s.project.name)
+    },
+    // The pier's name as its shed carries it, and a roof wide enough for it.
+    pierLabel(j) {
+      return shipName(j.name, 26)
+    },
+    signWidth(j) {
+      return Math.max(58, Math.round(this.pierLabel(j).length * 7.6 + 24))
+    },
+    openProject(s) {
+      if (this.swallowClick) return // the click that ends a drag is not a visit
+      this.$router.push(`/projects/${s.id}`)
+    },
+    showCard(s) {
+      if (this.drag) return
+      clearTimeout(this.hideTimer)
+      this.card = s
+    },
+
+    // --- dragging a ship to another pier ---
+    // A pointer event's place on the map, in the layout's units (the map is
+    // drawn 1:1, but narrower than its least width it is scaled down).
+    mapPoint(event) {
+      const box = this.$refs.svg.getBoundingClientRect()
+      const scale = box.width ? this.layout.width / box.width : 1
+      return { x: (event.clientX - box.left) * scale, y: (event.clientY - box.top) * scale }
+    },
+    canMoor(fleet, jetty) {
+      return Boolean(this.drag) && this.drag.fleet === fleet.key && jetty.pierId !== this.drag.ship.pierId
+    },
+    canAnchor(fleet) {
+      return Boolean(this.drag) && this.drag.fleet === fleet.key && this.drag.ship.pierId != null
+    },
+    // A press on a ship may become a drag: with a mouse or a pen once it has
+    // moved a little, with a finger once it has rested there (a finger that
+    // moves at once is scrolling the page).
+    onPress(event, ship, fleet) {
+      if ((event.button ?? 0) !== 0 || this.press || this.moving != null) return
+      const at = this.mapPoint(event)
+      const touch = event.pointerType === 'touch'
+      this.press = { ship, fleet: fleet.key, x0: at.x, y0: at.y, touch, timer: null }
+      if (touch) this.press.timer = setTimeout(() => this.press && this.pickUp(at), HOLD_MS)
+      window.addEventListener('pointermove', this.onPointerMove)
+      window.addEventListener('pointerup', this.onRelease)
+      window.addEventListener('pointercancel', this.endPress)
+      window.addEventListener('keydown', this.onDragKey)
+    },
+    pickUp(at) {
+      const { ship, fleet, x0, y0 } = this.press
+      clearTimeout(this.hideTimer)
+      this.card = null
+      this.drag = { ship, fleet, x: at.x, y: at.y, gx: x0 - ship.x, gy: y0 - ship.y, target: dropTarget(this.layout, ship.id, at.x, at.y) }
+    },
+    onPointerMove(event) {
+      if (!this.press) return
+      const at = this.mapPoint(event)
+      if (!this.drag) {
+        const far = Math.hypot(at.x - this.press.x0, at.y - this.press.y0)
+        if (this.press.touch) {
+          if (far > HOLD_SLACK) this.endPress() // not resting: a scroll
+          return
+        }
+        if (far < DRAG_START) return
+        this.pickUp(at)
+      }
+      this.drag.x = at.x
+      this.drag.y = at.y
+      this.drag.target = dropTarget(this.layout, this.drag.ship.id, at.x, at.y)
+    },
+    onTouchMove(event) {
+      if (this.drag && event.cancelable) event.preventDefault()
+    },
+    // A long press on a link brings up the browser's menu for it; not while
+    // a finger is picking a ship up.
+    onContextMenu(event) {
+      if (this.drag || this.press?.touch) event.preventDefault()
+    },
+    onRelease() {
+      const drag = this.drag
+      this.endPress()
+      if (!drag) return
+      this.swallow()
+      if (drag.target.kind === 'pier') this.moveTo(drag.ship, drag.target.pierId)
+      else if (drag.target.kind === 'anchor') this.moveTo(drag.ship, null)
+    },
+    // Escape puts the ship back.
+    onDragKey(event) {
+      if (event.key !== 'Escape' || !this.drag) return
+      this.endPress()
+      this.swallow(true)
+    },
+    endPress() {
+      clearTimeout(this.press?.timer)
+      this.press = null
+      this.drag = null
+      window.removeEventListener('pointermove', this.onPointerMove)
+      window.removeEventListener('pointerup', this.onRelease)
+      window.removeEventListener('pointercancel', this.endPress)
+      window.removeEventListener('keydown', this.onDragKey)
+    },
+    // The click the browser sends after a drag's release would open the
+    // project: let it pass unanswered. `held`: the button is still down
+    // (Escape), so the release — and its click — is yet to come.
+    swallow(held = false) {
+      this.swallowClick = true
+      const done = () => setTimeout(() => { this.swallowClick = false }, 0)
+      if (held) window.addEventListener('pointerup', done, { once: true })
+      else done()
+    },
+    // Saves the move (null: to no pier) the way the ⋮ menu does — a refusal
+    // is said in a dialog there. The harbor's new shape comes with the live
+    // state; ships glide to their berths while it settles.
+    async moveTo(ship, pierId) {
+      clearTimeout(this.settleTimer)
+      this.moving = ship.id
+      this.settling = true
+      try {
+        await performAction(ship.project, `pier:${pierId ?? ''}`)
+      } finally {
+        this.moving = null
+        this.settleTimer = setTimeout(() => { this.settling = false }, SETTLE_MS)
+      }
+    },
+    keepCard() {
+      clearTimeout(this.hideTimer)
+    },
+    // A moment's grace, so the pointer can travel from the ship to its card.
+    hideSoon() {
+      clearTimeout(this.hideTimer)
+      this.hideTimer = setTimeout(() => {
+        if (!this.$el?.querySelector?.('.harbor-card .action-menu-list')) this.card = null
+      }, 250)
+    },
+  },
+}
+</script>

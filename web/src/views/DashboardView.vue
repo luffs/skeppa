@@ -50,13 +50,19 @@
         <button type="button" class="filter-chip-clear" aria-label="Clear the filter" @click="stateFilter = ''">✕</button>
       </span>
       <span class="spacer"></span>
-      <!-- While filtering every pier with a match is open, so there is nothing to fold. -->
-      <button v-if="pierIds.length && !filtering" type="button" class="small secondary" @click="toggleAll">
+      <!-- While filtering every pier with a match is open, so there is nothing to
+           fold; the map has nothing folded at all. -->
+      <button v-if="pierIds.length && !filtering && view === 'list'" type="button" class="small secondary" @click="toggleAll">
         <StableLabel :text="allFolded ? 'Unfold all' : 'Fold all'" :variants="['Unfold all', 'Fold all']" />
       </button>
+      <div class="segmented harbor-view" role="group" aria-label="Show the harbor as">
+        <button type="button" :class="{ active: view === 'list' }" :aria-pressed="view === 'list' ? 'true' : 'false'" @click="setView('list')">List</button>
+        <button type="button" :class="{ active: view === 'map' }" :aria-pressed="view === 'map' ? 'true' : 'false'" @click="setView('map')">Harbor</button>
+      </div>
     </div>
 
-    <div v-if="projects.length" class="harbor-layout">
+    <!-- The map gets the whole width, the log under it; the list keeps the log beside it. -->
+    <div v-if="projects.length" class="harbor-layout" :class="{ 'as-map': view === 'map' }">
       <div class="harbor-list">
         <div v-if="addingPier" class="pier-new">
           <div class="row">
@@ -80,10 +86,11 @@
           </p>
         </div>
         <p v-if="filtering && !visible.length" class="hint harbor-none">
-          No vessel matches<template v-if="query"> “{{ query }}”</template><template v-if="stateFilter"> among those that {{ stateFilter === 'running' ? 'are running' : 'need attention' }}</template>.
+          No vessel matches<template v-if="query"> “{{ query }}”</template><template v-if="stateFilter"> among those that {{ STATE_FILTERS[stateFilter].that }}</template><template v-if="view === 'map'"> — the rest of the harbor is dimmed</template>.
           <button type="button" class="link-button" @click="clearFilters">Clear</button>
         </p>
-        <template v-for="f in fleets" :key="f.key">
+        <HarborMap v-if="view === 'map'" :fleets="allFleets" :matches="matchIds" :state-filter="stateFilter" :counts="counts" @toggle-state="toggleState" />
+        <template v-for="f in fleets" v-else :key="f.key">
           <!-- One fleet is the whole harbor: headings only once there is more than one. -->
           <div v-if="fleets.length > 1" class="fleet-head">
             <span class="section-label">{{ f.label }}</span>
@@ -194,6 +201,7 @@
 <script>
 import ProjectRow from '../components/ProjectRow.vue'
 import StableLabel from '../components/StableLabel.vue'
+import HarborMap from '../components/HarborMap.vue'
 import PierHead from '../components/PierHead.vue'
 import { store, liveProject } from '../store.js'
 import { STATE_FILTERS, filterWords, matchesSearch, matchesState, stateCounts } from '../lib/harborFilter.js'
@@ -208,6 +216,14 @@ const FEED_STEP = 12
 // Which piers are folded away is this browser's own convenience; storage
 // can be missing or throw (private windows), and then everything is open.
 const COLLAPSED_KEY = 'skeppa.collapsedPiers'
+const VIEW_KEY = 'skeppa.harborView'
+function loadView() {
+  try {
+    return localStorage.getItem(VIEW_KEY) === 'map' ? 'map' : 'list'
+  } catch {
+    return 'list'
+  }
+}
 function loadCollapsed() {
   try {
     const ids = JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? '[]')
@@ -226,13 +242,15 @@ function saveCollapsed(map) {
 
 export default {
   name: 'DashboardView',
-  components: { ProjectRow, PierHead, StableLabel },
+  components: { ProjectRow, PierHead, StableLabel, HarborMap },
   data() {
     const q = this.$route?.query ?? {}
     return {
       STATE_FILTERS,
       query: typeof q.q === 'string' ? q.q : '',
       stateFilter: q.state in STATE_FILTERS ? q.state : '',
+      // List or map: from the URL first, then this browser's last choice.
+      view: q.view === 'map' || q.view === 'list' ? q.view : loadView(),
       FEED_FIRST, // read by the template
       FEED_STEP,
       setup: null,
@@ -275,34 +293,18 @@ export default {
     counts() {
       return stateCounts(this.projects.map(p => liveProject(p.id)))
     },
-    // The harbor split by owner: your own projects first, then everyone
-    // else's by name. A tenant only ever has one fleet (their own), so for
-    // them nothing changes; an admin sees who owns what without a legend.
-    // Filtered, only what matches — piers with nothing to show included.
+    // The list's harbor: filtered, only what matches — piers with nothing
+    // to show included.
     fleets() {
-      const me = store.user?.id
-      const groups = new Map()
-      for (const p of this.visible) {
-        const key = p.owner_id ?? 'none'
-        if (!groups.has(key)) groups.set(key, { key, ...this.ownerLabel(p), mine: p.owner_id === me, projects: [] })
-        groups.get(key).projects.push(p)
-      }
-      const fleets = [...groups.values()].sort((a, b) => (b.mine - a.mine) || a.label.localeCompare(b.label))
-      // Within a fleet: its piers by name (empty ones too — something has to
-      // be there to moor at), then the projects at no pier. A group_id the
-      // store does not know (yet) reads as no pier.
-      const piers = Object.values(store.live.groups ?? {})
-      for (const f of fleets) {
-        const own = piers
-          .filter(g => g.owner_id === f.key)
-          .sort((a, b) => a.name.localeCompare(b.name))
-          .map(pier => ({ pier, projects: [] }))
-        const byId = new Map(own.map(s => [s.pier.id, s]))
-        f.loose = []
-        for (const p of f.projects) (byId.get(p.group_id)?.projects ?? f.loose).push(p)
-        f.piers = this.filtering ? own.filter(x => x.projects.length) : own
-      }
-      return fleets
+      return this.buildFleets(this.visible, this.filtering)
+    },
+    // The map's: the whole harbor, which it dims rather than thins out.
+    allFleets() {
+      return this.buildFleets(this.projects, false)
+    },
+    // The ids the search and filter let through, or null when nothing filters.
+    matchIds() {
+      return this.filtering ? new Set(this.visible.map(p => p.id)) : null
     },
     pierIds() {
       return this.fleets.flatMap(f => f.piers.map(x => x.pier.id))
@@ -357,6 +359,9 @@ export default {
     stateFilter() {
       this.syncQuery()
     },
+    view() {
+      this.syncQuery()
+    },
     // The checklist only concerns an empty harbor — don't poke GitHub on
     // every dashboard visit once projects exist.
     needsSetup: { immediate: true, handler(v) { if (v && !this.setup) this.checkSetup() } },
@@ -368,6 +373,34 @@ export default {
     window.removeEventListener('keydown', this.onSlash)
   },
   methods: {
+    // The harbor split by owner: your own projects first, then everyone
+    // else's by name. A tenant only ever has one fleet (their own), so for
+    // them nothing changes; an admin sees who owns what without a legend.
+    // Within a fleet: its piers by name (empty ones too — something has to
+    // be there to moor at — unless `prune`), then the projects at no pier. A
+    // group_id the store does not know (yet) reads as no pier.
+    buildFleets(list, prune) {
+      const me = store.user?.id
+      const groups = new Map()
+      for (const p of list) {
+        const key = p.owner_id ?? 'none'
+        if (!groups.has(key)) groups.set(key, { key, ...this.ownerLabel(p), mine: p.owner_id === me, projects: [] })
+        groups.get(key).projects.push(p)
+      }
+      const fleets = [...groups.values()].sort((a, b) => (b.mine - a.mine) || a.label.localeCompare(b.label))
+      const piers = Object.values(store.live.groups ?? {})
+      for (const f of fleets) {
+        const own = piers
+          .filter(g => g.owner_id === f.key)
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .map(pier => ({ pier, projects: [] }))
+        const byId = new Map(own.map(x => [x.pier.id, x]))
+        f.loose = []
+        for (const p of f.projects) (byId.get(p.group_id)?.projects ?? f.loose).push(p)
+        f.piers = prune ? own.filter(x => x.projects.length) : own
+      }
+      return fleets
+    },
     // / jumps to the search, unless someone is typing somewhere already.
     onSlash(event) {
       if (event.key !== '/' || event.ctrlKey || event.metaKey || event.altKey) return
@@ -375,6 +408,14 @@ export default {
       if (el?.closest?.('input, textarea, select, [contenteditable="true"]')) return
       event.preventDefault()
       this.$refs.search?.focus()
+    },
+    setView(view) {
+      this.view = view
+      try {
+        localStorage.setItem(VIEW_KEY, view)
+      } catch {
+        // not remembered — fine
+      }
     },
     toggleState(key) {
       this.stateFilter = this.stateFilter === key ? '' : key
@@ -392,6 +433,8 @@ export default {
       else delete query.q
       if (this.stateFilter) query.state = this.stateFilter
       else delete query.state
+      if (this.view === 'map') query.view = 'map'
+      else delete query.view
       this.$router?.replace?.({ query })
     },
     toggleAll() {

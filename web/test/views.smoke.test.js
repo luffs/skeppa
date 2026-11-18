@@ -98,6 +98,8 @@ const ADMIN = { id: 1, username: 'cap', role: 'admin', handle: '', domain: '' }
 const TENANT = { id: 2, username: 'bob', role: 'tenant', handle: 'bob', domain: '' }
 
 function seedStore(role) {
+  // every test starts on the list, whatever an earlier one chose
+  try { localStorage.removeItem('skeppa.harborView') } catch { /* no storage: the list anyway */ }
   store.user = role === 'admin' ? ADMIN : TENANT
   store.connected = true
   store.ready = true
@@ -300,6 +302,337 @@ test('the harbor groups projects by owner for an admin, and not for a tenant', a
 // Search and the state filter narrow the harbor: what does not match goes,
 // piers with no match go, piers with one open (folded or not), the log
 // follows, and both live in the URL.
+// The harbor as a map: piers as jetties, projects as ships, the same states,
+// the same row on hover, and the filter dimming instead of thinning out.
+describe('the harbor map', () => {
+  for (const role of ['admin', 'tenant']) {
+    test(`renders for ${role === 'admin' ? 'an admin' : 'a tenant'}, every vessel a ship`, async () => {
+      seedStore(role)
+      const res = await expectCleanRender(DashboardView, {
+        route: { query: { view: 'map' } },
+        steps: async wrapper => {
+          const ships = wrapper.findAll('.hm-ship').map(s => s.attributes('aria-label'))
+          expect(ships).toEqual(role === 'admin' ? ['adm, online', 'bobapp, online'] : ['bobapp, online'])
+          expect(wrapper.find('.vessel-row').exists()).toBe(false) // no list underneath
+          expect(wrapper.findAll('.hm-pier-name').map(t => t.text())).toEqual(role === 'admin' ? ['Kunder', 'Tomt'] : ['Tomt'])
+        },
+      })
+      expect(res.problems.join(' | ')).toBe('')
+    })
+  }
+
+  test('List | Harbor switches, remembered and in the URL', async () => {
+    seedStore('admin')
+    try { localStorage.clear() } catch { /* starts as a list */ }
+    const replaced = []
+    const res = await expectCleanRender(DashboardView, {
+      router: { replace: to => replaced.push(to.query) },
+      steps: async wrapper => {
+        expect(wrapper.find('.harbor-map').exists()).toBe(false)
+        await wrapper.findAll('.harbor-view button').find(b => b.text() === 'Harbor').trigger('click')
+        await settle()
+        expect(wrapper.find('.harbor-map').exists()).toBe(true)
+        expect(replaced.at(-1)).toEqual({ view: 'map' })
+        expect(localStorage.getItem('skeppa.harborView')).toBe('map')
+        // nothing to fold on a map
+        expect(wrapper.findAll('.harbor-tools button').some(b => /Fold all/.test(visibleText(b)))).toBe(false)
+      },
+    })
+    expect(res.problems.join(' | ')).toBe('')
+  })
+
+  test('a ship shows its state and cargo, brings up its row, and leads to its project', async () => {
+    seedStore('admin')
+    const pushed = []
+    const res = await expectCleanRender(DashboardView, {
+      route: { query: { view: 'map' } },
+      router: { push: to => pushed.push(to) },
+      steps: async wrapper => {
+        const adm = wrapper.findAll('.hm-ship').find(s => s.attributes('aria-label').startsWith('adm'))
+        expect(adm.classes()).toEqual(expect.arrayContaining(['state-ahead', 'rt-container'])) // new commits; a container ship
+        expect(adm.findAll('.hm-cargo rect').length).toBe(3) // three places on deck…
+        expect(adm.findAll('.hm-cargo rect.laden').length).toBe(1) // …one stack on them: 40 MB of 512
+        expect(adm.find('.hm-pennant').exists()).toBe(true) // new commits waiting
+        expect(adm.find('title').text()).toBe('adm — online · 40.0 MB of 512 MB memory')
+        await adm.trigger('mouseenter')
+        await settle()
+        expect(wrapper.find('.harbor-card .vessel-name').text()).toBe('adm')
+        expect(visibleText(wrapper.find('.harbor-card .vessel-actions > button'))).toBe('Deploy latest')
+        await adm.trigger('click')
+        expect(pushed).toEqual(['/projects/1'])
+      },
+    })
+    expect(res.problems.join(' | ')).toBe('')
+  })
+
+  test('the filter dims what does not match, and the harbor keeps its shape', async () => {
+    seedStore('admin')
+    const res = await expectCleanRender(DashboardView, {
+      route: { query: { view: 'map', q: 'bob' } },
+      steps: async wrapper => {
+        const ships = wrapper.findAll('.hm-ship')
+        expect(ships.length).toBe(2) // nothing taken away
+        expect(ships.map(s => [s.attributes('aria-label').split(',')[0], s.classes().includes('dim')])).toEqual([['adm', true], ['bobapp', false]])
+      },
+    })
+    expect(res.problems.join(' | ')).toBe('')
+  })
+
+  test('the map takes the whole width, the log under it', async () => {
+    seedStore('admin')
+    const res = await expectCleanRender(DashboardView, {
+      steps: async wrapper => {
+        expect(wrapper.find('.harbor-layout').classes()).not.toContain('as-map')
+        await wrapper.findAll('.harbor-view button').find(b => b.text() === 'Harbor').trigger('click')
+        await settle()
+        expect(wrapper.find('.harbor-layout').classes()).toContain('as-map')
+        expect(wrapper.find('.harbor-layout .feed-panel').exists()).toBe(true) // still there
+      },
+    })
+    expect(res.problems.join(' | ')).toBe('')
+  })
+
+  test('the legend counts every state, names the ships in the harbor, and filters', async () => {
+    seedStore('admin')
+    store.live.projects[2].info.runtime = 'static'
+    store.live.projects[2].pm2.status = 'published'
+    store.live.projects[2].headCommit.sha = 'a'.repeat(40) // nothing new: running
+    const replaced = []
+    const res = await expectCleanRender(DashboardView, {
+      route: { query: { view: 'map' } },
+      router: { replace: to => replaced.push(to.query) },
+      steps: async wrapper => {
+        const keys = () => wrapper.findAll('.hm-key')
+        const said = k => k.text().replace(/\s+/g, ' ')
+        expect(keys().map(said)).toEqual(['running1', 'new commits1', 'down or failed0', 'under way0', 'idle0'])
+        expect(keys().map(k => k.attributes('disabled') != null)).toEqual([false, false, true, true, true]) // nothing to show: nothing to click
+        // a container ship and a sailing boat in this harbor, no tug
+        expect(wrapper.findAll('.hm-kind').map(k => k.text())).toEqual(['containera stack per third of its memory in use', 'static site'])
+        expect(wrapper.findAll('.hm-kind .hm-cargo rect.laden').length).toBe(3) // the legend's ship is fully laden
+        expect(wrapper.findAll('.hm-kind .hm-sail').length).toBe(2)
+
+        await keys()[1].trigger('click') // new commits
+        await settle()
+        expect(replaced.at(-1)).toEqual({ view: 'map', state: 'ahead' })
+        expect(keys()[1].attributes('aria-pressed')).toBe('true')
+        expect(wrapper.find('.filter-chip').text()).toContain('new commits')
+        expect(wrapper.findAll('.hm-ship').map(s => [s.attributes('aria-label').split(',')[0], s.classes().includes('dim')])).toEqual([['adm', false], ['bobapp', true]])
+
+        await keys()[1].trigger('click') // and off again
+        await settle()
+        expect(replaced.at(-1)).toEqual({ view: 'map' })
+        expect(wrapper.findAll('.hm-ship.dim').length).toBe(0)
+      },
+    })
+    expect(res.problems.join(' | ')).toBe('')
+  })
+
+  test('a legend filter with nothing left says so in words', async () => {
+    seedStore('admin')
+    const res = await expectCleanRender(DashboardView, {
+      route: { query: { view: 'map', state: 'idle' } },
+      steps: async wrapper => {
+        expect(wrapper.find('.harbor-none').text()).toContain('among those that are idle')
+        expect(wrapper.findAll('.hm-key').at(-1).attributes('disabled')).toBeUndefined() // the one in force can be switched off
+      },
+    })
+    expect(res.problems.join(' | ')).toBe('')
+  })
+
+  test('the cargo follows the memory in use, and restarts leave their marks', async () => {
+    seedStore('admin')
+    const res = await expectCleanRender(DashboardView, {
+      route: { query: { view: 'map' } },
+      steps: async wrapper => {
+        const adm = () => wrapper.findAll('.hm-ship').find(s => s.attributes('aria-label').startsWith('adm'))
+        expect(adm().find('.hm-scuffs').exists()).toBe(false)
+        store.live.projects[1].pm2.memory = 400 * 1024 * 1024
+        store.live.projects[1].pm2.restarts = 4
+        await settle()
+        expect(adm().findAll('.hm-cargo rect.laden').length).toBe(3)
+        expect(adm().find('.hm-scuffs').exists()).toBe(true)
+        expect(adm().find('title').text()).toBe('adm — online · 400.0 MB of 512 MB memory · restarted 4 times since its last deploy')
+        // stopped: nothing on deck
+        store.live.projects[1].pm2.status = 'stopped'
+        await settle()
+        expect(adm().findAll('.hm-cargo rect.laden').length).toBe(0)
+        expect(adm().findAll('.hm-cargo rect').length).toBe(3)
+      },
+    })
+    expect(res.problems.join(' | ')).toBe('')
+  })
+
+  // Dragging: a press on a ship, the pointer moved over the map (happy-dom
+  // lays nothing out, so the pointer's place is the map's own units), a release.
+  const pointer = (type, x, y) => Object.assign(new Event(type, { bubbles: true }), { clientX: x, clientY: y, button: 0, pointerType: 'mouse' })
+  const dragging = wrapper => {
+    const ship = name => wrapper.findAll('.hm-ship').find(s => s.attributes('aria-label')?.startsWith(name))
+    const pier = name => {
+      const g = wrapper.findAll('.hm-jetty-g').find(j => j.find('.hm-pier-name').text() === name)
+      return { g, x: Number(g.find('.hm-jetty').attributes('x')) + 8, y: Number(g.find('.hm-jetty').attributes('y')) + 3 }
+    }
+    const lies = name => {
+      const [, x, y] = /translate\((-?[\d.]+)px, (-?[\d.]+)px\)/.exec(ship(name).attributes('style'))
+      return { x: Number(x), y: Number(y) }
+    }
+    const press = name => ship(name).element.dispatchEvent(pointer('pointerdown', lies(name).x + 20, lies(name).y + 10))
+    const move = async (x, y) => { window.dispatchEvent(pointer('pointermove', x, y)); await settle() }
+    // the release, and the click a browser sends the ship after it
+    const release = async name => {
+      window.dispatchEvent(pointer('pointerup', 0, 0))
+      await ship(name).trigger('click')
+      await settle()
+    }
+    return { ship, pier, lies, press, move, release }
+  }
+
+  test('a ship dragged to another of its fleet’s piers moors there, and the release is no visit', async () => {
+    seedStore('admin')
+    const patch = vi.spyOn(api, 'patch')
+    const pushed = []
+    const res = await expectCleanRender(DashboardView, {
+      route: { query: { view: 'map' } },
+      router: { push: to => pushed.push(to) },
+      steps: async wrapper => {
+        const { ship, pier, lies, press, move, release } = dragging(wrapper)
+        expect(wrapper.find('.hm-drag-tip').exists()).toBe(true)
+        const from = lies('bobapp') // bob's, at anchor
+        press('bobapp')
+        await move(from.x + 22, from.y + 11) // a nudge is still a click
+        expect(wrapper.find('.hm-ghost').exists()).toBe(false)
+
+        await move(pier('Tomt').x - 30, pier('Tomt').y + 20) // over bob's own pier
+        expect(wrapper.find('.hm-ghost .hm-name').text()).toBe('bobapp')
+        expect(wrapper.find('.hm-drop-hint').text()).toBe('Moor at Tomt')
+        expect(pier('Tomt').g.classes()).toEqual(expect.arrayContaining(['can-drop', 'drop-on']))
+        expect(pier('Kunder').g.classes()).not.toContain('can-drop') // the admin's: not this ship's to moor at
+        expect(wrapper.find('.hm-slot').exists()).toBe(true)
+        expect(ship('bobapp').classes()).toContain('lifted')
+        expect(wrapper.find('.harbor-card').exists()).toBe(false)
+
+        await release('bobapp')
+        expect(patch).toHaveBeenLastCalledWith('/api/projects/2', { group_id: 8 })
+        expect(pushed).toEqual([])
+        expect(wrapper.find('.hm-ghost').exists()).toBe(false)
+        expect(ship('bobapp').classes()).not.toContain('lifted')
+
+        // and a plain click is a visit again
+        await ship('bobapp').trigger('click')
+        expect(pushed).toEqual(['/projects/2'])
+      },
+    })
+    patch.mockRestore()
+    expect(res.problems.join(' | ')).toBe('')
+  })
+
+  test('let go over its fleet’s open water a ship leaves its pier; another fleet’s pier refuses it; Escape puts it back', async () => {
+    seedStore('admin')
+    const patch = vi.spyOn(api, 'patch')
+    const pushed = []
+    const res = await expectCleanRender(DashboardView, {
+      route: { query: { view: 'map' } },
+      router: { push: to => pushed.push(to) },
+      steps: async wrapper => {
+        const { pier, press, move, release } = dragging(wrapper)
+        const kunder = pier('Kunder') // adm lies here, the admin's only pier
+
+        // out into the water beside its pier
+        press('adm')
+        await move(kunder.x + 300, kunder.y + 40)
+        expect(wrapper.find('.hm-drop-hint').text()).toBe('Leave at anchor')
+        expect(wrapper.find('.hm-anchor-here').classes()).toContain('drop-on') // no anchorage in this fleet yet: the water says what it is
+        expect(wrapper.find('.hm-slot').exists()).toBe(false)
+        await release('adm')
+        expect(patch).toHaveBeenLastCalledWith('/api/projects/1', { group_id: null })
+        expect(patch).toHaveBeenCalledTimes(1)
+
+        // onto bob's pier: refused, and nothing is asked of the server
+        press('adm')
+        await move(pier('Tomt').x, pier('Tomt').y + 20)
+        expect(wrapper.find('.hm-ghost').classes()).toContain('refused')
+        expect(wrapper.find('.hm-drop-hint').text()).toContain('only its own piers')
+        expect(pier('Tomt').g.classes()).not.toContain('can-drop')
+        await release('adm')
+        expect(patch).toHaveBeenCalledTimes(1)
+
+        // back onto its own pier: nothing to do
+        press('adm')
+        await move(kunder.x + 300, kunder.y + 40)
+        await move(kunder.x + 40, kunder.y + 30)
+        expect(wrapper.find('.hm-drop-hint').exists()).toBe(false)
+        await release('adm')
+        expect(patch).toHaveBeenCalledTimes(1)
+
+        // Escape mid-drag
+        press('adm')
+        await move(kunder.x + 300, kunder.y + 40)
+        window.dispatchEvent(Object.assign(new Event('keydown'), { key: 'Escape' }))
+        await settle()
+        expect(wrapper.find('.hm-ghost').exists()).toBe(false)
+        await release('adm')
+        expect(patch).toHaveBeenCalledTimes(1)
+        expect(pushed).toEqual([])
+      },
+    })
+    patch.mockRestore()
+    expect(res.problems.join(' | ')).toBe('')
+  })
+
+  test('what happens while the map is open shows on the water', async () => {
+    seedStore('admin')
+    const A = 'a'.repeat(40)
+    store.live.projects[1].currentDeployment = { id: 9, status: 'running' }
+    store.live.projects[2].lastDeployment.status = 'failed' // failed before the map was opened
+    const res = await expectCleanRender(DashboardView, {
+      route: { query: { view: 'map' } },
+      steps: async wrapper => {
+        const ship = name => wrapper.findAll('.hm-ship').find(s => s.attributes('aria-label').startsWith(name))
+        // how things already were is no event
+        expect(wrapper.find('.hm-event').exists()).toBe(false)
+        expect(ship('adm').find('.hm-berth').attributes('style')).toContain('translateX(-7px)') // cast off, bow first
+
+        // the voyage ends well: back at its berth, rings on the water
+        Object.assign(store.live.projects[1], { currentDeployment: null, deployedSha: A, headCommit: { sha: A }, lastDeployment: { id: 9, status: 'success' } })
+        await settle()
+        expect(ship('adm').classes()).toContain('state-running')
+        expect(ship('adm').find('.hm-berth').attributes('style')).toContain('translateX(0px)')
+        expect(ship('adm').find('.hm-event').classes()).toContain('arrived')
+        expect(ship('adm').find('.hm-flare').exists()).toBe(false)
+
+        // new commits come in: a pennant, and amber rings
+        store.live.projects[1].headCommit = { sha: 'c'.repeat(40) }
+        await settle()
+        expect(ship('adm').find('.hm-pennant').exists()).toBe(true)
+        expect(ship('adm').find('.hm-event').classes()).toContain('hail')
+
+        // the next voyage fails: a flare
+        store.live.projects[1].currentDeployment = { id: 10, status: 'running' }
+        await settle()
+        Object.assign(store.live.projects[1], { currentDeployment: null, lastDeployment: { id: 10, status: 'failed' } })
+        await settle()
+        expect(ship('adm').find('.hm-event').classes()).toContain('flare')
+        expect(ship('adm').find('.hm-flare').exists()).toBe(true)
+        expect(ship('bobapp').find('.hm-event').exists()).toBe(false) // only the ship it happened to
+      },
+    })
+    expect(res.problems.join(' | ')).toBe('')
+  })
+
+  test('a voyage under way casts off with a wake', async () => {
+    seedStore('admin')
+    store.live.projects[1].currentDeployment = { id: 9, status: 'running' }
+    const res = await expectCleanRender(DashboardView, {
+      route: { query: { view: 'map' } },
+      steps: async wrapper => {
+        const adm = wrapper.findAll('.hm-ship').find(s => s.attributes('aria-label').startsWith('adm'))
+        expect(adm.classes()).toContain('state-underway')
+        expect(adm.find('.hm-wake').exists()).toBe(true)
+      },
+    })
+    expect(res.problems.join(' | ')).toBe('')
+  })
+})
+
 describe('filtering the harbor', () => {
   const names = w => w.findAll('.vessel-row .vessel-name').map(n => n.text())
 
