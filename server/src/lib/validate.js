@@ -59,6 +59,19 @@ export function parseNetworks(text) {
 // over the engine's JSON API, never a shell — a sanity check, not an escape.
 export const CONTAINER_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
 
+// A pier (project group) name is a label and nothing else: it never reaches
+// a path, a shell or an engine name, and Vue escapes it on render. So the
+// rule is only "a readable line": trimmed, inner whitespace collapsed, no
+// control characters, 1–40 characters. Returns the normalized name or null.
+export const GROUP_NAME_MAX = 40
+export function normalizeGroupName(value) {
+  if (typeof value !== 'string') return null
+  const name = value.replace(/\s+/g, ' ').trim()
+  // eslint-disable-next-line no-control-regex
+  if (!name || name.length > GROUP_NAME_MAX || /[\u0000-\u001f\u007f]/.test(name)) return null
+  return name
+}
+
 export function isValidBranch(branch) {
   return typeof branch === 'string' && BRANCH_RE.test(branch) && !branch.includes('..')
 }

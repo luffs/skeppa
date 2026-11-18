@@ -17,7 +17,7 @@ import { PROXY_PM2_NAME, isReservedPm2Name } from '../lib/runtime.js'
 
 const PROJECT_COLUMNS =
   'id, slug, name, repo_full_name, git_url, branch, deploy_script, build_image, run_image, runtime, pm2_name, start_command, cwd, ' +
-  'auto_deploy, write_env_file, build_env, subdomain, port, memory_mb, network_profile, host_access, networks, publish_dir, spa_fallback, gate_files, deployed_runtime, head_sha, head_message, head_pushed_at, created_at'
+  'auto_deploy, write_env_file, build_env, subdomain, port, memory_mb, network_profile, host_access, networks, publish_dir, spa_fallback, gate_files, deployed_runtime, group_id, head_sha, head_message, head_pushed_at, created_at'
 
 const DEFAULT_LOG_LINES = 200
 const MAX_LOG_LINES = 2000
@@ -93,6 +93,15 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
   // Tenants never get a host process: a container, or no process at all.
   const TENANT_RUNTIMES = ['container', 'static']
 
+  // A pier (project group) is the owner's: a project joins only a pier of
+  // its own owner, whoever is editing. '' / null = no pier.
+  const normalizeGroup = value => (value == null || value === '' ? null : Number(value))
+  const groupError = (groupId, ownerId) => {
+    if (groupId == null) return ''
+    const group = Number.isInteger(groupId) ? db.query('SELECT owner_id FROM project_groups WHERE id = ?').get(groupId) : null
+    return group && group.owner_id === ownerId ? '' : 'no such pier in this fleet'
+  }
+
   // Field errors for subdomain/port collisions with other projects.
   // A tenant's public names live under their handle, so bob's "app" and
   // eve's "app" are different hosts — collisions only exist inside one
@@ -159,6 +168,7 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
       publish_dir: normalizePublishDir(body.publish_dir),
       spa_fallback: body.spa_fallback ? 1 : 0,
       gate_files: body.gate_files ? 1 : 0,
+      group_id: normalizeGroup(body.group_id),
     }
     // No webhook will ever fire for a plain-git project — keep the flag
     // honest instead of letting it promise something that cannot happen.
@@ -174,6 +184,8 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
     // so nobody can point a project at a process that is not theirs.
     if (project.runtime !== 'pm2') project.pm2_name = slugify(body.name ?? '')
     const errors = { ...validateProject(project), ...routingConflicts(project) }
+    const pierProblem = groupError(project.group_id, project.owner_id)
+    if (pierProblem) errors.group_id = pierProblem
     if (tenant) {
       // Host access reaches the panel itself — a role rule, not an option.
       if (body.runtime === 'pm2') errors.runtime = 'tenant projects run in a container or as a static site'
@@ -212,13 +224,13 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
       db.query('SELECT 1 FROM projects WHERE pm2_name = ?').get(n))
 
     const { lastInsertRowid } = db.query(
-      `INSERT INTO projects (slug, name, owner_id, repo_full_name, git_url, branch, deploy_script, build_image, run_image, runtime, pm2_name, start_command, cwd, auto_deploy, write_env_file, build_env, subdomain, port, memory_mb, network_profile, host_access, networks, publish_dir, spa_fallback, gate_files)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO projects (slug, name, owner_id, repo_full_name, git_url, branch, deploy_script, build_image, run_image, runtime, pm2_name, start_command, cwd, auto_deploy, write_env_file, build_env, subdomain, port, memory_mb, network_profile, host_access, networks, publish_dir, spa_fallback, gate_files, group_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(slug, project.name, project.owner_id, project.repo_full_name, project.git_url, project.branch, project.deploy_script,
           project.build_image, project.run_image, project.runtime, project.pm2_name, project.start_command,
           project.cwd, project.auto_deploy, project.write_env_file, project.build_env, project.subdomain, project.port,
           project.memory_mb, project.network_profile, project.host_access, project.networks,
-          project.publish_dir, project.spa_fallback, project.gate_files)
+          project.publish_dir, project.spa_fallback, project.gate_files, project.group_id)
     const id = Number(lastInsertRowid)
     if (project.port == null) {
       project.port = autoPort(db, id)
@@ -265,6 +277,7 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
       publish_dir: 'publish_dir' in body ? normalizePublishDir(body.publish_dir) : project.publish_dir,
       spa_fallback: 'spa_fallback' in body ? (body.spa_fallback ? 1 : 0) : project.spa_fallback,
       gate_files: 'gate_files' in body ? (body.gate_files ? 1 : 0) : project.gate_files,
+      group_id: 'group_id' in body ? normalizeGroup(body.group_id) : project.group_id,
       owner_id: project.owner_id, // ownership never changes on edit
     }
     // Clearing the port (or saving a legacy project that never had one)
@@ -275,6 +288,9 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
     // otherwise it stays what it was, whatever the request says.
     if (merged.runtime !== 'pm2') merged.pm2_name = project.pm2_name
     const errors = { ...validateProject(merged), ...routingConflicts(merged, project.id) }
+    // Only a change is checked: a pier that was fine stays fine.
+    const pierProblem = merged.group_id !== project.group_id ? groupError(merged.group_id, project.owner_id) : ''
+    if (pierProblem) errors.group_id = pierProblem
     const editor = c.get('user')
     if (editor && editor.role !== 'admin') {
       if (!TENANT_RUNTIMES.includes(merged.runtime)) errors.runtime = 'tenant projects run in a container or as a static site'
@@ -295,12 +311,12 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
     db.query(
       `UPDATE projects SET name = ?, repo_full_name = ?, branch = ?, deploy_script = ?, build_image = ?, run_image = ?, runtime = ?,
          start_command = ?, pm2_name = ?, cwd = ?, auto_deploy = ?, write_env_file = ?, build_env = ?, subdomain = ?, port = ?, memory_mb = ?,
-         network_profile = ?, host_access = ?, networks = ?, git_url = ?, publish_dir = ?, spa_fallback = ?, gate_files = ? WHERE id = ?`
+         network_profile = ?, host_access = ?, networks = ?, git_url = ?, publish_dir = ?, spa_fallback = ?, gate_files = ?, group_id = ? WHERE id = ?`
     ).run(merged.name, merged.repo_full_name, merged.branch, merged.deploy_script, merged.build_image,
           merged.run_image, merged.runtime, merged.start_command, merged.pm2_name, merged.cwd, merged.auto_deploy,
           merged.write_env_file, merged.build_env, merged.subdomain, merged.port, merged.memory_mb,
           merged.network_profile, merged.host_access, merged.networks, merged.git_url,
-          merged.publish_dir, merged.spa_fallback, merged.gate_files, project.id)
+          merged.publish_dir, merged.spa_fallback, merged.gate_files, merged.group_id, project.id)
     if (liveState.projects[project.id]) {
       liveState.projects[project.id].info = getProjectInfo(db, project.id)
     }

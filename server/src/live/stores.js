@@ -10,6 +10,7 @@ import { valueAt } from 'lazy-storage/core'
 //
 //   panel          system, users, images    admins
 //   fleet-<owner>  that owner's projects    the owner, or an admin
+//                  and piers (groups)
 //   harbor         proxy (the base domain)  any signed-in user
 //
 // Nothing here writes LiveState. The poller, the runner and the routes keep
@@ -30,7 +31,8 @@ import { valueAt } from 'lazy-storage/core'
 // A store is collections of records and singletons, and both sides declare
 // the same top level or the server answers `shape-mismatch`. `users` and
 // `projects` are collections — records keyed by id, added and deleted on
-// their own. `system`, `images`, `proxy` and a deploy log's `lines` are one
+// their own; so are a fleet's `groups` (piers), which travel with the
+// projects they hold. `system`, `images`, `proxy` and a deploy log's `lines` are one
 // record each: a bag of fields, not a keyed set, and `lines` could not be a
 // collection at all since its values are strings. The client declares the
 // same (web/src/live.js) — arrays need no declaration of their own, an array
@@ -38,7 +40,7 @@ import { valueAt } from 'lazy-storage/core'
 export const STORE_SHAPES = {
   panel: { initial: { system: {}, users: {}, images: {} }, singletons: ['system', 'images'] },
   harbor: { initial: { proxy: {} }, singletons: ['proxy'] },
-  fleet: { initial: { projects: {} }, singletons: [] },
+  fleet: { initial: { projects: {}, groups: {} }, singletons: [] },
   deploy: { initial: { lines: {} }, singletons: ['lines'] },
 }
 
@@ -110,11 +112,19 @@ export function createLiveStores({
     store.dispose() // its sessions close; the sockets stay up for their other stores
   }
 
+  // The same for piers, whose owner never changes (a Crew move takes the
+  // projects out of their piers instead).
+  const groupOwners = new Map()
+
   const ownerOf = id => liveState.projects?.[id]?.info?.owner_id ?? owners.get(String(id)) ?? null
+  const groupOwnerOf = id => liveState.groups?.[id]?.owner_id ?? groupOwners.get(String(id)) ?? null
 
   function rememberOwners() {
     for (const [id, live] of Object.entries(liveState.projects ?? {})) {
       if (live?.info?.owner_id != null) owners.set(id, live.info.owner_id)
+    }
+    for (const [id, group] of Object.entries(liveState.groups ?? {})) {
+      if (group?.owner_id != null) groupOwners.set(id, group.owner_id)
     }
   }
 
@@ -155,13 +165,14 @@ export function createLiveStores({
   }
 
   function route(diff) {
-    const { projects, system, users, images, proxy } = diff
+    const { projects, groups, system, users, images, proxy } = diff
+    const fleets = new Map() // owner -> { projects?, groups? }
+    const into = (owner, key) => {
+      if (!fleets.has(owner)) fleets.set(owner, {})
+      const fleet = fleets.get(owner)
+      return (fleet[key] ??= {})
+    }
     if (projects && typeof projects === 'object') {
-      const fleets = new Map()
-      const into = owner => {
-        if (!fleets.has(owner)) fleets.set(owner, {})
-        return fleets.get(owner)
-      }
       for (const [id, subtree] of Object.entries(projects)) {
         const owner = ownerOf(id)
         if (owner == null) {
@@ -174,16 +185,29 @@ export function createLiveStores({
           // the fields that changed, so: the old fleet forgets the project —
           // its owner must stop seeing it the moment it is not theirs — and
           // the new fleet gets all of it.
-          into(previous)[id] = null
-          into(owner)[id] = current(['projects', id])
+          into(previous, 'projects')[id] = null
+          into(owner, 'projects')[id] = current(['projects', id])
           continue
         }
-        into(owner)[id] = subtree
+        into(owner, 'projects')[id] = subtree
       }
-      for (const [owner, subtree] of fleets) {
-        ensureFleet(owner)
-        write(fleetId(owner), { projects: subtree })
+    }
+    if (groups && typeof groups === 'object') {
+      for (const [id, subtree] of Object.entries(groups)) {
+        const owner = groupOwnerOf(id)
+        if (owner == null) {
+          onError(new Error(`pier ${id} has no owner — not published to any fleet`))
+          continue
+        }
+        // A pier removed along with its owner: the fleet is gone already,
+        // and must not be brought back just to hear about it.
+        if (subtree === null && !stores.has(fleetId(owner))) continue
+        into(owner, 'groups')[id] = subtree
       }
+    }
+    for (const [owner, subtree] of fleets) {
+      ensureFleet(owner)
+      write(fleetId(owner), subtree)
     }
     const panel = {}
     if (system !== undefined) panel.system = system

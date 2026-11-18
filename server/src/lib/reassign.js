@@ -90,20 +90,28 @@ export async function planReassign({ db, github = null }, from, to) {
     if (netsBefore.join(',') !== netsAfter.join(',')) {
       changes.push({ project: p.name, kind: 'networks', before: netsBefore.join(', '), after: netsAfter.join(', ') })
     }
+
+    // A pier is its owner's, so the project leaves it; the new owner sorts
+    // it into a pier of their own.
+    if (p.group_id != null) {
+      const pier = db.query('SELECT name FROM project_groups WHERE id = ?').get(p.group_id)
+      if (pier) changes.push({ project: p.name, kind: 'pier', before: pier.name, after: '' })
+    }
   }
 
   const who = u => ({ id: u.id, username: u.username, role: u.role })
   return { from: who(from), to: who(to), projects: projects.map(p => ({ id: p.id, name: p.name })), blockers, changes }
 }
 
-// Moves exactly the planned projects. Live info follows at once: the stores
-// bridge sees each project change hands, so the old owner's live view loses
-// it and the new owner's gains all of it (live/stores.js).
+// Moves exactly the planned projects, out of their piers (those stay with
+// the old owner). Live info follows at once: the stores bridge sees each
+// project change hands, so the old owner's live view loses it and the new
+// owner's gains all of it (live/stores.js).
 export function applyReassign({ db, liveState }, plan) {
   const ids = plan.projects.map(p => p.id)
   if (!ids.length) return 0
   const { changes } = db.query(
-    `UPDATE projects SET owner_id = ? WHERE owner_id = ? AND id IN (${ids.map(() => '?').join(', ')})`
+    `UPDATE projects SET owner_id = ?, group_id = NULL WHERE owner_id = ? AND id IN (${ids.map(() => '?').join(', ')})`
   ).run(plan.to.id, plan.from.id, ...ids)
   for (const id of ids) {
     if (liveState.projects[id]) liveState.projects[id].info = getProjectInfo(db, id)

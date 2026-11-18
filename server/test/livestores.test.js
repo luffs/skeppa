@@ -75,6 +75,53 @@ test('a deletion reaches the fleet that had the project', async () => {
   expect(Object.keys(live.get('fleet-1').state.projects)).toEqual(['1'])
 })
 
+// Piers (project groups) travel with the projects they hold: each to its
+// owner's fleet, an empty one too, and nowhere else.
+test('a pier reaches its owner\'s fleet only — seeded, renamed, removed', async () => {
+  const { db } = setup()
+  db.query("INSERT INTO project_groups (owner_id, name) VALUES (2, 'Kunder')").run()
+  db.query('UPDATE projects SET group_id = 1 WHERE id = 2').run()
+  const liveState = createLiveState()
+  initLiveState(liveState, db, {})
+  const errors = []
+  const live = createLiveStores({ liveState, onError: err => errors.push(err.message) })
+  expect(live.get('fleet-2').state.groups[1].name).toBe('Kunder')
+  expect(live.get('fleet-2').state.projects[2].info.group_id).toBe(1)
+  expect(live.get('fleet-1').state.groups).toEqual({})
+  // An ungrouped project carries no group_id at all: null is a deletion
+  expect('group_id' in live.get('fleet-1').state.projects[1].info).toBe(false)
+
+  const fleet1 = live.get('fleet-1').version
+  liveState.groups[1] = { ...liveState.groups[1], name: 'Clients' }
+  liveState.groups[2] = { id: 2, owner_id: 2, name: 'Tomt', created_at: 'x' }
+  await tick()
+  expect(live.get('fleet-2').state.groups[1].name).toBe('Clients')
+  expect(live.get('fleet-2').state.groups[2].name).toBe('Tomt')
+  expect(live.get('fleet-1').version).toBe(fleet1)
+
+  delete liveState.groups[1]
+  liveState.projects[2].info = { ...liveState.projects[2].info, group_id: null }
+  await tick()
+  expect(live.get('fleet-2').state.groups[1]).toBeUndefined()
+  expect('group_id' in live.get('fleet-2').state.projects[2].info).toBe(false)
+  expect(errors).toEqual([])
+})
+
+test('a pier removed with its owner does not bring their fleet back', async () => {
+  const { liveState, live, errors } = setup()
+  liveState.groups[5] = { id: 5, owner_id: 2, name: 'P', created_at: 'x' }
+  await tick()
+  delete liveState.projects[2]
+  await tick()
+  delete liveState.users[2]
+  await tick()
+  expect(live.ids()).not.toContain('fleet-2')
+  delete liveState.groups[5] // a batch later than the fleet's closing
+  await tick()
+  expect(live.ids()).not.toContain('fleet-2')
+  expect(errors).toEqual([])
+})
+
 test('the deployment tail travels as a whole array, however LiveState edits it', async () => {
   const { liveState, live } = setup()
   const entry = i => ({ id: i, status: 'success', trigger: 'manual', commitSha: null, startedAt: null, finishedAt: null, createdAt: 'x' })
@@ -134,14 +181,15 @@ test('who may open what', () => {
 
 // A store is collections of records and singletons, and a client that
 // declares a different top level is answered with `shape-mismatch` — so the
-// copy in web/src/live.js has to follow a change here. `users` and
-// `projects` are keyed sets of records; the rest are one record each, and
-// `lines` could not be a collection at all since its values are strings.
+// copy in web/src/live.js has to follow a change here. `users`, `projects`
+// and a fleet's `groups` (piers) are keyed sets of records; the rest are one
+// record each, and `lines` could not be a collection at all since its values
+// are strings.
 test('the declared store shapes are the ones the client mirrors', () => {
   expect(STORE_SHAPES).toEqual({
     panel: { initial: { system: {}, users: {}, images: {} }, singletons: ['system', 'images'] },
     harbor: { initial: { proxy: {} }, singletons: ['proxy'] },
-    fleet: { initial: { projects: {} }, singletons: [] },
+    fleet: { initial: { projects: {}, groups: {} }, singletons: [] },
     deploy: { initial: { lines: {} }, singletons: ['lines'] },
   })
 })

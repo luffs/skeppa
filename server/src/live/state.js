@@ -10,6 +10,7 @@ export function createLiveState() {
     projects: {},
     system: {},
     users: {},
+    groups: {},
     proxy: {},
     images: imagesDefaults()
   })
@@ -36,7 +37,7 @@ export function getUserInfo(db, id) {
 // header, settings form). head_* is deliberately excluded — the live
 // `headCommit` is the single source of truth for that.
 export const PROJECT_INFO_COLUMNS =
-  'id, slug, name, owner_id, repo_full_name, git_url, branch, deploy_script, build_image, run_image, runtime, pm2_name, start_command, cwd, auto_deploy, write_env_file, build_env, subdomain, port, memory_mb, network_profile, host_access, networks, publish_dir, spa_fallback, gate_files, deployed_runtime, created_at'
+  'id, slug, name, owner_id, repo_full_name, git_url, branch, deploy_script, build_image, run_image, runtime, pm2_name, start_command, cwd, auto_deploy, write_env_file, build_env, subdomain, port, memory_mb, network_profile, host_access, networks, publish_dir, spa_fallback, gate_files, deployed_runtime, group_id, created_at'
 
 // Joined with the owner so the client can build tenant-nested app URLs
 // (subdomain.handle.base) without a lookup; '' for the admin/legacy case,
@@ -47,6 +48,16 @@ const PROJECT_INFO_SELECT = `SELECT ${PROJECT_INFO_COLUMNS.split(', ').map(c => 
 
 export function getProjectInfo(db, id) {
   return db.query(`${PROJECT_INFO_SELECT} WHERE p.id = ?`).get(Number(id)) ?? null
+}
+
+// A pier (project group) as the frontend renders it. Piers live at the top
+// of LiveState, keyed by id, and the stores bridge sends each to its owner's
+// fleet next to the projects. A project names its pier with `group_id`; an
+// ungrouped project has no such key on the client (null is a deletion).
+export const GROUP_INFO_COLUMNS = 'id, owner_id, name, created_at'
+
+export function getGroupInfo(db, id) {
+  return db.query(`SELECT ${GROUP_INFO_COLUMNS} FROM project_groups WHERE id = ?`).get(Number(id)) ?? null
 }
 
 // The tail of the deployment history the dashboard's ship's log renders. It
@@ -94,6 +105,9 @@ export function initLiveState(liveState, db, config = {}) {
   liveState.images = imagesDefaults(db, config)
   for (const user of db.query(`SELECT ${USER_INFO_COLUMNS} FROM users`).all()) {
     liveState.users[user.id] = user
+  }
+  for (const group of db.query(`SELECT ${GROUP_INFO_COLUMNS} FROM project_groups`).all()) {
+    liveState.groups[group.id] = group
   }
   const projects = db.query(
     `${PROJECT_INFO_SELECT.replace(' FROM projects', ', p.head_sha, p.head_message, p.head_pushed_at FROM projects')}`

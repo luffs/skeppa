@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs'
 import { requireSession, requireAdmin } from './auth/sessions.js'
 import { authRoutes } from './routes/auth.js'
 import { projectRoutes } from './routes/projects.js'
+import { groupRoutes } from './routes/groups.js'
 import { deploymentRoutes } from './routes/deployments.js'
 import { githubRoutes, settingsRoutes } from './routes/github.js'
 import { webhookRoutes } from './routes/webhooks.js'
@@ -35,6 +36,7 @@ export function createApp({ db, config, liveState, runner, github, poller, proxy
     app.use(`/api/${group}/*`, requireAdmin())
   }
   app.route('/api/projects', projectRoutes({ db, config, liveState, runner, poller, github, proxy }))
+  app.route('/api/groups', groupRoutes({ db, config, liveState, runner })) // piers — every role, own only
   app.route('/api/deployments', deploymentRoutes({ db, runner }))
   app.route('/api/github', githubRoutes({ db, config, github }))
   app.route('/api/settings', settingsRoutes({ db, config, github }))

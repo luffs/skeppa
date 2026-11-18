@@ -62,6 +62,7 @@ vi.mock('../src/api.js', () => {
 vi.mock('../src/live.js', () => ({ connectLive() {}, disconnectLive() {}, subscribeLogs() { return () => {} } }))
 
 import { store } from '../src/store.js'
+import { api } from '../src/api.js'
 import DashboardView from '../src/views/DashboardView.vue'
 import ProjectNewView from '../src/views/ProjectNewView.vue'
 import ProjectView from '../src/views/ProjectView.vue'
@@ -100,8 +101,16 @@ function seedStore(role) {
   store.connected = true
   store.ready = true
   store.liveUpdatedAt = NOW
+  // The admin's project sits at a pier; bob has an empty one and his project
+  // at none — so every view renders a grouped, an empty and an ungrouped case.
+  const adm = project(1, 'adm', ADMIN)
+  adm.info.group_id = 7
   store.live = {
-    projects: { 1: project(1, 'adm', ADMIN), 2: project(2, 'bobapp', TENANT) },
+    projects: { 1: adm, 2: project(2, 'bobapp', TENANT) },
+    groups: {
+      7: { id: 7, owner_id: ADMIN.id, name: 'Kunder', created_at: ISO },
+      8: { id: 8, owner_id: TENANT.id, name: 'Tomt', created_at: ISO },
+    },
     system: {
       appsDir: '/home/skeppa/apps', hostBootAt: NOW - 1e7, panelStartedAt: NOW - 1e5,
       selfPm2Name: 'skeppa', proxyPm2Name: 'skeppa-proxy', loadavg: [0.1, 0.2, 0.3],
@@ -125,7 +134,7 @@ const RENDER_PROBLEM = /accessed during render|Unhandled error|Failed to resolve
 // Mounts, lets the view settle, runs `steps` against it, and always tears
 // down — a view that fails must not leave a broken component behind to throw
 // into the next test's spies (one bug, one red test).
-async function expectCleanRender(component, { props = {}, steps = async () => {} } = {}) {
+async function expectCleanRender(component, { props = {}, steps = async () => {}, route = {} } = {}) {
   const problems = []
   const warn = vi.spyOn(console, 'warn').mockImplementation((...args) => {
     const message = args.map(String).join(' ')
@@ -137,7 +146,7 @@ async function expectCleanRender(component, { props = {}, steps = async () => {}
     wrapper = mount(component, {
       props,
       global: {
-        mocks: { $route: { path: '/', query: {}, params: {} }, $router: { push() {}, replace() {} } },
+        mocks: { $route: { path: '/', query: {}, params: {}, ...route }, $router: { push() {}, replace() {} } },
         stubs: { RouterLink: { props: ['to'], template: '<a><slot /></a>' }, RouterView: true },
         config: { errorHandler: err => problems.push(`errorHandler: ${err.message}`) },
       },
@@ -233,6 +242,212 @@ test('the harbor groups projects by owner for an admin, and not for a tenant', a
     },
   })
   expect(tenant.problems.join(' | ')).toBe('')
+})
+
+// Piers sort each fleet: its piers by name (an empty one too), then the
+// projects at no pier under "At anchor" — headed only when there are piers.
+// Nobody is shown someone else's pier, and a folded pier hides its vessels.
+test('the harbor lists each fleet by pier, an empty pier too, and folds one away', async () => {
+  seedStore('admin')
+  try { localStorage.clear() } catch { /* no storage: everything starts open */ }
+  const admin = await expectCleanRender(DashboardView, {
+    steps: async wrapper => {
+      const piers = wrapper.findAll('.pier').map(p => [p.find('.pier-name').text(), p.findAll('.vessel-row').length])
+      expect(piers).toEqual([['Kunder', 1], ['Tomt', 0]])
+      expect(wrapper.find('.pier-empty').exists()).toBe(true)
+      // bob's fleet has a pier, so his loose project is headed
+      expect(wrapper.find('.anchor-head').text()).toContain('At anchor')
+
+      // open, the cards speak for themselves
+      expect(wrapper.find('.pier-summary').exists()).toBe(false)
+      await wrapper.find('.pier-toggle').trigger('click')
+      await settle()
+      expect(wrapper.findAll('.pier')[0].findAll('.vessel-row').length).toBe(0)
+      expect(wrapper.find('.pier-toggle').attributes('aria-expanded')).toBe('false')
+      // folded, the heading says what they would: adm has unsighted commits
+      expect(wrapper.find('.pier-summary').text()).toBe('1 with new commits')
+      expect(wrapper.find('.pier-state .dot').classes()).toContain('amber')
+    },
+  })
+  expect(admin.problems.join(' | ')).toBe('')
+
+  seedStore('tenant')
+  delete store.live.groups[8]
+  try { localStorage.clear() } catch { /* as above */ }
+  const tenant = await expectCleanRender(DashboardView, {
+    steps: async wrapper => {
+      // no pier of their own: the list is flat, as before piers existed
+      expect(wrapper.findAll('.pier').length).toBe(0)
+      expect(wrapper.find('.anchor-head').exists()).toBe(false)
+      expect(wrapper.findAll('.vessel-row').length).toBe(1)
+    },
+  })
+  expect(tenant.problems.join(' | ')).toBe('')
+})
+
+// The pier's actions live behind one "⋯" button: it opens a menu, Escape
+// closes it and hands focus back, and an item does its thing.
+test("a pier's actions are a menu: open, close with Escape, rename from it", async () => {
+  seedStore('admin')
+  try { localStorage.clear() } catch { /* everything open */ }
+  const res = await expectCleanRender(DashboardView, {
+    steps: async wrapper => {
+      const head = wrapper.findAll('.pier-head')[0]
+      expect(head.find('.action-menu-list').exists()).toBe(false)
+      const toggle = head.find('.action-menu-toggle')
+      expect(toggle.attributes('aria-haspopup')).toBe('menu')
+
+      await toggle.trigger('click')
+      await settle()
+      const items = head.findAll('[role="menuitem"]')
+      expect(items.map(i => i.text())).toEqual(['Deploy all 1', 'Rename…', 'Remove pier…'])
+      expect(toggle.attributes('aria-expanded')).toBe('true')
+
+      await head.find('.action-menu-list').trigger('keydown', { key: 'Escape' })
+      await settle()
+      expect(head.find('.action-menu-list').exists()).toBe(false)
+
+      await toggle.trigger('click')
+      await settle()
+      await head.findAll('[role="menuitem"]')[1].trigger('click')
+      await settle()
+      expect(wrapper.findAll('.pier-head')[0].find('.pier-rename input').element.value).toBe('Kunder')
+    },
+  })
+  expect(res.problems.join(' | ')).toBe('')
+})
+
+// The panel's own project is never part of a pier deploy: the menu counts
+// without it, so the confirmation promises what will actually happen.
+test("Deploy all counts the vessels it will deploy, leaving out the panel's own", async () => {
+  seedStore('admin')
+  Object.assign(store.live.projects[1].info, { runtime: 'pm2', pm2_name: 'skeppa' })
+  try { localStorage.clear() } catch { /* everything open */ }
+  const res = await expectCleanRender(DashboardView, {
+    steps: async wrapper => {
+      const head = wrapper.findAll('.pier-head')[0]
+      await head.find('.action-menu-toggle').trigger('click')
+      await settle()
+      const deploy = head.find('[role="menuitem"]')
+      expect(deploy.text()).toBe('Deploy all')
+      expect(deploy.attributes('disabled')).toBeDefined()
+    },
+  })
+  expect(res.problems.join(' | ')).toBe('')
+})
+
+// A row says what the vessel is doing and offers one button only when
+// something wants doing; the same states as a folded pier's summary.
+describe('a harbor row', () => {
+  const rowOf = async (setup, check) => {
+    seedStore('admin')
+    try { localStorage.clear() } catch { /* everything open */ }
+    setup(store.live.projects[1])
+    const res = await expectCleanRender(DashboardView, {
+      steps: async wrapper => check(wrapper.findAll('.vessel-row').find(r => r.find('.vessel-name').text() === 'adm')),
+    })
+    expect(res.problems.join(' | ')).toBe('')
+  }
+  const button = row => row.find('.vessel-actions > button')
+
+  test('new commits: amber, the head commit underneath, Deploy latest', () => rowOf(() => {}, row => {
+    expect(row.classes()).toContain('state-ahead')
+    expect(row.find('.vessel-status').text()).toBe('new commits')
+    expect(row.find('.vessel-l2').text()).toBe('main · bbbbbbb feat: something')
+    expect(button(row).text()).toBe('Deploy latest')
+    expect(row.find('.vessel-addr').text()).toContain('app.apps.example.com')
+  }))
+
+  test('in step: running, uptime and what is deployed, no button', () => rowOf(live => {
+    live.headCommit = { sha: 'a'.repeat(40), message: 'x', pushedAt: ISO }
+  }, row => {
+    expect(row.classes()).toContain('state-running')
+    expect(row.find('.vessel-status').text()).toBe('online')
+    expect(row.find('.vessel-l2').text()).toMatch(/^main · up .+ · deployed aaaaaaa · /)
+    expect(button(row).exists()).toBe(false)
+  }))
+
+  test('a failed voyage: Retry, and whether the old build still serves', () => rowOf(live => {
+    live.lastDeployment = { ...live.lastDeployment, status: 'failed' }
+  }, row => {
+    expect(row.classes()).toContain('state-failed')
+    expect(row.find('.vessel-l2').text()).toContain('previous build still serving')
+    expect(button(row).text()).toBe('Retry deploy')
+  }))
+
+  test('down: Start', () => rowOf(live => {
+    live.pm2 = { ...live.pm2, status: 'stopped' }
+  }, row => {
+    expect(row.find('.vessel-status').text()).toBe('stopped')
+    expect(button(row).text()).toBe('Start')
+  }))
+
+  // adm is at its owner's only pier: the menu offers to leave it, nothing
+  // of anyone else's, and moving sends the pier alone.
+  test('the ⋯ menu holds the rest, and moves a vessel between piers', () => rowOf(() => {}, async row => {
+    await row.find('.action-menu-toggle').trigger('click')
+    await settle()
+    const menu = row.find('.action-menu-list')
+    expect(menu.findAll('[role="menuitem"]').map(i => i.text())).toEqual(
+      ['Deploy', 'Open app ↗', 'Restart', 'Stop…', 'Rigging', 'At anchor (no pier)']
+    )
+    expect(menu.find('.action-menu-heading').text()).toBe('Move to pier')
+    const patch = vi.spyOn(api, 'patch')
+    await menu.findAll('[role="menuitem"]').at(-1).trigger('click')
+    await settle()
+    expect(patch).toHaveBeenCalledWith('/api/projects/1', { group_id: null })
+    patch.mockRestore()
+  }))
+})
+
+test('?tab= opens the project page on that tab, and only on a real one', async () => {
+  for (const [tab, opens] of [['settings', 'settings'], ['nonsense', 'deploys'], [undefined, 'deploys']]) {
+    seedStore('admin')
+    const page = await expectCleanRender(ProjectView, {
+      props: { id: '1' },
+      route: { query: tab ? { tab } : {} },
+      steps: async wrapper => expect(wrapper.vm.tab).toBe(opens),
+    })
+    expect(page.problems.join(' | ')).toBe('')
+  }
+})
+
+test('the project page names its pier, and the chip leads to Rigging; no pier, no chip', async () => {
+  seedStore('admin')
+  const grouped = await expectCleanRender(ProjectView, {
+    props: { id: '1' },
+    steps: async wrapper => {
+      const chip = wrapper.find('.pier-chip')
+      expect(chip.text()).toBe('pierKunder')
+      await chip.trigger('click')
+      await settle()
+      expect(wrapper.vm.tab).toBe('settings')
+    },
+  })
+  expect(grouped.problems.join(' | ')).toBe('')
+
+  const loose = await expectCleanRender(ProjectView, {
+    props: { id: '2' },
+    steps: async wrapper => expect(wrapper.find('.pier-chip').exists()).toBe(false),
+  })
+  expect(loose.problems.join(' | ')).toBe('')
+})
+
+test("Rigging offers only the owner's piers, and New pier… asks for a name", async () => {
+  seedStore('admin')
+  const page = await expectCleanRender(ProjectView, {
+    props: { id: '2' }, // bob's project, edited by the admin
+    steps: async wrapper => {
+      wrapper.vm.tab = 'settings'
+      await settle()
+      const options = wrapper.findAll('.pier-picker option').map(o => o.text())
+      expect(options).toEqual(['No pier — at anchor', 'Tomt', 'New pier…'])
+      await wrapper.find('.pier-picker select').setValue('new')
+      await settle()
+      expect(wrapper.find('.pier-picker input').exists()).toBe(true)
+    },
+  })
+  expect(page.problems.join(' | ')).toBe('')
 })
 
 // A static site has no process: the project page drops the process controls

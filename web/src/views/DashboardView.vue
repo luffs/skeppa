@@ -5,11 +5,35 @@
         <h1 style="margin: 0">The harbor</h1>
         <div class="page-sub">{{ fleetSummary }}</div>
       </div>
-      <router-link to="/projects/new"><button>+ Moor a project</button></router-link>
+      <div class="row">
+        <button v-if="projects.length" class="secondary" @click="startPier">+ New pier</button>
+        <router-link to="/projects/new"><button>+ Moor a project</button></router-link>
+      </div>
     </div>
 
     <div v-if="projects.length" class="harbor-layout">
       <div class="harbor-list">
+        <div v-if="addingPier" class="pier-new">
+          <div class="row">
+            <input
+              ref="pierName"
+              v-model="pierName"
+              maxlength="40"
+              placeholder="Name the pier — Clients, Experiments, …"
+              @keydown.enter.prevent="createPier"
+              @keydown.esc.prevent="addingPier = false"
+            />
+            <button class="small" :disabled="pierBusy || !pierName.trim()" @click="createPier">
+              {{ pierBusy ? 'Building…' : 'Create' }}
+            </button>
+            <button class="small secondary" :disabled="pierBusy" @click="addingPier = false">Cancel</button>
+          </div>
+          <p v-if="pierError" class="error">{{ pierError }}</p>
+          <p v-else class="hint" style="margin: 6px 0 0">
+            A pier only sorts the list — what a project runs, reaches or is routed as stays the same.
+            Moor vessels at it from each project's Rigging.
+          </p>
+        </div>
         <template v-for="f in fleets" :key="f.key">
           <!-- One fleet is the whole harbor: headings only once there is more than one. -->
           <div v-if="fleets.length > 1" class="fleet-head">
@@ -18,7 +42,30 @@
             <span class="spacer"></span>
             <span class="fleet-detail">{{ f.projects.length }} vessel{{ f.projects.length === 1 ? '' : 's' }}</span>
           </div>
-          <ProjectCard v-for="p in f.projects" :key="p.id" :project="p" />
+          <div v-for="s in f.piers" :key="'pier' + s.pier.id" class="pier">
+            <PierHead
+              :pier="s.pier"
+              :projects="s.projects"
+              :collapsed="isCollapsed(s.pier.id)"
+              @toggle="toggleCollapsed(s.pier.id)"
+            />
+            <div v-if="!isCollapsed(s.pier.id)" class="pier-body">
+              <div v-if="s.projects.length" class="vessel-rows">
+                <ProjectRow v-for="p in s.projects" :key="p.id" :project="p" />
+              </div>
+              <p v-else class="hint pier-empty">
+                Nothing moored here yet — pick this pier under a project's Rigging.
+              </p>
+            </div>
+          </div>
+          <!-- Projects at no pier: headed only when there are piers to tell them from. -->
+          <div v-if="f.piers.length && f.loose.length" class="pier-head anchor-head">
+            <span class="pier-name">At anchor</span>
+            <span class="fleet-detail">{{ f.loose.length }} vessel{{ f.loose.length === 1 ? '' : 's' }} at no pier</span>
+          </div>
+          <div v-if="f.loose.length" class="vessel-rows">
+            <ProjectRow v-for="p in f.loose" :key="p.id" :project="p" />
+          </div>
         </template>
       </div>
       <div class="feed-panel">
@@ -81,7 +128,8 @@
 </template>
 
 <script>
-import ProjectCard from '../components/ProjectCard.vue'
+import ProjectRow from '../components/ProjectRow.vue'
+import PierHead from '../components/PierHead.vue'
 import { store } from '../store.js'
 import { api } from '../api.js'
 import { timeAgo, duration } from '../lib/format.js'
@@ -93,13 +141,40 @@ const FEED_TEXT = {
   queued: id => `voyage #${id} waiting to depart`,
   cancelled: id => `voyage #${id} called off`,
 }
+// Which piers are folded away is this browser's own convenience; storage
+// can be missing or throw (private windows), and then everything is open.
+const COLLAPSED_KEY = 'skeppa.collapsedPiers'
+function loadCollapsed() {
+  try {
+    const ids = JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? '[]')
+    return Object.fromEntries((Array.isArray(ids) ? ids : []).map(id => [id, true]))
+  } catch {
+    return {}
+  }
+}
+function saveCollapsed(map) {
+  try {
+    localStorage.setItem(COLLAPSED_KEY, JSON.stringify(Object.keys(map).map(Number)))
+  } catch {
+    // not remembered — fine
+  }
+}
+
 const FEED_DOT = { success: 'green', failed: 'red', running: 'blue pulse', queued: 'amber', cancelled: '' }
 
 export default {
   name: 'DashboardView',
-  components: { ProjectCard },
+  components: { ProjectRow, PierHead },
   data() {
-    return { setup: null, setupError: '' }
+    return {
+      setup: null,
+      setupError: '',
+      addingPier: false,
+      pierName: '',
+      pierBusy: false,
+      pierError: '',
+      collapsed: loadCollapsed(),
+    }
   },
   computed: {
     // Rendered straight from the LiveState mirror — no API round-trip when
@@ -125,7 +200,22 @@ export default {
         if (!groups.has(key)) groups.set(key, { key, ...this.ownerLabel(p), mine: p.owner_id === me, projects: [] })
         groups.get(key).projects.push(p)
       }
-      return [...groups.values()].sort((a, b) => (b.mine - a.mine) || a.label.localeCompare(b.label))
+      const fleets = [...groups.values()].sort((a, b) => (b.mine - a.mine) || a.label.localeCompare(b.label))
+      // Within a fleet: its piers by name (empty ones too — something has to
+      // be there to moor at), then the projects at no pier. A group_id the
+      // store does not know (yet) reads as no pier.
+      const piers = Object.values(store.live.groups ?? {})
+      for (const f of fleets) {
+        const own = piers
+          .filter(g => g.owner_id === f.key)
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .map(pier => ({ pier, projects: [] }))
+        const byId = new Map(own.map(s => [s.pier.id, s]))
+        f.loose = []
+        for (const p of f.projects) (byId.get(p.group_id)?.projects ?? f.loose).push(p)
+        f.piers = own
+      }
+      return fleets
     },
     ready() {
       return store.ready
@@ -196,6 +286,36 @@ export default {
     needsSetup: { immediate: true, handler(v) { if (v && !this.setup) this.checkSetup() } },
   },
   methods: {
+    startPier() {
+      this.addingPier = true
+      this.pierName = ''
+      this.pierError = ''
+      this.$nextTick(() => this.$refs.pierName?.focus())
+    },
+    // A pier made here is the signed-in user's own; an admin sorts someone
+    // else's projects from that project's Rigging, which makes the pier in
+    // the owner's fleet.
+    async createPier() {
+      if (!this.pierName.trim() || this.pierBusy) return
+      this.pierBusy = true
+      this.pierError = ''
+      try {
+        await api.post('/api/groups', { name: this.pierName })
+        this.addingPier = false
+      } catch (err) {
+        this.pierError = err.fields?.name || err.message
+      } finally {
+        this.pierBusy = false
+      }
+    },
+    isCollapsed(id) {
+      return Boolean(this.collapsed[id])
+    },
+    toggleCollapsed(id) {
+      if (this.collapsed[id]) delete this.collapsed[id]
+      else this.collapsed[id] = true
+      saveCollapsed(this.collapsed)
+    },
     // The owner's name as the crew list knows it (admins mirror the crew;
     // a tenant never sees anyone else's projects, so never needs it).
     ownerName(info) {

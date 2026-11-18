@@ -10,7 +10,7 @@ export const store = reactive({
   connected: false, // the /live socket is open
   ready: false, // true once every opened store has delivered its snapshot
   liveUpdatedAt: null, // ms timestamp of the last snapshot/diff received
-  live: { projects: {}, system: {}, users: {}, proxy: {}, images: {} },
+  live: { projects: {}, groups: {}, system: {}, users: {}, proxy: {}, images: {} },
   // The wall clock, ticked once a second so relative labels (timeAgo,
   // uptimeSince) are reactive: computeds re-evaluate each tick but the DOM
   // only patches when the rendered string actually changes, so "14s ago"

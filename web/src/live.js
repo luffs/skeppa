@@ -9,13 +9,14 @@ import { api } from './api.js'
 //
 //   panel          system, users, images    admins only
 //   fleet-<owner>  that owner's projects    the owner, or an admin
+//                  and piers (groups)
 //   harbor         proxy (the base domain)  anyone signed in
 //
 // A tenant opens harbor and its own fleet; an admin opens panel and harbor,
 // then a fleet per user the panel lists. Each store is mirrored into a
 // Vue-reactive object, and `store.live` is composed from the mirrors so the
 // views keep reading the shape they always have — `projects` is the merge
-// across fleets. Clients here only read: the server refuses any write.
+// across fleets, and so is `groups` (the piers). Clients here only read: the server refuses any write.
 //
 // A running deployment's log is a store of its own, deploy-<id>, on the same
 // socket (subscribeLogs below).
@@ -23,18 +24,19 @@ import { api } from './api.js'
 // The store shapes, declared exactly as the server declares them
 // (server/src/live/stores.js STORE_SHAPES, where a test pins them): a client
 // whose top level differs is answered with `shape-mismatch` instead of the
-// store. `users` and `projects` are collections of records keyed by id; the
-// rest are one record each, `lines` necessarily so — its values are strings.
+// store. `users`, `projects` and a fleet's `groups` are collections of
+// records keyed by id; the rest are one record each, `lines` necessarily so —
+// its values are strings.
 export const SHAPES = {
   panel: { initial: { system: {}, users: {}, images: {} }, singletons: ['system', 'images'] },
   harbor: { initial: { proxy: {} }, singletons: ['proxy'] },
-  fleet: { initial: { projects: {} }, singletons: [] },
+  fleet: { initial: { projects: {}, groups: {} }, singletons: [] },
   deploy: { initial: { lines: {} }, singletons: ['lines'] },
 }
 
 const panel = reactive({ system: {}, users: {}, images: {} })
 const harbor = reactive({ proxy: {} })
-const fleets = reactive({}) // owner id -> { projects }
+const fleets = reactive({}) // owner id -> { projects, groups }
 
 store.live = reactive({
   // The members are the mirrors' own reactive project objects, so a field
@@ -43,6 +45,12 @@ store.live = reactive({
   projects: computed(() => {
     const out = {}
     for (const fleet of Object.values(fleets)) Object.assign(out, fleet.projects)
+    return out
+  }),
+  // Piers, keyed by id like projects; each carries its owner_id.
+  groups: computed(() => {
+    const out = {}
+    for (const fleet of Object.values(fleets)) Object.assign(out, fleet.groups)
     return out
   }),
   system: computed(() => panel.system),
@@ -103,7 +111,7 @@ function syncFleets(ids) {
   }
   for (const id of wanted) {
     if (fleets[id]) continue
-    fleets[id] = reactive({ projects: {} })
+    fleets[id] = reactive({ projects: {}, groups: {} })
     open(`fleet-${id}`, SHAPES.fleet, fleets[id])
   }
   refreshReady()

@@ -109,6 +109,9 @@
                   <strong>{{ ch.project }}</strong> moves from <span class="mono">{{ ch.before }}</span> to
                   <span class="mono">{{ ch.after }}</span>
                 </template>
+                <template v-else-if="ch.kind === 'pier'">
+                  <strong>{{ ch.project }}</strong> leaves the pier “{{ ch.before }}”, which stays behind
+                </template>
                 <template v-else>
                   <strong>{{ ch.project }}</strong>: its container networks become
                   <span class="mono">{{ ch.after || 'none' }}</span> on its next deploy

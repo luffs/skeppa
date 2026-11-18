@@ -6,6 +6,16 @@
         <div style="display: flex; align-items: center; gap: 14px; flex-wrap: wrap">
           <h1 style="margin: 0">{{ project.name }}</h1>
           <StatusBadge :status="live?.pm2?.status" :href="appUrl" />
+          <!-- Where it is listed in the harbor; the pier is changed in Rigging, so that is where it leads. -->
+          <button
+            v-if="pierName"
+            type="button"
+            class="chip pier-chip"
+            title="Moored at this pier in the harbor — change it under Rigging"
+            @click="tab = 'settings'"
+          >
+            <span class="pier-chip-label">pier</span>{{ pierName }}
+          </button>
         </div>
         <div class="mono" style="color: var(--dim); margin-top: 6px">
           {{ project.repo_full_name || project.git_url }} @ {{ project.branch }}
@@ -116,6 +126,7 @@
     <div v-else-if="tab === 'settings'" class="panel" style="max-width: 680px">
       <label>Name</label>
       <input v-model="edit.name" />
+      <PierPicker v-model="edit.group_id" :owner-id="project.owner_id" />
       <template v-if="project.git_url">
         <label>Git URL</label>
         <input v-model="edit.git_url" class="code" />
@@ -240,22 +251,25 @@ import SourceFiles from '../components/SourceFiles.vue'
 import RuntimeChoice from '../components/RuntimeChoice.vue'
 import RuntimeFields from '../components/RuntimeFields.vue'
 import RoutingFields from '../components/RoutingFields.vue'
+import PierPicker from '../components/PierPicker.vue'
 import { api } from '../api.js'
 import { confirmDialog, alertDialog } from '../lib/dialog.js'
 import { store, liveProject, appUrlFor } from '../store.js'
 import { timeAgo, duration, uptimeSince, bytes } from '../lib/format.js'
 
 const RUNTIME_LABEL = { pm2: 'a pm2 process', container: 'a container', static: 'a static site' }
+const TABS = ['deploys', 'logs', 'env', 'files', 'settings']
 
 export default {
   name: 'ProjectView',
-  components: { StatusBadge, DeployLog, CommitMessage, EnvEditor, Pm2Logs, SourceFiles, RuntimeChoice, RuntimeFields, RoutingFields },
+  components: { StatusBadge, DeployLog, CommitMessage, EnvEditor, Pm2Logs, SourceFiles, RuntimeChoice, RuntimeFields, RoutingFields, PierPicker },
   props: { id: { type: String, required: true } },
   data() {
     return {
       deployments: [],
       editLoaded: false,
-      tab: 'deploys',
+      // ?tab= opens a tab directly (the harbor's ⋯ → Rigging); anything else is the voyages.
+      tab: TABS.includes(this.$route?.query?.tab) ? this.$route.query.tab : 'deploys',
       selectedId: null,
       edit: {},
       saving: false,
@@ -293,6 +307,11 @@ export default {
     },
     live() {
       return liveProject(Number(this.id))
+    },
+    // '' at no pier, or while the pier has not reached the store yet.
+    pierName() {
+      const id = this.project?.group_id
+      return id == null ? '' : store.live.groups?.[id]?.name ?? ''
     },
     // pm2 counts every restart, the container engine counts only the ones its
     // own on-failure policy performed — a crash counter. Restarting a
@@ -457,6 +476,7 @@ export default {
         publish_dir: p.publish_dir ?? 'dist',
         spa_fallback: !!p.spa_fallback,
         gate_files: !!p.gate_files,
+        group_id: p.group_id ?? '', // absent on the wire when at no pier
       }
     },
     async save() {

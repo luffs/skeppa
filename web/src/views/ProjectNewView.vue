@@ -45,6 +45,7 @@
 
       <label>Name</label>
       <input v-model="form.name" placeholder="My app" @input="syncPm2Name" />
+      <PierPicker v-model="form.group_id" :owner-id="myId" />
 
       <RuntimeChoice :runtime="form.runtime" :tenant="isTenant" @update:runtime="pickRuntime" />
 
@@ -124,10 +125,11 @@ import { store } from '../store.js'
 import RuntimeChoice from '../components/RuntimeChoice.vue'
 import RuntimeFields from '../components/RuntimeFields.vue'
 import RoutingFields from '../components/RoutingFields.vue'
+import PierPicker from '../components/PierPicker.vue'
 
 export default {
   name: 'ProjectNewView',
-  components: { RuntimeChoice, RuntimeFields, RoutingFields },
+  components: { RuntimeChoice, RuntimeFields, RoutingFields, PierPicker },
   data() {
     return {
       repos: [],
@@ -139,6 +141,7 @@ export default {
       runtimeTouched: false,
       externalRepo: false,
       isTenant: store.user?.role === 'tenant',
+      myId: store.user?.id ?? null, // a new project is the mooring user's, and so is its pier
       myHandle: store.user?.handle ?? '',
       // Shown as placeholders and offered as one-click values — one source, so
       // the hint and what the button fills in can never drift apart.
@@ -170,6 +173,7 @@ export default {
         publish_dir: 'dist',
         spa_fallback: false,
         gate_files: false,
+        group_id: '',
         subdomain: '',
         port: '',
       },

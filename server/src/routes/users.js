@@ -172,8 +172,15 @@ export function userRoutes({ db, liveState, proxy = null, github = null }) {
     if (db.query('SELECT 1 FROM projects WHERE owner_id = ?').get(id)) {
       return c.json({ error: 'this user still owns projects — move them to someone else first (Crew → Remove offers it), or delete them' }, 400)
     }
-    const { changes } = db.query('DELETE FROM users WHERE id = ?').run(id)
+    // Their piers go with them (empty by now — the projects were moved or
+    // deleted); the foreign key would cascade, this keeps it explicit.
+    const piers = db.query('SELECT id FROM project_groups WHERE owner_id = ?').all(id).map(r => r.id)
+    const { changes } = db.transaction(() => {
+      db.query('DELETE FROM project_groups WHERE owner_id = ?').run(id)
+      return db.query('DELETE FROM users WHERE id = ?').run(id)
+    })()
     if (!changes) return c.json({ error: 'user not found' }, 404)
+    for (const pier of piers) delete liveState.groups[pier]
     delete liveState.users[id]
     return c.json({ ok: true })
   })

@@ -223,6 +223,33 @@ a.chip.linked .ext { font-size: 12px; opacity: 0.75; }
 a.chip.linked:hover { filter: brightness(1.12); text-decoration: none; }
 a.chip.linked:hover .ext { opacity: 1; }
 
+/* The pier a project is listed at. Its name is the user's own text, so it
+   keeps its case; only the small "pier" label reads like the other chips. */
+button.chip.pier-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 100%;
+  padding: 2px 11px;
+  background: transparent;
+  border: 1px solid var(--line-strong);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+button.chip.pier-chip:hover { background: var(--hover-tint); }
+.pier-chip-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
 .dot {
   width: 9px;
   height: 9px;
@@ -415,32 +442,94 @@ td.commit-cell { width: 100%; max-width: 0; min-width: 240px; }
 .fleet-head:not(:first-child) { margin-top: 14px; }
 .fleet-detail { font-family: var(--mono); font-size: 12px; color: var(--dim); }
 
-.harbor-row {
+/* Piers: a fleet's projects in named groups. The pier's vessels hang off a
+   rule on the left, the way boats line a jetty. */
+.pier { display: flex; flex-direction: column; gap: 10px; }
+.pier-head { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; padding: 0 4px; }
+.pier-toggle {
+  display: flex; align-items: center; gap: 8px;
+  background: transparent; color: var(--ink); border: none; padding: 2px 0;
+  font-size: 15px; font-weight: 700; letter-spacing: 0;
+}
+.pier-toggle:hover { background: transparent; color: var(--accent); }
+.pier-chevron { color: var(--dim); font-size: 13px; transition: transform 0.15s ease; }
+.pier-chevron.open { transform: rotate(90deg); }
+.pier-name { font-size: 15px; font-weight: 700; color: inherit; overflow-wrap: anywhere; }
+.pier-actions { margin-left: auto; }
+/* A folded pier's roll call: one dot and count per state present. */
+.pier-summary { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12.5px; color: var(--dim); }
+.pier-state { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+
+/* ---- action menu (the "⋯" button and its list) ---- */
+.action-menu { position: relative; }
+.action-menu-toggle { padding: 3px 10px; font-size: 15px; line-height: 1; letter-spacing: 0.08em; }
+.action-menu-list {
+  position: absolute; right: 0; top: calc(100% + 4px); z-index: 20;
+  min-width: 180px; padding: 4px;
+  display: flex; flex-direction: column;
+  background: var(--panel); border: 1px solid var(--line-strong); border-radius: 9px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+}
+button.action-menu-item {
+  background: transparent; color: var(--ink); text-align: left;
+  border: none; /* .danger is also the global outlined button — not in here */
+  padding: 8px 12px; border-radius: 6px; font-weight: 600; letter-spacing: 0; white-space: nowrap;
+}
+button.action-menu-item:hover:not(:disabled), button.action-menu-item:focus-visible { background: var(--hover-tint); outline: none; }
+button.action-menu-item.danger { color: var(--red); }
+.action-menu-heading {
+  margin: 4px 4px 0; padding: 8px 8px 4px; border-top: 1px solid var(--line-soft);
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--dim);
+}
+.action-menu-heading:first-child { margin-top: 0; border-top: none; }
+button.action-menu-item.danger:hover:not(:disabled) { background: var(--red-tint); }
+.pier-rename { flex: 1; }
+.pier-rename input, .pier-new input { flex: 1 1 220px; min-width: 0; }
+.pier-error { width: 100%; margin: 0; }
+.pier-body { display: flex; flex-direction: column; }
+.pier-empty { margin: 2px 0; }
+.anchor-head { margin-top: 4px; }
+.anchor-head .pier-name { color: var(--dim); }
+.pier-new { padding: 0 4px; }
+
+/* Projects as rows in one frame per list (a pier, or the projects at no
+   pier): name, state and address on the first line, what happened last on
+   the second, one button when something wants doing, the rest in ⋯. */
+.vessel-rows {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 12px;
-  padding: 20px 22px;
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 0 20px;
   box-shadow: 0 1px 0 var(--shadow);
 }
-.harbor-row .title-line {
-  grid-column: 1 / -1;
-  display: flex;
+.vessel-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-  margin-bottom: 8px;
+  gap: 8px 16px;
+  padding: 12px 16px;
+  cursor: pointer;
 }
-.harbor-row .title-line .status { margin-left: auto; }
-.harbor-row .main { min-width: 0; }
-.harbor-row a.name { font-size: 17px; font-weight: 700; color: var(--ink); }
-.harbor-row a.name:hover { color: var(--accent); }
-.harbor-row .repo-line { font-family: var(--mono); font-size: 12.5px; color: var(--dim); }
-.harbor-row .last-line { font-size: 13px; color: var(--dim); margin-top: 8px; display: flex; align-items: center; gap: 8px; }
-.harbor-row .side { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
-.harbor-row .uptime { font-family: var(--mono); font-size: 12px; color: var(--dim); text-align: right; }
+.vessel-row + .vessel-row { border-top: 1px solid var(--line-soft); }
+.vessel-row:first-child { border-radius: 12px 12px 0 0; }
+.vessel-row:last-child { border-radius: 0 0 12px 12px; }
+.vessel-row:only-child { border-radius: 12px; }
+.vessel-row:hover { background: var(--hover-tint); }
+.vessel-main { min-width: 0; }
+.vessel-l1 { display: flex; align-items: center; gap: 4px 10px; flex-wrap: wrap; }
+.vessel-l1 .dot { margin-right: 2px; }
+a.vessel-name { font-size: 15.5px; font-weight: 700; color: var(--ink); }
+a.vessel-name:hover { color: var(--accent); }
+.vessel-status { font-size: 13px; color: var(--dim); }
+.vessel-row.state-down .vessel-status, .vessel-row.state-failed .vessel-status { color: var(--red); }
+.vessel-row.state-ahead .vessel-status { color: var(--amber); }
+.vessel-row.state-underway .vessel-status { color: var(--accent); }
+a.vessel-addr { font-family: var(--mono); font-size: 12px; color: var(--accent); overflow-wrap: anywhere; }
+.vessel-l2 {
+  font-family: var(--mono); font-size: 12px; color: var(--dim);
+  margin: 3px 0 0 19px; /* under the name, past the dot */
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.vessel-actions { display: flex; align-items: center; gap: 6px; cursor: default; }
 
 .feed-panel {
   flex: 1 1 300px;
@@ -856,10 +945,9 @@ td.commit-cell { width: 100%; max-width: 0; min-width: 240px; }
   .log-meta { display: none; }
   .logview, .proc-logs .logview { height: 240px; }
   .tabs { gap: 18px; }
-  .harbor-row { grid-template-columns: 1fr; }
-  .harbor-row .title-line { margin-bottom: 12px; }
-  .harbor-row .title-line .status { margin-left: 0; }
-  .harbor-row .side { flex-direction: row; align-items: center; width: 100%; justify-content: space-between; margin-top: 14px; }
+  /* The address drops under the name; the actions stay on the right. */
+  .vessel-row { padding: 12px 12px; gap: 8px 10px; }
+  .vessel-l2 { margin-left: 0; white-space: normal; }
 }
 
 /* Its own breakpoint: 720px of table plus the container's padding. */
