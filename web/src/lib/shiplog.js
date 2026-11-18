@@ -33,6 +33,19 @@ export function whenInDay(ts, now = store.now) {
   return new Date(ts).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
 }
 
+// An entry's particulars, each on its own for the log laid out as a table —
+// when (whenInDay), trigger, sha (short), took (the duration) — '' for what
+// is not known; and `meta`, the same in one line, for the log as a list.
+function entry({ trigger, sha, took, ...rest }) {
+  const parts = {
+    when: whenInDay(rest.ts),
+    trigger: trigger || '',
+    sha: sha ? sha.slice(0, 7) : '',
+    took: took && took !== '—' ? took : '',
+  }
+  return { ...rest, ...parts, meta: [parts.when, parts.trigger, parts.sha, parts.took].filter(Boolean).join(' · ') }
+}
+
 // `lives` are LiveState project entries; `ownerOf(info)` tags someone else's
 // entries ('' for your own). Returns { entries, horizon } — horizon is the
 // instant older entries were cut at, or 0 when nothing was cut.
@@ -46,32 +59,33 @@ export function logEntries(lives, ownerOf = () => '') {
     const tail = p.recentDeployments ?? []
     for (const d of tail) {
       const when = d.finishedAt || d.startedAt || d.createdAt
-      entries.push({
+      entries.push(entry({
         ...base,
         key: `d${d.id}`,
         to: `/projects/${info.id}?deployment=${d.id}`, // straight to that voyage's log
         ts: at(when),
         text: (TEXT[d.status] ?? (id => `#${id} ${d.status}`))(d.id),
-        meta: [whenInDay(at(when)), d.trigger, d.commitSha?.slice(0, 7), duration(d.startedAt, d.finishedAt)]
-          .filter(v => v && v !== '—')
-          .join(' · '),
+        trigger: d.trigger,
+        sha: d.commitSha,
+        took: duration(d.startedAt, d.finishedAt),
         dot: DOT[d.status] ?? '',
-      })
+      }))
     }
     if (tail.length >= RECENT_DEPLOYMENTS_LIMIT) {
       const oldest = Math.min(...tail.map(d => at(d.finishedAt || d.startedAt || d.createdAt)))
       horizon = Math.max(horizon, oldest)
     }
     if (p.headCommit?.sha && !p.currentDeployment && p.headCommit.sha !== p.deployedSha) {
-      entries.push({
+      entries.push(entry({
         ...base,
         key: `c${info.id}`,
         to: `/projects/${info.id}`,
         ts: at(p.headCommit.pushedAt),
         text: `new commits on ${info.branch}`,
-        meta: [whenInDay(at(p.headCommit.pushedAt)), 'push', p.headCommit.sha.slice(0, 7)].filter(Boolean).join(' · '),
+        trigger: 'push',
+        sha: p.headCommit.sha,
         dot: 'amber',
-      })
+      }))
     }
   }
   return {

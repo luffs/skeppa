@@ -392,6 +392,50 @@ describe('the harbor map', () => {
     expect(res.problems.join(' | ')).toBe('')
   })
 
+  // Under the map the log is a table — a line per entry, a column per
+  // particular — where the window is wide enough; the list it is otherwise.
+  test('under the map the log is ruled like a logbook, and a list again on a narrow window', async () => {
+    seedStore('admin')
+    const media = vi.spyOn(window, 'matchMedia').mockImplementation(query => ({ matches: true, media: query, addEventListener() {}, removeEventListener() {} }))
+    const wide = await expectCleanRender(DashboardView, {
+      steps: async wrapper => {
+        expect(wrapper.find('.feed-table').exists()).toBe(false) // the list keeps its log as it was
+        expect(wrapper.findAll('.feed-entry').length).toBe(4)
+        await wrapper.findAll('.harbor-view button').find(b => b.text() === 'Harbor').trigger('click')
+        await settle()
+        expect(wrapper.findAll('.feed-entry').length).toBe(0)
+        expect(wrapper.findAll('.feed-table thead th').map(h => h.text())).toEqual(['Time', 'Vessel', 'Event', 'Trigger', 'Commit', 'Took'])
+        expect(wrapper.find('.feed-table .feed-day').text()).toBe('Today')
+        // adm's and bobapp's voyage and unsighted commits: four lines, the same entries
+        const rows = wrapper.findAll('.feed-row').map(r => r.findAll('td').slice(2).map(c => c.text().replace(/\s+/g, ' ')))
+        expect(rows).toEqual(expect.arrayContaining([
+          ['adm', '#1 made port', 'manual', 'aaaaaaa', '0.0s'],
+          ['adm', 'new commits on main', 'push', 'bbbbbbb', ''],
+          ['bob · bobapp', '#2 made port', 'manual', 'aaaaaaa', '0.0s'],
+          ['bob · bobapp', 'new commits on main', 'push', 'bbbbbbb', ''],
+        ]))
+        expect(rows.length).toBe(4)
+        expect(wrapper.findAll('.feed-row .dot').map(d => d.classes().filter(c => c !== 'dot').join(' ')).sort()).toEqual(['amber', 'amber', 'green', 'green'])
+        // the vessel is the link, a voyage straight to its log
+        expect(wrapper.findAll('.feed-row a.feed-project').map(a => a.attributes('href')).sort()).toEqual([
+          '/projects/1', '/projects/1?deployment=1', '/projects/2', '/projects/2?deployment=2',
+        ])
+      },
+    })
+    expect(wide.problems.join(' | ')).toBe('')
+
+    media.mockImplementation(query => ({ matches: false, media: query, addEventListener() {}, removeEventListener() {} }))
+    const narrow = await expectCleanRender(DashboardView, {
+      route: { query: { view: 'map' } },
+      steps: async wrapper => {
+        expect(wrapper.find('.feed-table').exists()).toBe(false)
+        expect(wrapper.findAll('.feed-entry').length).toBe(4)
+      },
+    })
+    media.mockRestore()
+    expect(narrow.problems.join(' | ')).toBe('')
+  })
+
   test('the legend counts every state, names the ships in the harbor, and filters', async () => {
     seedStore('admin')
     store.live.projects[2].info.runtime = 'static'

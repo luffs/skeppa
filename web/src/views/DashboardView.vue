@@ -132,7 +132,38 @@
         <template v-if="feed.length">
           <!-- The entries scroll inside the panel; the buttons stay in reach under them. -->
           <div ref="feedScroll" class="feed-scroll">
-            <template v-for="day in feedDays" :key="day.label">
+            <!-- Under the map, with room for it, the log is ruled like a logbook:
+                 a line per entry, a column per particular, read one way — down. -->
+            <table v-if="logAsTable" class="feed-table">
+              <!-- the columns' widths, said once: the cells follow -->
+              <colgroup>
+                <col class="feed-c-mark" /><col class="feed-c-time" /><col class="feed-c-vessel" /><col />
+                <col class="feed-c-fact" /><col class="feed-c-fact" /><col class="feed-c-took" />
+              </colgroup>
+              <thead>
+                <tr>
+                  <th scope="col" colspan="2">Time</th>
+                  <th scope="col">Vessel</th>
+                  <th scope="col">Event</th>
+                  <th scope="col">Trigger</th>
+                  <th scope="col">Commit</th>
+                  <th scope="col" class="feed-took">Took</th>
+                </tr>
+              </thead>
+              <tbody v-for="day in feedDays" :key="day.label">
+                <tr class="feed-day-row"><th class="feed-day" scope="rowgroup" colspan="7">{{ day.label }}</th></tr>
+                <tr v-for="e in day.entries" :key="e.key" class="feed-row">
+                  <td class="feed-mark"><span class="dot" :class="e.dot"></span></td>
+                  <td class="feed-fact">{{ e.when }}</td>
+                  <td class="feed-vessel"><span v-if="e.owner" class="feed-owner">{{ e.owner }} ·</span> <router-link :to="e.to" class="feed-project">{{ e.project }}</router-link></td>
+                  <td class="feed-event">{{ e.text }}</td>
+                  <td class="feed-fact">{{ e.trigger }}</td>
+                  <td class="feed-fact">{{ e.sha }}</td>
+                  <td class="feed-fact feed-took">{{ e.took }}</td>
+                </tr>
+              </tbody>
+            </table>
+            <template v-for="day in feedDays" v-else :key="day.label">
               <div class="feed-day">{{ day.label }}</div>
               <div v-for="e in day.entries" :key="e.key" class="feed-entry">
                 <span class="dot" :class="e.dot"></span>
@@ -212,6 +243,8 @@ import { logEntries, byDay } from '../lib/shiplog.js'
 // holds, a step at a time.
 const FEED_FIRST = 8
 const FEED_STEP = 12
+// From here up the log under the map has room for its seven columns.
+const WIDE_LOG = '(min-width: 820px)'
 
 // Which piers are folded away is this browser's own convenience; storage
 // can be missing or throw (private windows), and then everything is open.
@@ -261,6 +294,8 @@ export default {
       pierError: '',
       collapsed: loadCollapsed(),
       feedShown: FEED_FIRST,
+      // Whether the window is wide enough for the log as a table (WIDE_LOG).
+      wide: true,
     }
   },
   computed: {
@@ -343,6 +378,11 @@ export default {
     feedDays() {
       return byDay(this.feed, store.now)
     },
+    // The log under the map is a table where the window has the width for
+    // one; on a phone it stays the list it is beside the list.
+    logAsTable() {
+      return this.view === 'map' && this.wide
+    },
     feedMore() {
       return this.log.entries.length - this.feed.length
     },
@@ -368,9 +408,16 @@ export default {
   },
   mounted() {
     window.addEventListener('keydown', this.onSlash)
+    // not reactive itself: the query whose answer `wide` follows
+    this.wideQuery = typeof window.matchMedia === 'function' ? window.matchMedia(WIDE_LOG) : null
+    if (this.wideQuery) {
+      this.wide = this.wideQuery.matches
+      this.wideQuery.addEventListener?.('change', this.onWide)
+    }
   },
   unmounted() {
     window.removeEventListener('keydown', this.onSlash)
+    this.wideQuery?.removeEventListener?.('change', this.onWide)
   },
   methods: {
     // The harbor split by owner: your own projects first, then everyone
@@ -400,6 +447,9 @@ export default {
         f.piers = prune ? own.filter(x => x.projects.length) : own
       }
       return fleets
+    },
+    onWide(event) {
+      this.wide = event.matches
     },
     // / jumps to the search, unless someone is typing somewhere already.
     onSlash(event) {

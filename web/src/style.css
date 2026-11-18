@@ -695,6 +695,39 @@ button.hm-key:disabled { opacity: 0.45; cursor: default; }
 .harbor-layout.as-map .harbor-list { flex: none; }
 .harbor-layout.as-map .feed-panel { flex: none; position: static; max-height: none; }
 .harbor-layout.as-map .feed-scroll { max-height: 60vh; }
+/* Under the map the log has the map's width, and is ruled like a logbook:
+   a line per entry and a column per particular, so it reads one way — down —
+   and the width holds what the list squeezes into a second line. The columns
+   share the width out evenly rather than one of them taking all that is
+   left, so the eye never has far to go from one to the next; the event has
+   the remainder. The headings stay put while the entries scroll. */
+.feed-table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 13.5px; }
+.feed-c-mark { width: 22px; }
+.feed-c-time { width: 84px; }
+.feed-c-vessel { width: 25%; }
+.feed-c-fact { width: 13%; }
+.feed-c-took { width: 9%; }
+.feed-table thead th {
+  /* a pixel past the edge, so nothing scrolling under shows along it */
+  position: sticky; top: -1px; z-index: 1;
+  padding: 1px 18px 8px 0;
+  background: var(--panel);
+  /* a collapsed border would scroll away from a sticky cell */
+  box-shadow: inset 0 -1px 0 var(--line-strong);
+  font-size: 10.5px; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; text-align: left; white-space: nowrap;
+  color: var(--dim);
+}
+.feed-table .feed-day { padding: 16px 0 5px; text-align: left; color: var(--ink); }
+.feed-table tbody:first-of-type .feed-day { padding-top: 12px; }
+.feed-row td { padding: 8px 18px 8px 0; border-top: 1px dashed var(--dash-line); vertical-align: baseline; }
+.feed-day-row + .feed-row td { border-top: none; }
+.feed-row:hover td { background: var(--row-hover); }
+.feed-row td.feed-mark { padding-right: 0; padding-left: 2px; }
+.feed-row td.feed-fact { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: var(--mono); font-size: 12px; color: var(--dim); }
+/* a long name is cut rather than let it push the columns about */
+.feed-row td.feed-vessel { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.feed-table .feed-took { text-align: right; padding-right: 2px; }
+.feed-table .feed-owner { font-family: var(--mono); font-size: 12px; color: var(--dim); }
 /* Three levels: a fleet (whose), its piers, and the vessels at no pier. The
    fleet heading is the only one with a rule under it, so the order reads at
    a glance; "At anchor" lines up with the pier names, as a pier without one. */

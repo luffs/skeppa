@@ -79,3 +79,22 @@ test('whenInDay: minutes ago within the hour, the clock time after', () => {
   expect(whenInDay(new Date(2026, 10, 18, 9, 5).getTime(), NOW)).toBe('09:05')
   expect(whenInDay(0, NOW)).toBe('')
 })
+
+// The same particulars, each on its own, for the log laid out as a table;
+// what is not known is '' there and left out of the one-line meta.
+test('an entry carries its particulars apart as well as in one line', () => {
+  const now = Date.now()
+  const iso = ms => new Date(now - ms).toISOString()
+  const d = { id: 7, status: 'success', trigger: 'webhook', commitSha: 'abcdef1234', startedAt: iso(3 * H + 12_000), finishedAt: iso(3 * H), createdAt: iso(3 * H) }
+  const queued = { id: 8, status: 'queued', trigger: 'manual', commitSha: null, startedAt: null, finishedAt: null, createdAt: iso(630_000) } // ten and a half minutes: the clock may be a moment behind
+  const head = { sha: 'c'.repeat(40), pushedAt: iso(2 * H) }
+  const { entries } = logEntries([project(1, [queued, d], { headCommit: head })])
+  const facts = e => [e.key, e.when, e.trigger, e.sha, e.took]
+  const clock = ms => new Date(now - ms).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+  expect(entries.map(facts)).toEqual([
+    ['d8', '10m ago', 'manual', '', ''],
+    ['c1', clock(2 * H), 'push', 'ccccccc', ''],
+    ['d7', clock(3 * H), 'webhook', 'abcdef1', '12.0s'],
+  ])
+  expect(entries.map(e => e.meta)).toEqual(['10m ago · manual', `${clock(2 * H)} · push · ccccccc`, `${clock(3 * H)} · webhook · abcdef1 · 12.0s`])
+})
