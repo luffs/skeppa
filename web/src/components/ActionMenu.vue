@@ -4,7 +4,8 @@
       ref="toggle"
       type="button"
       class="small secondary action-menu-toggle"
-      :aria-label="label"
+      :class="text ? 'worded' : 'kebab'"
+      :aria-label="text ? null : label"
       :title="label"
       aria-haspopup="menu"
       :aria-expanded="open ? 'true' : 'false'"
@@ -12,12 +13,18 @@
       @keydown.down.prevent="show(0)"
       @keydown.up.prevent="show(-1)"
     >
-      <span aria-hidden="true">⋯</span>
+      <template v-if="text">{{ text }}<span class="action-menu-caret" aria-hidden="true">▾</span></template>
+      <!-- Three drawn dots, upright: crisp at any size and in any font, where
+           the ⋯ character came out as a dash. -->
+      <svg v-else class="kebab-dots" viewBox="0 0 4 16" width="4" height="16" aria-hidden="true" focusable="false">
+        <circle cx="2" cy="2" r="1.6" /><circle cx="2" cy="8" r="1.6" /><circle cx="2" cy="14" r="1.6" />
+      </svg>
     </button>
-    <div v-if="open" ref="list" class="action-menu-list" role="menu" :aria-label="label" @keydown="onKey">
+    <div v-if="open" ref="list" class="action-menu-list" :class="{ up }" role="menu" :aria-label="label" @keydown="onKey">
       <template v-for="(item, i) in items" :key="item.key ?? 'h' + i">
         <!-- A heading starts a section; it is read out, never focused. -->
         <div v-if="item.heading" class="action-menu-heading" role="presentation">{{ item.heading }}</div>
+        <div v-else-if="item.separator" class="action-menu-sep" role="separator"></div>
         <button
           v-else
           type="button"
@@ -36,7 +43,7 @@
 </template>
 
 <script>
-// A "⋯" button that opens a short list of actions. Keyboard: arrows move,
+// A ⋮ button (or a word, `text`) that opens a short list of actions. Keyboard: arrows move,
 // Home/End jump, Escape closes and hands focus back to the button; a click
 // anywhere else or tabbing away closes it too. Emits `select` with the
 // item's key — the parent does the work, confirmations included.
@@ -44,12 +51,16 @@ export default {
   name: 'ActionMenu',
   props: {
     label: { type: String, default: 'Actions' },
-    // [{ key, label, danger?, disabled?, hint? }] or { heading } to start a section
+    // A word on the button instead of ⋮ — for a menu over many things (a
+    // pier's Orders), so it does not read like the ⋮ of one row under it.
+    text: { type: String, default: '' },
+    // [{ key, label, danger?, disabled?, hint? }], { heading } to start a
+    // section, or { separator: true } to set what follows apart
     items: { type: Array, required: true },
   },
   emits: ['select'],
   data() {
-    return { open: false }
+    return { open: false, up: false }
   },
   beforeUnmount() {
     document.removeEventListener('pointerdown', this.onOutside)
@@ -61,11 +72,24 @@ export default {
     // `at` is the item to focus: 0 the first, -1 the last.
     show(at) {
       this.open = true
+      this.up = false
       document.addEventListener('pointerdown', this.onOutside)
       this.$nextTick(() => {
+        this.placeList()
         const items = this.enabled()
-        items.at(at)?.focus()
+        items.at(at)?.focus({ preventScroll: true })
       })
+    },
+    // Downward unless the list would run past the bottom of the screen and
+    // there is more room above — the last rows of a long harbor.
+    placeList() {
+      const list = this.$refs.list
+      const toggle = this.$refs.toggle
+      if (!list || !toggle) return
+      const below = window.innerHeight - toggle.getBoundingClientRect().bottom
+      const above = toggle.getBoundingClientRect().top
+      const needed = list.getBoundingClientRect().height + 12
+      this.up = needed > below && above > below
     },
     close({ refocus = false } = {}) {
       if (!this.open) return

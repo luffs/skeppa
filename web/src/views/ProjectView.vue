@@ -45,7 +45,7 @@
         >
           <StableLabel :text="headLabel" :variants="headLabels" />
         </button>
-        <!-- The same action the harbor row offers, and the rest in ⋯ (lib/vesselActions.js). -->
+        <!-- The same action the harbor row offers, and the rest in ⋮ (lib/vesselActions.js). -->
         <button :disabled="busy || primary.disabled" @click="run(primary.key)">
           <StableLabel :text="primary.label" :variants="PRIMARY_LABELS" />
         </button>
@@ -365,7 +365,7 @@ export default {
     },
     // Everything else, without repeating the button next to it.
     menu() {
-      return actionMenu(this.project, this.live, { appUrl: this.appUrl }).filter(i => i.key !== this.primary.key)
+      return actionMenu(this.project, this.live, { exclude: this.primary.key })
     },
     // '' at no pier, or while the pier has not reached the store yet.
     pierName() {
@@ -601,7 +601,6 @@ export default {
     },
     // The header's button and menu (lib/vesselActions.js does the work).
     async run(key) {
-      if (key === 'open') return window.open(this.appUrl, '_blank', 'noopener')
       this.busy = true
       try {
         const result = await performAction(this.project, key)

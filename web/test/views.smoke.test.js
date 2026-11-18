@@ -346,6 +346,10 @@ test("a pier's actions are a menu: open, close with Escape, rename from it", asy
       expect(head.find('.action-menu-list').exists()).toBe(false)
       const toggle = head.find('.action-menu-toggle')
       expect(toggle.attributes('aria-haspopup')).toBe('menu')
+      // a word, not the rows' ⋯: this menu is about every vessel at the pier
+      expect(toggle.text().replace(/\s+/g, '')).toBe('Orders▾')
+      expect(wrapper.find('.vessel-row .action-menu-toggle').classes()).toContain('kebab')
+      expect(wrapper.find('.vessel-row .action-menu-toggle').findAll('svg circle').length).toBe(3)
 
       await toggle.trigger('click')
       await settle()
@@ -389,11 +393,12 @@ test("Deploy all counts the vessels it will deploy, leaving out the panel's own"
 // A row says what the vessel is doing and offers one button only when
 // something wants doing; the same states as a folded pier's summary.
 describe('a harbor row', () => {
-  const rowOf = async (setup, check) => {
+  const rowOf = async (setup, check, { router = {} } = {}) => {
     seedStore('admin')
     try { localStorage.clear() } catch { /* everything open */ }
     setup(store.live.projects[1])
     const res = await expectCleanRender(DashboardView, {
+      router,
       steps: async wrapper => check(wrapper.findAll('.vessel-row').find(r => r.find('.vessel-name').text() === 'adm')),
     })
     expect(res.problems.join(' | ')).toBe('')
@@ -432,21 +437,53 @@ describe('a harbor row', () => {
     expect(button(row).text()).toBe('Start')
   }))
 
-  // adm is at its owner's only pier: the menu offers to leave it, nothing
-  // of anyone else's, and moving sends the pier alone.
-  test('the ⋯ menu holds the rest, and moves a vessel between piers', () => rowOf(() => {}, async row => {
+  // The menu in groups: no Deploy next to Deploy latest, no Open app next to
+  // the address; Go to; the piers with the current one ticked; Stop apart at
+  // the end. adm is at its owner's only pier, and moving sends the pier alone.
+  test('the ⋯ menu: what the row does not show, in groups, Stop set apart', () => rowOf(() => {}, async row => {
     await row.find('.action-menu-toggle').trigger('click')
     await settle()
     const menu = row.find('.action-menu-list')
-    expect(menu.findAll('[role="menuitem"]').map(i => i.text())).toEqual(
-      ['Deploy', 'Open app ↗', 'Restart', 'Stop…', 'Rigging', 'At anchor (no pier)']
+    const items = menu.findAll('[role="menuitem"]')
+    expect(items.map(i => i.text())).toEqual(
+      ['Restart', 'Last voyage', 'Logbook', 'Rigging', '✓ Kunder', 'At anchor (no pier)', 'Stop…']
     )
-    expect(menu.find('.action-menu-heading').text()).toBe('Move to pier')
+    expect(menu.findAll('.action-menu-heading').map(h => h.text())).toEqual(['Go to', 'Move to pier'])
+    expect(items.find(i => i.text() === '✓ Kunder').attributes('disabled')).toBeDefined()
+    expect(menu.find('.action-menu-sep').exists()).toBe(true)
+    expect(items.at(-1).classes()).toContain('danger')
+
     const patch = vi.spyOn(api, 'patch')
-    await menu.findAll('[role="menuitem"]').at(-1).trigger('click')
+    await items.find(i => i.text() === 'At anchor (no pier)').trigger('click')
     await settle()
     expect(patch).toHaveBeenCalledWith('/api/projects/1', { group_id: null })
     patch.mockRestore()
+  }))
+
+  test('Go to opens the last voyage, the Logbook and Rigging', async () => {
+    const pushed = []
+    for (const label of ['Last voyage', 'Logbook', 'Rigging']) {
+      await rowOf(() => {}, async row => {
+        await row.find('.action-menu-toggle').trigger('click')
+        await settle()
+        await row.findAll('[role="menuitem"]').find(i => i.text() === label).trigger('click')
+        await settle()
+      }, { router: { push: to => pushed.push(to) } })
+    }
+    expect(pushed).toEqual([
+      { path: '/projects/1', query: { deployment: '1' } },
+      { path: '/projects/1', query: { tab: 'logs' } },
+      { path: '/projects/1', query: { tab: 'settings' } },
+    ])
+  })
+
+  // In step there is no button on the row, so Deploy is the menu's first.
+  test('a vessel in step keeps Deploy in its menu', () => rowOf(live => {
+    live.headCommit = { sha: 'a'.repeat(40), message: 'x', pushedAt: ISO }
+  }, async row => {
+    await row.find('.action-menu-toggle').trigger('click')
+    await settle()
+    expect(row.findAll('[role="menuitem"]')[0].text()).toBe('Deploy')
   }))
 })
 

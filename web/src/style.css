@@ -474,6 +474,20 @@ td.commit-cell { width: 100%; max-width: 0; min-width: 240px; }
 /* ---- action menu (the "⋯" button and its list) ---- */
 .action-menu { position: relative; }
 .action-menu-toggle { padding: 3px 10px; font-size: 15px; line-height: 1; letter-spacing: 0.08em; }
+/* The ⋮ of a row or a page: no frame until it is pointed at, focused or
+   open, so the row's one real button is the only button that shows. */
+button.action-menu-toggle.kebab {
+  border-color: transparent; background: transparent; color: var(--dim);
+  padding: 4px 9px; min-height: 28px; display: inline-flex; align-items: center; justify-content: center;
+}
+button.action-menu-toggle.kebab:hover,
+button.action-menu-toggle.kebab:focus-visible,
+button.action-menu-toggle.kebab[aria-expanded='true'] {
+  border-color: var(--line-strong); background: var(--hover-tint); color: var(--ink);
+}
+.kebab-dots { fill: currentColor; display: block; }
+.action-menu-toggle.worded { padding: 5px 10px 5px 12px; font-size: 12px; letter-spacing: 0.02em; display: inline-flex; align-items: center; gap: 6px; }
+.action-menu-caret { font-size: 10px; opacity: 0.7; }
 .action-menu-list {
   position: absolute; right: 0; top: calc(100% + 4px); z-index: 20;
   min-width: 180px; padding: 4px;
@@ -493,6 +507,9 @@ button.action-menu-item.danger { color: var(--red); }
   font-size: 10.5px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--dim);
 }
 .action-menu-heading:first-child { margin-top: 0; border-top: none; }
+.action-menu-sep { margin: 4px; border-top: 1px solid var(--line-soft); }
+/* No room below: the list opens upward from the button. */
+.action-menu-list.up { top: auto; bottom: calc(100% + 4px); }
 button.action-menu-item.danger:hover:not(:disabled) { background: var(--red-tint); }
 .pier-rename { flex: 1; }
 .pier-rename input, .pier-new input { flex: 1 1 220px; min-width: 0; }

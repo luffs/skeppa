@@ -5,7 +5,7 @@ import { vesselState } from './vessels.js'
 
 // What can be done to a project, decided once for the harbor row and the
 // project page alike: the one action its state calls for, and the rest for a
-// ⋯ menu. `perform` carries an action out, confirmations included; the
+// ⋮ menu. `perform` carries an action out, confirmations included; the
 // navigating ones (open the app, Rigging) stay with the caller, which knows
 // its router.
 
@@ -21,32 +21,59 @@ export function primaryAction(project, live) {
   return null
 }
 
-// The owner's other piers; a project only ever moors at its owner's.
-export function otherPiers(project) {
+// The owner's piers, A–Z; a project only ever moors at its owner's.
+export function ownerPiers(project) {
   return Object.values(store.live.groups ?? {})
-    .filter(g => g.owner_id === project.owner_id && g.id !== project.group_id)
+    .filter(g => g.owner_id === project.owner_id)
     .sort((a, b) => a.name.localeCompare(b.name))
 }
 
-// The ⋯ menu. `rigging` adds the link to the settings tab (the row has it;
-// the page has the tab itself), `piers` the Move to pier section.
-export function actionMenu(project, live, { appUrl = '', rigging = false, piers = false } = {}) {
+// The voyage a "Last voyage" link opens: the one under way, or the last one.
+export const lastVoyageId = live => live?.currentDeployment?.id ?? live?.lastDeployment?.id ?? null
+
+// The ⋮ menu, in groups: what is done most (deploy, restart or start); then,
+// with `goto`, where to look (the last voyage's log, the process log,
+// Rigging — the row has them, the page has its tabs); with `piers`, where it
+// is listed (the current pier ticked, not hidden); and, set apart at the
+// end, Stop, the one thing that takes the app down. `exclude` is the key of
+// the button next to the menu, which the menu does not repeat; the app's
+// address is a link of its own on the row and the page, so it is not here.
+export function actionMenu(project, live, { exclude = '', goto = false, piers = false } = {}) {
   const underway = vesselState(live) === 'underway'
-  const items = [{ key: 'deploy', label: 'Deploy', disabled: underway }]
-  if (appUrl) items.push({ key: 'open', label: 'Open app ↗' })
-  if (!isStatic(project)) {
-    if (live?.pm2?.status === 'online') items.push({ key: 'restart', label: 'Restart' }, { key: 'stop', label: 'Stop…' })
-    else items.push({ key: 'start', label: 'Start' })
+  const running = !isStatic(project) && live?.pm2?.status === 'online'
+  const items = []
+  const add = item => { if (item.key !== exclude) items.push(item) }
+
+  add({ key: 'deploy', label: 'Deploy', disabled: underway })
+  if (running) add({ key: 'restart', label: 'Restart' })
+  else if (!isStatic(project)) add({ key: 'start', label: 'Start' })
+
+  if (goto) {
+    items.push({ heading: 'Go to' })
+    if (lastVoyageId(live)) items.push({ key: 'voyage', label: underway ? 'Voyage under way' : 'Last voyage' })
+    if (!isStatic(project)) items.push({ key: 'logbook', label: 'Logbook' })
+    items.push({ key: 'rigging', label: 'Rigging' })
   }
-  if (rigging) items.push({ key: 'rigging', label: 'Rigging' })
+
   if (piers) {
-    const others = otherPiers(project)
-    if (others.length || project.group_id != null) {
+    const all = ownerPiers(project)
+    if (all.length) {
       items.push({ heading: 'Move to pier' })
-      for (const g of others) items.push({ key: `pier:${g.id}`, label: g.name })
-      if (project.group_id != null) items.push({ key: 'pier:', label: 'At anchor (no pier)' })
+      for (const g of all) {
+        const here = g.id === project.group_id
+        items.push({ key: `pier:${g.id}`, label: here ? `✓ ${g.name}` : g.name, disabled: here, hint: here ? 'Moored here now' : '' })
+      }
+      const anchored = project.group_id == null
+      items.push({ key: 'pier:', label: anchored ? '✓ At anchor (no pier)' : 'At anchor (no pier)', disabled: anchored })
     }
   }
+
+  if (running) {
+    items.push({ separator: true })
+    add({ key: 'stop', label: 'Stop…', danger: true })
+  }
+  // A heading or a separator with nothing after it says nothing.
+  while (items.length && (items.at(-1).heading || items.at(-1).separator)) items.pop()
   return items
 }
 

@@ -19,7 +19,7 @@
         </span>
       </span>
       <span v-if="deploying" class="fleet-detail">setting out…</span>
-      <ActionMenu class="pier-actions" :label="`Pier ${pier.name}`" :items="menu" @select="onSelect" />
+      <ActionMenu class="pier-actions" text="Orders" :label="`Orders for every vessel at ${pier.name}`" :items="menu" @select="onSelect" />
     </template>
     <div v-else class="row pier-rename">
       <input

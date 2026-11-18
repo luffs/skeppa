@@ -23,7 +23,7 @@
 <script>
 import ActionMenu from './ActionMenu.vue'
 import { liveProject, appUrlFor } from '../store.js'
-import { primaryAction, actionMenu, performAction } from '../lib/vesselActions.js'
+import { primaryAction, actionMenu, performAction, lastVoyageId } from '../lib/vesselActions.js'
 import { timeAgo, uptimeSince } from '../lib/format.js'
 import { vesselState, statusWord, VESSEL_STATES } from '../lib/vessels.js'
 
@@ -34,7 +34,7 @@ const firstLine = text => (text ?? '').split('\n')[0].trim()
 // pier sums up — lib/vessels.js), the name, what it is doing, its address;
 // below, what happened last. A button only when something wants doing —
 // deploy what is new, retry what failed, start what is down — and the rest
-// in the ⋯ menu, moving it between piers included. The whole row opens the
+// in the ⋮ menu, moving it between piers included. The whole row opens the
 // project; its links and buttons do their own thing.
 export default {
   name: 'ProjectRow',
@@ -111,13 +111,13 @@ export default {
       }
       return parts.filter(Boolean).join(' · ')
     },
-    // The one button on the row, and the rest in ⋯ — decided in
+    // The one button on the row, and the rest in ⋮ — decided in
     // lib/vesselActions.js, so the project page offers exactly the same.
     action() {
       return primaryAction(this.project, this.live)
     },
     menu() {
-      return actionMenu(this.project, this.live, { appUrl: this.appUrl, rigging: true, piers: true })
+      return actionMenu(this.project, this.live, { exclude: this.action?.key, goto: true, piers: true })
     },
   },
   methods: {
@@ -128,8 +128,10 @@ export default {
       this.$router.push(`/projects/${this.project.id}`)
     },
     async run(key) {
-      if (key === 'open') return window.open(this.appUrl, '_blank', 'noopener')
-      if (key === 'rigging') return this.$router.push({ path: `/projects/${this.project.id}`, query: { tab: 'settings' } })
+      const page = query => this.$router.push({ path: `/projects/${this.project.id}`, query })
+      if (key === 'voyage') return page({ deployment: String(lastVoyageId(this.live)) })
+      if (key === 'logbook') return page({ tab: 'logs' })
+      if (key === 'rigging') return page({ tab: 'settings' })
       this.busy = true
       try {
         await performAction(this.project, key)
