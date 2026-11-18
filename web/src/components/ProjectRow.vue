@@ -26,7 +26,7 @@ import { store, liveProject, appUrlFor } from '../store.js'
 import { api } from '../api.js'
 import { alertDialog, confirmDialog } from '../lib/dialog.js'
 import { timeAgo, uptimeSince } from '../lib/format.js'
-import { vesselState, VESSEL_STATES } from '../lib/vessels.js'
+import { vesselState, statusWord, VESSEL_STATES } from '../lib/vessels.js'
 
 const short = sha => (sha ? sha.slice(0, 7) : '')
 const firstLine = text => (text ?? '').split('\n')[0].trim()
@@ -61,6 +61,10 @@ export default {
     status() {
       return this.live?.pm2?.status ?? 'unknown'
     },
+    // The same word the project page's badge shows.
+    word() {
+      return statusWord(this.live)
+    },
     last() {
       return this.live?.lastDeployment ?? null
     },
@@ -79,15 +83,15 @@ export default {
         case 'underway':
           return this.live.currentDeployment.status === 'queued' ? 'waiting to depart' : 'voyage under way…'
         case 'down':
-          return this.status
+          return this.word
         case 'failed':
           return `voyage failed · ${timeAgo(this.last.finishedAt)}`
         case 'ahead':
           return 'new commits'
         case 'running':
-          return this.status
+          return this.word
         default:
-          return this.last ? (this.status === 'unknown' ? '' : this.status) : 'never deployed'
+          return this.word === 'unknown' ? '' : this.word
       }
     },
     // The second line: the branch, then the one thing worth knowing next.

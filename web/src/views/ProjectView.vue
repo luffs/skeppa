@@ -5,7 +5,7 @@
       <div>
         <div style="display: flex; align-items: center; gap: 14px; flex-wrap: wrap">
           <h1 style="margin: 0">{{ project.name }}</h1>
-          <StatusBadge :status="live?.pm2?.status" :href="appUrl" />
+          <StatusBadge :status="statusWord" :href="appUrl" />
           <!-- Where it is listed in the harbor; the pier is changed in Rigging, so that is where it leads. -->
           <button
             v-if="pierName"
@@ -255,6 +255,7 @@ import PierPicker from '../components/PierPicker.vue'
 import { api } from '../api.js'
 import { confirmDialog, alertDialog } from '../lib/dialog.js'
 import { store, liveProject, appUrlFor } from '../store.js'
+import { statusWord } from '../lib/vessels.js'
 import { timeAgo, duration, uptimeSince, bytes } from '../lib/format.js'
 
 const RUNTIME_LABEL = { pm2: 'a pm2 process', container: 'a container', static: 'a static site' }
@@ -307,6 +308,10 @@ export default {
     },
     live() {
       return liveProject(Number(this.id))
+    },
+    // The same word the harbor row shows ("never deployed" before the first voyage).
+    statusWord() {
+      return statusWord(this.live)
     },
     // '' at no pier, or while the pier has not reached the store yet.
     pierName() {

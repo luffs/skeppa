@@ -147,7 +147,7 @@ async function expectCleanRender(component, { props = {}, steps = async () => {}
       props,
       global: {
         mocks: { $route: { path: '/', query: {}, params: {}, ...route }, $router: { push() {}, replace() {} } },
-        stubs: { RouterLink: { props: ['to'], template: '<a><slot /></a>' }, RouterView: true },
+        stubs: { RouterLink: { props: ['to'], template: `<a :href="typeof to === 'string' ? to : to.path"><slot /></a>` }, RouterView: true },
         config: { errorHandler: err => problems.push(`errorHandler: ${err.message}`) },
       },
     })
@@ -220,6 +220,34 @@ test('the harness fails on an identifier the template uses but the instance neve
 // The harbor is split by owner for an admin (their own fleet first, then
 // each tenant's, headed with where it routes) and the ship's log tags other
 // people's entries; a tenant has one fleet, so no headings and no tags.
+// The log opens on the latest eight under day headings; Show more reveals
+// what LiveState already holds, and Show less folds it back.
+test("the ship's log heads its entries by day, and shows more of what it holds", async () => {
+  seedStore('admin')
+  const ago = h => new Date(NOW - h * 3_600_000).toISOString()
+  store.live.projects[1].recentDeployments = Array.from({ length: 15 }, (_, i) => ({
+    id: 100 - i, status: 'success', trigger: 'manual', commitSha: null, startedAt: ago(i * 3), finishedAt: ago(i * 3), createdAt: ago(i * 3),
+  }))
+  const res = await expectCleanRender(DashboardView, {
+    steps: async wrapper => {
+      expect(wrapper.findAll('.feed-entry').length).toBe(8)
+      expect(wrapper.find('.feed-day').text()).toBe('Today')
+      const more = wrapper.findAll('.feed-more button').find(b => b.text().startsWith('Show'))
+      // 15 voyages of adm, bob's one, and two "new commits sighted"
+      expect(more.text()).toBe('Show 10 more')
+      await more.trigger('click')
+      await settle()
+      expect(wrapper.findAll('.feed-entry').length).toBe(18)
+      expect(wrapper.findAll('.feed-more button').map(b => b.text())).toEqual(['Show less'])
+      expect(wrapper.find('.feed-cut').exists()).toBe(false) // no tail was cut off
+      await wrapper.find('.feed-more button').trigger('click')
+      await settle()
+      expect(wrapper.findAll('.feed-entry').length).toBe(8)
+    },
+  })
+  expect(res.problems.join(' | ')).toBe('')
+})
+
 test('the harbor groups projects by owner for an admin, and not for a tenant', async () => {
   seedStore('admin')
   store.live.users[2].domain = 'bob.dev'
@@ -230,6 +258,10 @@ test('the harbor groups projects by owner for an admin, and not for a tenant', a
       expect(heads).toEqual(['Your fleet 1 vessel', 'bob bob.dev 1 vessel'])
       // bob's project has a finished voyage and unsighted commits: both are his
       expect(wrapper.findAll('.feed-owner').map(o => o.text())).toEqual(['bob ·', 'bob ·'])
+      // every entry names its project as a link to it
+      const links = wrapper.findAll('.feed-entry a.feed-project')
+      expect(links.length).toBe(wrapper.findAll('.feed-entry').length)
+      expect(new Set(links.map(a => `${a.text()} ${a.attributes('href')}`))).toEqual(new Set(['adm /projects/1', 'bobapp /projects/2']))
     },
   })
   expect(admin.problems.join(' | ')).toBe('')

@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest'
-import { vesselState, summarizeVessels } from '../src/lib/vessels.js'
+import { vesselState, summarizeVessels, statusWord } from '../src/lib/vessels.js'
 
 // A folded pier sums its vessels up with one state each — the most pressing
 // — so the counts always add up to the number of vessels.
@@ -35,4 +35,15 @@ test('the summary lists present states in a fixed order, with counts', () => {
   const lives = [live(), live(), live({ headCommit: { sha: 'b' } }), live({ pm2: { status: 'stopped' } }), null]
   expect(summarizeVessels(lives).map(s => s.text)).toEqual(['1 down', '1 with new commits', '2 running', '1 idle'])
   expect(summarizeVessels([])).toEqual([])
+})
+
+// One word for one state, in the row and on the project page alike.
+test('statusWord says "never deployed" before the first voyage, the poller\'s word after', () => {
+  expect(statusWord({ pm2: { status: 'not published' } })).toBe('never deployed')
+  expect(statusWord({ pm2: { status: 'unknown' } })).toBe('never deployed')
+  expect(statusWord(null)).toBe('never deployed')
+  expect(statusWord({ pm2: { status: 'not published' }, currentDeployment: { id: 1 } })).toBe('not published')
+  expect(statusWord({ pm2: { status: 'not published' }, lastDeployment: { status: 'success' } })).toBe('not published')
+  // a process running without any voyage (started by hand) is what it is
+  expect(statusWord({ pm2: { status: 'online' } })).toBe('online')
 })

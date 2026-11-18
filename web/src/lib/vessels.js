@@ -29,6 +29,18 @@ export function vesselState(live) {
   return 'idle'
 }
 
+// The word for what a project is doing, the same wherever it is shown (the
+// harbor row, the project page's badge). The poller's word, except before
+// the first voyage: a static site with no snapshot yet, or a process
+// nothing knows about yet, has simply never been deployed — "not published"
+// there would read as something gone missing.
+export function statusWord(live) {
+  const status = live?.pm2?.status ?? 'unknown'
+  const sailed = live?.lastDeployment || live?.currentDeployment
+  if (!sailed && (status === 'not published' || status === 'unknown')) return 'never deployed'
+  return status
+}
+
 // [{ key, dot, text }] for the states present, in VESSEL_STATES order.
 export function summarizeVessels(lives) {
   const counts = {}

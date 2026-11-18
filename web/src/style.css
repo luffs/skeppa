@@ -438,8 +438,12 @@ td.commit-cell { width: 100%; max-width: 0; min-width: 240px; }
 
 .harbor-layout { display: flex; gap: 28px; align-items: flex-start; margin-top: 22px; }
 .harbor-list { flex: 2 1 520px; min-width: 0; display: flex; flex-direction: column; gap: 14px; }
-.fleet-head { display: flex; align-items: baseline; gap: 10px; padding: 0 4px; }
-.fleet-head:not(:first-child) { margin-top: 14px; }
+/* Three levels: a fleet (whose), its piers, and the vessels at no pier. The
+   fleet heading is the only one with a rule under it, so the order reads at
+   a glance; "At anchor" lines up with the pier names, as a pier without one. */
+.fleet-head { display: flex; align-items: baseline; gap: 10px; padding: 0 4px 8px; border-bottom: 1px solid var(--line); }
+.fleet-head .section-label { font-size: 13px; }
+.fleet-head:not(:first-child) { margin-top: 26px; }
 .fleet-detail { font-family: var(--mono); font-size: 12px; color: var(--dim); }
 
 /* Piers: a fleet's projects in named groups. The pier's vessels hang off a
@@ -454,7 +458,7 @@ td.commit-cell { width: 100%; max-width: 0; min-width: 240px; }
 .pier-toggle:hover { background: transparent; color: var(--accent); }
 .pier-chevron { color: var(--dim); font-size: 13px; transition: transform 0.15s ease; }
 .pier-chevron.open { transform: rotate(90deg); }
-.pier-name { font-size: 15px; font-weight: 700; color: inherit; overflow-wrap: anywhere; }
+.pier-name { font-size: 14.5px; font-weight: 700; color: inherit; overflow-wrap: anywhere; }
 .pier-actions { margin-left: auto; }
 /* A folded pier's roll call: one dot and count per state present. */
 .pier-summary { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12.5px; color: var(--dim); }
@@ -489,7 +493,7 @@ button.action-menu-item.danger:hover:not(:disabled) { background: var(--red-tint
 .pier-body { display: flex; flex-direction: column; }
 .pier-empty { margin: 2px 0; }
 .anchor-head { margin-top: 4px; }
-.anchor-head .pier-name { color: var(--dim); }
+.anchor-head .pier-name { color: var(--dim); padding-left: 21px; /* chevron + gap */ }
 .pier-new { padding: 0 4px; }
 
 /* Projects as rows in one frame per list (a pier, or the projects at no
@@ -531,9 +535,16 @@ a.vessel-addr { font-family: var(--mono); font-size: 12px; color: var(--accent);
 }
 .vessel-actions { display: flex; align-items: center; gap: 6px; cursor: default; }
 
+/* The log keeps beside the list as it scrolls, and a long log scrolls inside
+   itself rather than stretching the page past everything else on it. */
 .feed-panel {
   flex: 1 1 300px;
   min-width: 280px;
+  position: sticky;
+  top: 16px;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 32px);
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -541,10 +552,21 @@ a.vessel-addr { font-family: var(--mono); font-size: 12px; color: var(--accent);
   box-shadow: 0 1px 0 var(--shadow);
 }
 .feed-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.feed-scroll { overflow-y: auto; min-height: 0; overscroll-behavior: contain; margin-right: -10px; padding-right: 10px; }
+.feed-day {
+  font-size: 10.5px; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; color: var(--dim);
+  padding: 14px 0 4px;
+}
+.feed-day:first-child { padding-top: 0; }
+.feed-day + .feed-entry { border-top: none; }
+.feed-more { display: flex; gap: 8px; padding-top: 12px; border-top: 1px dashed var(--dash-line); }
+.feed-cut { margin: 10px 0 0; font-size: 12px; }
 .feed-entry { display: flex; gap: 12px; padding: 9px 0; border-top: 1px dashed var(--dash-line); }
 .feed-entry .dot { margin-top: 5px; }
 .feed-entry .body { min-width: 0; flex: 1; }
 .feed-entry .text { font-size: 13.5px; color: var(--ink); }
+a.feed-project { font-weight: 700; color: var(--ink); }
+a.feed-project:hover { color: var(--accent); }
 .feed-entry .feed-owner { font-family: var(--mono); font-size: 12px; color: var(--dim); }
 .feed-entry .meta { font-family: var(--mono); font-size: 11.5px; color: var(--dim); margin-top: 1px; }
 
@@ -579,6 +601,9 @@ a.vessel-addr { font-family: var(--mono); font-size: 12px; color: var(--accent);
   .stat-grid { grid-template-columns: 1fr 1fr; }
   .stat-grid .stat-card:first-child { grid-column: 1 / -1; }
   .harbor-layout { flex-wrap: wrap; }
+  /* Under the list now: nothing to keep beside, so it stops at a screenful. */
+  .feed-panel { position: static; max-height: none; }
+  .feed-scroll { max-height: 60vh; }
 }
 /* The mid container is always narrower than three cards want, whatever the
    viewport — same 2+1 arrangement as the media query above. */

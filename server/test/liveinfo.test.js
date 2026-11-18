@@ -44,7 +44,8 @@ test('initLiveState carries the tail of each project\'s deploy history', () => {
     `INSERT INTO projects (slug, name, repo_full_name, branch, pm2_name)
      VALUES ('app', 'App', 'luff/app', 'main', 'app')`
   ).run()
-  for (let i = 0; i < 7; i++) {
+  const total = RECENT_DEPLOYMENTS_LIMIT + 2 // two more than the tail holds
+  for (let i = 0; i < total; i++) {
     db.query(
       `INSERT INTO deployments (project_id, status, "trigger", commit_sha, started_at, finished_at)
        VALUES (1, 'success', 'manual', ?, 's', 'f')`
@@ -56,7 +57,7 @@ test('initLiveState carries the tail of each project\'s deploy history', () => {
   const recent = liveState.projects[1].recentDeployments
 
   expect(recent.length).toBe(RECENT_DEPLOYMENTS_LIMIT)
-  expect(recent[0].commitSha).toBe('sha6') // newest first
+  expect(recent[0].commitSha).toBe(`sha${total - 1}`) // newest first
   expect(recent.at(-1).commitSha).toBe('sha2')
   expect(recent[0]).toMatchObject({ status: 'success', trigger: 'manual', startedAt: 's', finishedAt: 'f' })
 })

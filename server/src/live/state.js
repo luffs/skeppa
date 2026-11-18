@@ -63,9 +63,12 @@ export function getGroupInfo(db, id) {
 // The tail of the deployment history the dashboard's ship's log renders. It
 // lives in LiveState so the dashboard needs no request of its own — one
 // /deployments call per project on every visit was the alternative — and so
-// the log updates as deploys queue, start and finish. The full history (with
-// logs and commit messages) stays on /api/projects/:id/deployments.
-export const RECENT_DEPLOYMENTS_LIMIT = 5
+// the log updates as deploys queue, start and finish. It is longer than the
+// log shows at first, so the log's Show more needs no request either; the
+// client knows this number (web/src/lib/shiplog.js) to tell where a merged
+// log stops being complete. The full history (with logs and commit
+// messages) stays on /api/projects/:id/deployments.
+export const RECENT_DEPLOYMENTS_LIMIT = 20
 
 export function getRecentDeployments(db, projectId) {
   return db.query(

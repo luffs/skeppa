@@ -73,15 +73,30 @@
           <span class="section-label">Ship's log</span>
           <span class="mono" style="font-size: 11px; color: var(--dim)">all projects</span>
         </div>
-        <div v-if="feed.length">
-          <div v-for="(e, i) in feed" :key="i" class="feed-entry">
-            <span class="dot" :class="e.dot"></span>
-            <div class="body">
-              <div class="text"><span v-if="e.owner" class="feed-owner">{{ e.owner }} ·</span> <strong>{{ e.project }}</strong> — {{ e.text }}</div>
-              <div class="meta">{{ e.meta }}</div>
-            </div>
+        <template v-if="feed.length">
+          <!-- The entries scroll inside the panel; the buttons stay in reach under them. -->
+          <div ref="feedScroll" class="feed-scroll">
+            <template v-for="day in feedDays" :key="day.label">
+              <div class="feed-day">{{ day.label }}</div>
+              <div v-for="e in day.entries" :key="e.key" class="feed-entry">
+                <span class="dot" :class="e.dot"></span>
+                <div class="body">
+                  <div class="text"><span v-if="e.owner" class="feed-owner">{{ e.owner }} ·</span> <router-link :to="`/projects/${e.projectId}`" class="feed-project">{{ e.project }}</router-link> {{ e.text }}</div>
+                  <div class="meta">{{ e.meta }}</div>
+                </div>
+              </div>
+            </template>
           </div>
-        </div>
+          <div v-if="feedMore || feedShown > FEED_FIRST" class="feed-more">
+            <button v-if="feedMore" type="button" class="small secondary" @click="feedShown += FEED_STEP">
+              Show {{ Math.min(feedMore, FEED_STEP) }} more
+            </button>
+            <button v-if="feedShown > FEED_FIRST" type="button" class="small secondary" @click="showLess">
+              Show less
+            </button>
+          </div>
+          <p v-if="feedCut" class="hint feed-cut">Older voyages are in each project's own history.</p>
+        </template>
         <p v-else class="hint" style="margin: 0">Nothing in the log yet.</p>
       </div>
     </div>
@@ -132,15 +147,13 @@ import ProjectRow from '../components/ProjectRow.vue'
 import PierHead from '../components/PierHead.vue'
 import { store } from '../store.js'
 import { api } from '../api.js'
-import { timeAgo, duration } from '../lib/format.js'
+import { logEntries, byDay } from '../lib/shiplog.js'
 
-const FEED_TEXT = {
-  success: id => `made port — voyage #${id} succeeded`,
-  failed: id => `ran aground — voyage #${id} failed`,
-  running: id => `voyage #${id} under way…`,
-  queued: id => `voyage #${id} waiting to depart`,
-  cancelled: id => `voyage #${id} called off`,
-}
+// The log opens on the latest few; Show more reveals what LiveState already
+// holds, a step at a time.
+const FEED_FIRST = 8
+const FEED_STEP = 12
+
 // Which piers are folded away is this browser's own convenience; storage
 // can be missing or throw (private windows), and then everything is open.
 const COLLAPSED_KEY = 'skeppa.collapsedPiers'
@@ -160,13 +173,13 @@ function saveCollapsed(map) {
   }
 }
 
-const FEED_DOT = { success: 'green', failed: 'red', running: 'blue pulse', queued: 'amber', cancelled: '' }
-
 export default {
   name: 'DashboardView',
   components: { ProjectRow, PierHead },
   data() {
     return {
+      FEED_FIRST, // read by the template
+      FEED_STEP,
       setup: null,
       setupError: '',
       addingPier: false,
@@ -174,6 +187,7 @@ export default {
       pierBusy: false,
       pierError: '',
       collapsed: loadCollapsed(),
+      feedShown: FEED_FIRST,
     }
   },
   computed: {
@@ -246,38 +260,26 @@ export default {
     },
     // Built straight off the LiveState mirror: the server keeps the tail of
     // each project's history in `recentDeployments`, so the log needs no
-    // request of its own and moves as deploys queue, start and finish.
-    feed() {
-      const items = []
+    // request of its own — Show more included — and moves as deploys queue,
+    // start and finish. lib/shiplog.js says how far back it can be trusted.
+    log() {
       const shown = new Set(this.projects.map(p => p.id)) // the same scope as the list
-      for (const p of Object.values(store.live.projects ?? {})) {
-        const info = p.info
-        if (!info || !shown.has(info.id)) continue
-        for (const d of p.recentDeployments ?? []) {
-          const when = d.finishedAt || d.startedAt || d.createdAt
-          items.push({
-            ts: when ? new Date(when).getTime() : 0,
-            owner: this.feedOwner(info),
-            project: info.name,
-            text: (FEED_TEXT[d.status] ?? (id => `voyage #${id} — ${d.status}`))(d.id),
-            meta: [d.trigger, d.commitSha?.slice(0, 7), duration(d.startedAt, d.finishedAt), timeAgo(when)]
-              .filter(v => v && v !== '—')
-              .join(' · '),
-            dot: FEED_DOT[d.status] ?? '',
-          })
-        }
-        if (p.headCommit?.sha && !p.currentDeployment && p.headCommit.sha !== p.deployedSha) {
-          items.push({
-            ts: p.headCommit.pushedAt ? new Date(p.headCommit.pushedAt).getTime() : 0,
-            owner: this.feedOwner(info),
-            project: info.name,
-            text: `new commits sighted on ${info.branch}`,
-            meta: ['push', p.headCommit.sha.slice(0, 7), timeAgo(p.headCommit.pushedAt)].filter(Boolean).join(' · '),
-            dot: 'amber',
-          })
-        }
-      }
-      return items.sort((a, b) => b.ts - a.ts).slice(0, 8)
+      const lives = Object.values(store.live.projects ?? {}).filter(p => shown.has(p.info?.id))
+      return logEntries(lives, info => this.feedOwner(info))
+    },
+    feed() {
+      return this.log.entries.slice(0, this.feedShown)
+    },
+    feedDays() {
+      return byDay(this.feed, store.now)
+    },
+    feedMore() {
+      return this.log.entries.length - this.feed.length
+    },
+    // Everything the client has is shown, and some project has more than it
+    // was sent: say where the rest is rather than end as if that were all.
+    feedCut() {
+      return !this.feedMore && this.log.horizon > 0
     },
   },
   watch: {
@@ -286,6 +288,10 @@ export default {
     needsSetup: { immediate: true, handler(v) { if (v && !this.setup) this.checkSetup() } },
   },
   methods: {
+    showLess() {
+      this.feedShown = FEED_FIRST
+      if (this.$refs.feedScroll) this.$refs.feedScroll.scrollTop = 0
+    },
     startPier() {
       this.addingPier = true
       this.pierName = ''
