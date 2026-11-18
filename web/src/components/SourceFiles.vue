@@ -23,7 +23,8 @@
     <p v-if="error" class="error" style="margin: 0 0 8px">{{ error }}</p>
 
     <p v-if="missing" class="hint">
-      No freight aboard yet — the files appear here once the first voyage has checked the repository out.
+      No freight aboard yet — the files appear here once the repository is checked out: by the first
+      voyage, or by Clone at the top of the page, which deploys nothing.
     </p>
 
     <template v-else-if="file">

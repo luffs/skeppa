@@ -6,7 +6,14 @@ import { scriptEnvBase } from '../lib/shell.js'
 // passed on the command line per invocation and never persisted into
 // .git/config (fetch-by-URL; the clone's origin is scrubbed right after).
 // Any git output that could contain the token is redacted before logging.
-export async function syncRepo({ dir, repoFullName, branch, token, gitUrl = null, onLine = () => {} }) {
+//
+// `sha` pins the checkout to an earlier commit (a redeploy): the branch is
+// synced as always, then the working tree is reset to that commit — fetched
+// by id first if a force-push took it off the branch. The caller has checked
+// it is a full sha this project deployed before (SHA_RE).
+export const SHA_RE = /^[0-9a-f]{40}$/
+export async function syncRepo({ dir, repoFullName, branch, token, gitUrl = null, sha = null, onLine = () => {} }) {
+  if (sha != null && !SHA_RE.test(sha)) throw new Error('not a commit id')
   const cleanUrl = gitUrl || `https://github.com/${repoFullName}.git`
   const authedUrl = gitUrl || `https://x-access-token:${token}@github.com/${repoFullName}.git`
   const redact = s => (token ? String(s).split(token).join('***') : String(s))
@@ -41,9 +48,18 @@ export async function syncRepo({ dir, repoFullName, branch, token, gitUrl = null
     await git(['reset', '--hard', 'FETCH_HEAD'], dir)
   }
 
-  const sha = (await git(['rev-parse', 'HEAD'], dir)).trim()
+  if (sha) {
+    const present = await git(['cat-file', '-e', `${sha}^{commit}`], dir).then(() => true, () => false)
+    if (!present) {
+      onLine(`fetching ${sha.slice(0, 7)}, no longer on ${branch}`)
+      await git(['fetch', authedUrl, sha], dir)
+    }
+    await git(['reset', '--hard', sha], dir)
+  }
+
+  const head = (await git(['rev-parse', 'HEAD'], dir)).trim()
   const message = (await git(['log', '-1', '--pretty=%s'], dir)).trim()
-  return { sha, message }
+  return { sha: head, message }
 }
 
 // The sha a branch points at on a remote, without cloning — the manual

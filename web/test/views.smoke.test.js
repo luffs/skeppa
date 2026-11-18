@@ -62,6 +62,7 @@ vi.mock('../src/api.js', () => {
 vi.mock('../src/live.js', () => ({ connectLive() {}, disconnectLive() {}, subscribeLogs() { return () => {} } }))
 
 import { store } from '../src/store.js'
+import { dialogState, settleDialog } from '../src/lib/dialog.js'
 import { api } from '../src/api.js'
 import DashboardView from '../src/views/DashboardView.vue'
 import ProjectNewView from '../src/views/ProjectNewView.vue'
@@ -134,7 +135,7 @@ const RENDER_PROBLEM = /accessed during render|Unhandled error|Failed to resolve
 // Mounts, lets the view settle, runs `steps` against it, and always tears
 // down — a view that fails must not leave a broken component behind to throw
 // into the next test's spies (one bug, one red test).
-async function expectCleanRender(component, { props = {}, steps = async () => {}, route = {} } = {}) {
+async function expectCleanRender(component, { props = {}, steps = async () => {}, route = {}, router = {} } = {}) {
   const problems = []
   const warn = vi.spyOn(console, 'warn').mockImplementation((...args) => {
     const message = args.map(String).join(' ')
@@ -146,7 +147,7 @@ async function expectCleanRender(component, { props = {}, steps = async () => {}
     wrapper = mount(component, {
       props,
       global: {
-        mocks: { $route: { path: '/', query: {}, params: {}, ...route }, $router: { push() {}, replace() {} } },
+        mocks: { $route: { path: '/', query: {}, params: {}, ...route }, $router: { push() {}, replace() {}, ...router } },
         stubs: { RouterLink: { props: ['to'], template: `<a :href="typeof to === 'string' ? to : to.path"><slot /></a>` }, RouterView: true },
         config: { errorHandler: err => problems.push(`errorHandler: ${err.message}`) },
       },
@@ -165,6 +166,21 @@ async function expectCleanRender(component, { props = {}, steps = async () => {}
 }
 
 const settle = async () => { await flushPromises(); await flushPromises() }
+// What a button says on screen: a StableLabel lays out every label it can
+// show, all but one hidden, so its text() would be all of them at once.
+const visibleText = b => {
+  const shown = b.find('.stable-label > span:not(.stable-ghost)')
+  return shown.exists() ? shown.text() : b.text()
+}
+// Every control a project page offers: its buttons, and what its header's ⋯ holds.
+async function pageControls(wrapper) {
+  await wrapper.find('.project-head .action-menu-toggle').trigger('click')
+  await settle()
+  const controls = wrapper.findAll('button').map(visibleText)
+  await wrapper.find('.project-head .action-menu-toggle').trigger('click') // closed again
+  await settle()
+  return controls
+}
 
 const VIEWS = [
   ['DashboardView', DashboardView],
@@ -258,10 +274,12 @@ test('the harbor groups projects by owner for an admin, and not for a tenant', a
       expect(heads).toEqual(['Your fleet 1 vessel', 'bob bob.dev 1 vessel'])
       // bob's project has a finished voyage and unsighted commits: both are his
       expect(wrapper.findAll('.feed-owner').map(o => o.text())).toEqual(['bob ·', 'bob ·'])
-      // every entry names its project as a link to it
+      // every entry names its project as a link — a voyage straight to its log
       const links = wrapper.findAll('.feed-entry a.feed-project')
       expect(links.length).toBe(wrapper.findAll('.feed-entry').length)
-      expect(new Set(links.map(a => `${a.text()} ${a.attributes('href')}`))).toEqual(new Set(['adm /projects/1', 'bobapp /projects/2']))
+      expect(new Set(links.map(a => `${a.text()} ${a.attributes('href')}`))).toEqual(new Set([
+        'adm /projects/1?deployment=1', 'adm /projects/1', 'bobapp /projects/2?deployment=2', 'bobapp /projects/2',
+      ]))
     },
   })
   expect(admin.problems.join(' | ')).toBe('')
@@ -444,6 +462,182 @@ test('?tab= opens the project page on that tab, and only on a real one', async (
   }
 })
 
+// Before the code is on the server the first button gets it there without a
+// deploy; after, it checks the remote. It is one button either way, laid out
+// for all its labels, so a busy state never moves its neighbours.
+test('Clone until the code is checked out, Check remote after — one button, one size', async () => {
+  seedStore('admin')
+  store.live.projects[1].checkedOut = false
+  const post = vi.spyOn(api, 'post').mockResolvedValue({ sha: 'c'.repeat(40), message: 'first commit' })
+  const page = await expectCleanRender(ProjectView, {
+    props: { id: '1' },
+    steps: async wrapper => {
+      const head = wrapper.findAll('button').find(b => /Clone|Check/.test(visibleText(b)))
+      expect(visibleText(head)).toBe('⤓ Clone')
+      expect(head.findAll('.stable-label > span').map(s => s.text())).toEqual(['⤓ Clone', 'Cloning…', '↻ Check GitHub', 'Checking…'])
+      await head.trigger('click')
+      await settle()
+      expect(post).toHaveBeenCalledWith('/api/projects/1/clone')
+      expect(wrapper.text()).toContain('Cloned ccccccc — first commit. Nothing is deployed')
+      store.live.projects[1].checkedOut = true
+      await settle()
+      expect(visibleText(head)).toBe('↻ Check GitHub')
+    },
+  })
+  post.mockRestore()
+  expect(page.problems.join(' | ')).toBe('')
+})
+
+describe('the project page', () => {
+  const rows = [
+    { id: 13, status: 'success', trigger: 'manual', commit_sha: 'a'.repeat(40), commit_message: 'now', started_at: ISO, finished_at: ISO, created_at: ISO },
+    { id: 12, status: 'success', trigger: 'manual', commit_sha: 'c'.repeat(40), commit_message: 'fix: the good one', started_at: ISO, finished_at: ISO, created_at: ISO },
+    { id: 11, status: 'failed', trigger: 'manual', commit_sha: 'd'.repeat(40), commit_message: 'broke', started_at: ISO, finished_at: ISO, created_at: ISO },
+  ]
+  const withVoyages = () => vi.spyOn(api, 'get').mockImplementation(async url => (/\/deployments$/.test(url) ? rows : {}))
+
+  // ?deployment= from a ship's log link opens that voyage; picking another
+  // replaces it; a tab click is its own history entry.
+  test('the tab and the voyage live in the URL', async () => {
+    seedStore('admin')
+    const get = withVoyages()
+    const calls = []
+    const page = await expectCleanRender(ProjectView, {
+      props: { id: '1' },
+      route: { query: { deployment: '12' } },
+      router: { push: to => calls.push(['push', to.query]), replace: to => calls.push(['replace', to.query]) },
+      steps: async wrapper => {
+        expect(wrapper.vm.selectedId).toBe(12)
+        wrapper.vm.selectedId = 11
+        await settle()
+        expect(calls.at(-1)).toEqual(['replace', { deployment: '11' }])
+        await wrapper.findAll('.tabs button').find(b => b.text().startsWith('Freight')).trigger('click')
+        await settle()
+        expect(wrapper.vm.tab).toBe('files')
+        expect(calls.at(-1)).toEqual(['push', { tab: 'files' }])
+      },
+    })
+    get.mockRestore()
+    expect(page.problems.join(' | ')).toBe('')
+  })
+
+  test('a ?deployment= that is not this project\'s falls back to the latest', async () => {
+    seedStore('admin')
+    const get = withVoyages()
+    const page = await expectCleanRender(ProjectView, {
+      props: { id: '1' },
+      route: { query: { deployment: '999' } },
+      steps: async wrapper => expect(wrapper.vm.selectedId).toBe(13),
+    })
+    get.mockRestore()
+    expect(page.problems.join(' | ')).toBe('')
+  })
+
+  // Back to a commit that worked: offered on successful voyages that are not
+  // what runs now, sent as { sha } once confirmed.
+  test('Redeploy on an earlier good voyage, after a confirmation', async () => {
+    seedStore('admin')
+    const get = withVoyages()
+    const post = vi.spyOn(api, 'post').mockResolvedValue({ id: 4 })
+    const page = await expectCleanRender(ProjectView, {
+      props: { id: '1' },
+      steps: async wrapper => {
+        const cells = wrapper.findAll('tr.deploy-row').map(r => r.find('.voyage-actions').text())
+        expect(cells).toEqual(['deployed', 'Redeploy', '']) // aaaa is deployed; dddd failed
+        await wrapper.findAll('tr.deploy-row')[1].find('.voyage-actions button').trigger('click')
+        await settle()
+        expect(dialogState.open).toBe(true)
+        expect(dialogState.message).toContain('Redeploy ccccccc — fix: the good one?')
+        settleDialog(true)
+        await settle()
+        expect(post).toHaveBeenCalledWith('/api/projects/1/deploy', { sha: 'c'.repeat(40) })
+        expect(wrapper.vm.selectedId).toBe(4)
+      },
+    })
+    get.mockRestore()
+    post.mockRestore()
+    expect(page.problems.join(' | ')).toBe('')
+  })
+
+  // An edit in Rigging shows a save bar and a dot on the tab; leaving asks,
+  // and staying keeps the edit.
+  test('unsaved Rigging: a save bar, a dot on the tab, and a question before leaving', async () => {
+    seedStore('admin')
+    const page = await expectCleanRender(ProjectView, {
+      props: { id: '1' },
+      route: { query: { tab: 'settings' } },
+      steps: async wrapper => {
+        expect(wrapper.find('.save-bar').exists()).toBe(false)
+        await wrapper.find('.rigging input').setValue('adm-renamed')
+        await settle()
+        expect(wrapper.find('.save-bar').text()).toContain('1 unsaved change')
+        expect(wrapper.find('.tab-dirty').exists()).toBe(true)
+
+        const voyages = wrapper.findAll('.tabs button')[0]
+        await voyages.trigger('click')
+        await settle()
+        expect(dialogState.open).toBe(true)
+        settleDialog(false) // stay
+        await settle()
+        expect(wrapper.vm.tab).toBe('settings')
+        expect(wrapper.vm.edit.name).toBe('adm-renamed')
+
+        await voyages.trigger('click')
+        await settle()
+        settleDialog(true) // leave them behind
+        await settle()
+        expect(wrapper.vm.tab).toBe('deploys')
+        expect(wrapper.vm.edit.name).toBe('adm')
+        expect(wrapper.vm.dirtyFields).toEqual([])
+      },
+    })
+    expect(page.problems.join(' | ')).toBe('')
+  })
+
+  test('Discard puts the form back as it was', async () => {
+    seedStore('admin')
+    const page = await expectCleanRender(ProjectView, {
+      props: { id: '1' },
+      route: { query: { tab: 'settings' } },
+      steps: async wrapper => {
+        await wrapper.find('.rigging textarea').setValue('make')
+        await settle()
+        await wrapper.findAll('.save-bar button').find(b => b.text() === 'Discard').trigger('click')
+        await settle()
+        expect(wrapper.vm.edit.deploy_script).toBe('bun install')
+        expect(wrapper.find('.save-bar').exists()).toBe(false)
+      },
+    })
+    expect(page.problems.join(' | ')).toBe('')
+  })
+
+  test('Rigging comes in sections, folding away and back', async () => {
+    seedStore('admin')
+    const page = await expectCleanRender(ProjectView, {
+      props: { id: '1' },
+      route: { query: { tab: 'settings' } },
+      steps: async wrapper => {
+        expect(wrapper.findAll('.collapse-title').map(t => t.text())).toEqual(['Source', 'Runtime', 'Build', 'Routing', 'Clone manually', 'Scuttle'])
+      },
+    })
+    expect(page.problems.join(' | ')).toBe('')
+  })
+
+  // Where it comes from and where it is served, one line, both links.
+  test('the header links the branch and the address', async () => {
+    seedStore('admin')
+    const page = await expectCleanRender(ProjectView, {
+      props: { id: '1' },
+      steps: async wrapper => {
+        expect(wrapper.find('a.repo-link').attributes('href')).toBe('https://github.com/o/adm/tree/main')
+        expect(wrapper.find('a.repo-link').text()).toBe('o/adm @ main')
+        expect(wrapper.find('.project-where a.vessel-addr').attributes('href')).toBe('https://app.apps.example.com')
+      },
+    })
+    expect(page.problems.join(' | ')).toBe('')
+  })
+})
+
 test('the project page names its pier, and the chip leads to Rigging; no pier, no chip', async () => {
   seedStore('admin')
   const grouped = await expectCleanRender(ProjectView, {
@@ -492,9 +686,9 @@ test('a static project shows no process controls, and its Rigging asks for a pub
   const page = await expectCleanRender(ProjectView, {
     props: { id: '1' },
     steps: async wrapper => {
-      const buttons = wrapper.findAll('button').map(b => b.text())
-      for (const gone of ['Start', 'Stop', 'Restart', 'Logbook']) expect(buttons).not.toContain(gone)
-      expect(buttons).toContain('Set sail — deploy')
+      const buttons = await pageControls(wrapper)
+      for (const gone of ['Start', 'Stop…', 'Restart', 'Logbook']) expect(buttons).not.toContain(gone)
+      expect(buttons).toContain('Deploy latest') // it has unsighted commits
       expect(wrapper.find('.chip.green').text()).toContain('published')
 
       wrapper.vm.tab = 'settings'
@@ -528,8 +722,8 @@ test('a pending runtime change keeps the live controls and says so', async () =>
   const pending = await expectCleanRender(ProjectView, {
     props: { id: '1' },
     steps: async wrapper => {
-      const buttons = wrapper.findAll('button').map(b => b.text())
-      for (const kept of ['Start', 'Stop', 'Restart', 'Logbook']) expect(buttons).toContain(kept) // the container still runs
+      const buttons = await pageControls(wrapper)
+      for (const kept of ['Stop…', 'Restart', 'Logbook']) expect(buttons).toContain(kept) // the container still runs
       const note = wrapper.findAll('p.hint').map(p => p.text().replace(/\s+/g, ' ')).find(t => t.startsWith('Runtime change pending'))
       expect(note).toContain('still served as a container')
       expect(note).toContain('becomes a static site on the next successful deploy')

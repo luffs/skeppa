@@ -1,6 +1,9 @@
 import { LazyWatch } from 'lazy-watch'
 import { getSetting } from '../db/settings.js'
 import { imagesDefaults } from './images.js'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
+import { projectDirs } from '../deploy/envfiles.js'
 
 // Single server-side LiveState object. All mutations go through this proxy so
 // lazy-watch batches them into diffs that the Hub broadcasts to WS clients.
@@ -97,6 +100,9 @@ export function projectDefaults(lastDeployment = null, info = null) {
     deployedSha: null,
     // latest push to the project's branch as reported by the GitHub webhook.
     headCommit: null, // { sha, message, pushedAt }
+    // Whether source/ holds a checkout yet (a deploy or a Clone made one).
+    // A real boolean, never null: the project page offers Clone on false.
+    checkedOut: false,
   }
 }
 
@@ -133,6 +139,7 @@ export function initLiveState(liveState, db, config = {}) {
       info
     )
     live.recentDeployments = getRecentDeployments(db, info.id)
+    if (config.appsDir) live.checkedOut = existsSync(join(projectDirs(config, info).source, '.git'))
     live.deployedSha = lastSuccess?.commit_sha ?? null
     live.headCommit = head_sha
       ? { sha: head_sha, message: head_message, pushedAt: head_pushed_at }

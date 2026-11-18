@@ -81,7 +81,7 @@
               <div v-for="e in day.entries" :key="e.key" class="feed-entry">
                 <span class="dot" :class="e.dot"></span>
                 <div class="body">
-                  <div class="text"><span v-if="e.owner" class="feed-owner">{{ e.owner }} ·</span> <router-link :to="`/projects/${e.projectId}`" class="feed-project">{{ e.project }}</router-link> {{ e.text }}</div>
+                  <div class="text"><span v-if="e.owner" class="feed-owner">{{ e.owner }} ·</span> <router-link :to="e.to" class="feed-project">{{ e.project }}</router-link> {{ e.text }}</div>
                   <div class="meta">{{ e.meta }}</div>
                 </div>
               </div>

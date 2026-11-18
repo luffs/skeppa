@@ -11,6 +11,9 @@ import { createContainerClient } from '../containers/client.js'
 import { appContainerName, recreateAppContainer } from '../containers/runtime.js'
 import { isReservedPm2Name } from '../lib/runtime.js'
 
+// Holds a project's queue while clone() runs git (a deployment id otherwise).
+const CLONING = 'clone'
+
 export class DeployError extends Error {
   constructor(message, exitCode = null) {
     super(message)
@@ -208,15 +211,50 @@ export class DeployRunner {
     // failed one usually never reached that step, so its history keeps.
     if (status === 'success') this.poller?.expectRestart(projectId)
 
+    this._next(projectId)
+  }
+
+  // The project's queue is free again: the deploy that waited, if any, sets out.
+  _next(projectId) {
     const q = this.queues.get(projectId)
-    if (q) {
-      q.runningId = null
-      if (q.queuedId != null) {
-        const next = q.queuedId
-        q.queuedId = null
-        q.runningId = next
-        queueMicrotask(() => this._run(projectId, next))
-      }
+    if (!q) return
+    q.runningId = null
+    if (q.queuedId != null) {
+      const next = q.queuedId
+      q.queuedId = null
+      q.runningId = next
+      queueMicrotask(() => this._run(projectId, next))
+    }
+  }
+
+  // A checkout without a voyage: clone (or fetch and reset) the source, so
+  // it can be read under Freight before anything is deployed — the same
+  // syncRepo a deploy runs, and nothing after it: no script, no ENV, no
+  // process, no deployments row. It holds the project's queue while git
+  // works, so a deploy never shares the directory with it; one asked for
+  // meanwhile waits its turn and sets out when the checkout is done. Refused
+  // while a deploy is under way, which checks the code out itself.
+  async clone(projectId) {
+    const project = this.db.query('SELECT * FROM projects WHERE id = ?').get(projectId)
+    if (!project) throw new Error(`project ${projectId} not found`)
+    let q = this.queues.get(project.id)
+    if (!q) this.queues.set(project.id, (q = { runningId: null, queuedId: null }))
+    if (q.runningId != null) throw new DeployError('a deploy is under way — it checks the code out itself')
+    q.runningId = CLONING
+    try {
+      const token = project.git_url ? null : await this.github.getInstallationToken(project.repo_full_name)
+      const head = await syncRepo({
+        dir: projectDirs(this.config, project).source,
+        repoFullName: project.repo_full_name,
+        gitUrl: project.git_url || null,
+        branch: project.branch,
+        token,
+      })
+      this._live(project.id).checkedOut = true
+      this.poller?.diskChanged()
+      return head
+    } finally {
+      this._next(project.id)
     }
   }
 
@@ -230,8 +268,14 @@ export class DeployRunner {
       token = await this.github.getInstallationToken(project.repo_full_name)
     }
 
+    // A redeploy goes back to the commit it was asked for, not the branch head.
+    const pinned = this.db.query(
+      `SELECT commit_sha FROM deployments WHERE id = ? AND "trigger" = 'redeploy'`
+    ).get(deploymentId)?.commit_sha ?? null
     log.line(`▸ syncing ${project.git_url || project.repo_full_name} @ ${project.branch}`)
+    if (pinned) log.line(`▸ redeploying an earlier commit, ${pinned.slice(0, 7)} — the branch head stays undeployed`)
     const { sha, message } = await syncRepo({
+      sha: pinned,
       dir: dirs.source,
       repoFullName: project.repo_full_name,
       gitUrl: project.git_url || null,
@@ -240,6 +284,7 @@ export class DeployRunner {
       onLine: log.line,
     })
     log.line(`▸ checked out ${sha.slice(0, 7)} — ${message}`)
+    this._live(project.id).checkedOut = true
     this.db.query('UPDATE deployments SET commit_sha = ?, commit_message = COALESCE(commit_message, ?) WHERE id = ?')
       .run(sha, message, deploymentId)
     // The sha is what the log entry shows for a running deploy.

@@ -5,11 +5,12 @@ import { slugify, validateProject, SLUG_RE, ENV_KEY_RE, PM2_ACTIONS, APEX } from
 import { projectDefaults, getProjectInfo } from '../live/state.js'
 import { syncManagedImages } from '../live/images.js'
 import * as realPm2 from '../deploy/pm2.js'
-import { lsRemoteHead } from '../deploy/git.js'
+import { lsRemoteHead, SHA_RE } from '../deploy/git.js'
 import { projectDirs, syncEnvFiles, writeEcosystem } from '../deploy/envfiles.js'
 import { createContainerClient } from '../containers/client.js'
 import { appContainerName, appLogResponse, previousLogResponse } from '../containers/runtime.js'
 import { applyProjectAction } from '../deploy/control.js'
+import { DeployError } from '../deploy/runner.js'
 import { tailFile } from '../lib/tail.js'
 import { readSourcePath, openSourceDownload, SourceFileError } from '../lib/sourcefiles.js'
 import { proxySettings } from '../proxy/index.js'
@@ -412,9 +413,23 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
 
   // --- Deployments ----------------------------------------------------------
 
-  app.post('/:id/deploy', c => {
+  // { sha } redeploys an earlier commit — only one this project deployed
+  // successfully before, so the route never becomes a way to check out an
+  // arbitrary object. Without it, the branch head, as always.
+  app.post('/:id/deploy', async c => {
     const project = getProjectFor(c)
     if (!project) return c.json({ error: 'not found' }, 404)
+    const body = await c.req.json().catch(() => ({}))
+    if (body.sha != null) {
+      const earlier = typeof body.sha === 'string' && SHA_RE.test(body.sha)
+        ? db.query(
+          `SELECT commit_message FROM deployments WHERE project_id = ? AND commit_sha = ? AND status = 'success' ORDER BY id DESC LIMIT 1`
+        ).get(project.id, body.sha)
+        : null
+      if (!earlier) return c.json({ error: 'validation failed', fields: { sha: 'not a commit this project has deployed' } }, 400)
+      const id = runner.enqueue(project.id, { trigger: 'redeploy', commitSha: body.sha, commitMessage: earlier.commit_message })
+      return c.json({ id }, 202)
+    }
     const deploymentId = runner.enqueue(project.id, { trigger: 'manual' })
     return c.json({ id: deploymentId }, 202)
   })
@@ -472,6 +487,20 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
        FROM deployments WHERE project_id = ? ORDER BY id DESC LIMIT 50`
     ).all(project.id)
     return c.json(rows)
+  })
+
+  // Get the code onto the server without deploying it (runner.clone): for
+  // reading it under Freight first. 409 while a deploy is under way; git's
+  // own error otherwise, already redacted of the token.
+  app.post('/:id/clone', async c => {
+    const project = getProjectFor(c)
+    if (!project) return c.json({ error: 'not found' }, 404)
+    try {
+      const { sha, message } = await runner.clone(project.id)
+      return c.json({ sha, message })
+    } catch (err) {
+      return c.json({ error: err.message }, err instanceof DeployError ? 409 : 500)
+    }
   })
 
   // --- pm2 controls ---------------------------------------------------------

@@ -1,24 +1,29 @@
 <template>
   <div class="container" v-if="project">
     <router-link to="/" class="mono" style="font-size: 12px; color: var(--dim)">← back to harbor</router-link>
-    <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; flex-wrap: wrap; margin-top: 12px">
-      <div>
-        <div style="display: flex; align-items: center; gap: 14px; flex-wrap: wrap">
+    <div class="project-head">
+      <div class="project-title">
+        <div class="project-title-line">
           <h1 style="margin: 0">{{ project.name }}</h1>
-          <StatusBadge :status="statusWord" :href="appUrl" />
+          <StatusBadge :status="statusWord" />
           <!-- Where it is listed in the harbor; the pier is changed in Rigging, so that is where it leads. -->
           <button
             v-if="pierName"
             type="button"
             class="chip pier-chip"
             title="Moored at this pier in the harbor — change it under Rigging"
-            @click="tab = 'settings'"
+            @click="setTab('settings')"
           >
             <span class="pier-chip-label">pier</span>{{ pierName }}
           </button>
         </div>
-        <div class="mono" style="color: var(--dim); margin-top: 6px">
-          {{ project.repo_full_name || project.git_url }} @ {{ project.branch }}
+        <!-- Where it comes from and where it is served, both one click away. -->
+        <div class="project-where">
+          <a v-if="repoHref" :href="repoHref" target="_blank" rel="noopener" class="repo-link" :title="repoTitle">
+            {{ repoLabel }} @ {{ project.branch }}
+          </a>
+          <span v-else class="repo-link" :title="repoTitle">{{ repoLabel }} @ {{ project.branch }}</span>
+          <a v-if="appUrl" :href="appUrl" target="_blank" rel="noopener" class="vessel-addr">{{ appHost }}<span aria-hidden="true"> ↗</span></a>
         </div>
         <div class="mono" v-if="live?.pm2?.status === 'online'" style="font-size: 12px; color: var(--dim); margin-top: 6px">
           pid {{ live.pm2.pid ?? '—' }} · up {{ uptimeSince(live.pm2.uptime) }} ·
@@ -27,23 +32,24 @@
         </div>
       </div>
       <div class="row">
+        <!-- Until the code is on the server, the first thing to do is to get it
+             there — without a deploy, so it can be read under Freight first.
+             One button either way, labelled for both, so it never resizes. -->
         <button
           class="secondary"
-          :disabled="checking"
-          title="Ask GitHub for the latest commit on the branch"
-          @click="checkHead"
+          :disabled="checking || (needsClone && !!live?.currentDeployment)"
+          :title="needsClone
+            ? 'Fetch the code onto the server without deploying it — then read it under Freight'
+            : 'Ask the remote for the latest commit on the branch'"
+          @click="needsClone ? cloneNow() : checkHead()"
         >
-          {{ checking ? 'Checking…' : project.git_url ? '↻ Check remote' : '↻ Check GitHub' }}
+          <StableLabel :text="headLabel" :variants="headLabels" />
         </button>
-        <!-- A static site has no process: deploying is the only verb. -->
-        <template v-if="!isStatic">
-          <button class="secondary" :disabled="pm2Busy" @click="pm2('start')">Start</button>
-          <button class="secondary" :disabled="pm2Busy" @click="confirmPm2('stop')">Stop</button>
-          <button class="secondary" :disabled="pm2Busy" @click="confirmPm2('restart')">Restart</button>
-        </template>
-        <button :disabled="!!live?.currentDeployment" @click="deployNow">
-          {{ live?.currentDeployment ? 'Under way…' : 'Set sail — deploy' }}
+        <!-- The same action the harbor row offers, and the rest in ⋯ (lib/vesselActions.js). -->
+        <button :disabled="busy || primary.disabled" @click="run(primary.key)">
+          <StableLabel :text="primary.label" :variants="PRIMARY_LABELS" />
         </button>
+        <ActionMenu label="Project actions" :items="menu" @select="run" />
       </div>
     </div>
 
@@ -61,14 +67,17 @@
       </span>
     </div>
     <p class="hint" v-else-if="checkResult" style="margin-top: 12px">{{ checkResult }}</p>
+    <p class="hint" v-if="cloneResult" style="margin-top: 12px">{{ cloneResult }}</p>
     <p class="error" v-if="checkError" style="margin-top: 12px">{{ checkError }}</p>
 
     <div class="tabs">
-      <button :class="{ active: tab === 'deploys' }" @click="tab = 'deploys'">Voyages</button>
-      <button v-if="!isStatic" :class="{ active: tab === 'logs' }" @click="tab = 'logs'">Logbook</button>
-      <button :class="{ active: tab === 'env' }" @click="tab = 'env'">Manifest (env)</button>
-      <button :class="{ active: tab === 'files' }" @click="tab = 'files'">Freight (files)</button>
-      <button :class="{ active: tab === 'settings' }" @click="tab = 'settings'">Rigging</button>
+      <button :class="{ active: tab === 'deploys' }" @click="setTab('deploys')">Voyages</button>
+      <button v-if="!isStatic" :class="{ active: tab === 'logs' }" @click="setTab('logs')">Logbook</button>
+      <button :class="{ active: tab === 'env' }" @click="setTab('env')">Manifest (env)</button>
+      <button :class="{ active: tab === 'files' }" @click="setTab('files')">Freight (files)</button>
+      <button :class="{ active: tab === 'settings' }" @click="setTab('settings')">
+        Rigging<span v-if="dirtyFields.length" class="tab-dirty" title="Unsaved changes"> •</span>
+      </button>
     </div>
 
     <div v-if="tab === 'deploys'">
@@ -79,7 +88,7 @@
         <div class="table-scroll capped">
           <table class="voyages">
             <thead>
-              <tr><th>Voyage</th><th>Status</th><th>Trigger</th><th>Commit</th><th>Departed</th><th>Passage</th></tr>
+              <tr><th>Voyage</th><th>Status</th><th>Trigger</th><th>Commit</th><th>Departed</th><th>Passage</th><th></th></tr>
             </thead>
             <tbody>
               <tr
@@ -97,6 +106,18 @@
                 </td>
                 <td class="hint" style="font-size: 14px">{{ timeAgo(d.started_at || d.created_at) }}</td>
                 <td class="mono" style="color: var(--dim)">{{ duration(d.started_at, d.finished_at) }}</td>
+                <td class="voyage-actions">
+                  <!-- Back to a commit that worked: the quickest way out of a bad release. -->
+                  <button
+                    v-if="canRedeploy(d)"
+                    type="button"
+                    class="small secondary"
+                    :disabled="busy || !!live?.currentDeployment"
+                    :title="`Deploy ${d.commit_sha.slice(0, 7)} again`"
+                    @click.stop="redeploy(d)"
+                  >Redeploy</button>
+                  <span v-else-if="d.commit_sha && d.commit_sha === live?.deployedSha && liveStatusFor(d) === 'success'" class="hint voyage-current">deployed</span>
+                </td>
               </tr>
             </tbody>
           </table>
@@ -120,94 +141,118 @@
     </div>
 
     <div v-else-if="tab === 'files'">
-      <SourceFiles :project-id="project.id" />
+      <!-- Remounted when a checkout appears, so a Clone shows up here at once. -->
+      <SourceFiles :key="String(live?.checkedOut)" :project-id="project.id" />
     </div>
 
-    <div v-else-if="tab === 'settings'" class="panel" style="max-width: 680px">
-      <label>Name</label>
-      <input v-model="edit.name" />
-      <PierPicker v-model="edit.group_id" :owner-id="project.owner_id" />
-      <template v-if="project.git_url">
-        <label>Git URL</label>
-        <input v-model="edit.git_url" class="code" />
-        <p class="hint">External repository — no webhook; use the ↻ Check remote button up top to look for new commits.</p>
-      </template>
-      <template v-else>
-        <label>Repository (owner/repo)</label>
-        <input v-model="edit.repo_full_name" class="code" />
-      </template>
-      <label>Branch</label>
-      <input v-model="edit.branch" class="code" />
-      <template v-if="!project.git_url">
+    <!-- Rigging: one form in sections, saved together. v-show inside the
+         sections keeps half-typed fields when one is folded. -->
+    <div v-else-if="tab === 'settings'" class="rigging">
+      <CollapseSection title="Source" start-open>
+        <template #meta><span class="mono">{{ project.branch }}</span></template>
+        <label>Name</label>
+        <input v-model="edit.name" />
+        <PierPicker v-model="edit.group_id" :owner-id="project.owner_id" />
+        <template v-if="project.git_url">
+          <label>Git URL</label>
+          <input v-model="edit.git_url" class="code" />
+          <p class="hint">External repository — no webhook; use the ↻ Check remote button up top to look for new commits.</p>
+        </template>
+        <template v-else>
+          <label>Repository (owner/repo)</label>
+          <input v-model="edit.repo_full_name" class="code" />
+        </template>
+        <label>Branch</label>
+        <input v-model="edit.branch" class="code" />
+        <template v-if="!project.git_url">
+          <label class="check-label">
+            <input type="checkbox" v-model="edit.auto_deploy" />
+            Auto deploy on push to {{ edit.branch || project.branch }}
+          </label>
+          <p class="hint">When off, pushes only show up as "commits ahead" — deploy manually.</p>
+        </template>
+      </CollapseSection>
+
+      <CollapseSection title="Runtime" start-open>
+        <template #meta><span class="mono">{{ runtimeName(edit.runtime) }}</span></template>
+        <RuntimeChoice v-model:runtime="edit.runtime" :tenant="isTenant" existing />
+        <template v-if="edit.runtime !== 'static'">
+          <label>Start command</label>
+          <input v-model="edit.start_command" class="code" />
+        </template>
+        <RuntimeFields
+          :runtime="edit.runtime"
+          v-model:build-image="edit.build_image"
+          v-model:run-image="edit.run_image"
+          v-model:pm2-name="edit.pm2_name"
+          v-model:memory-mb="edit.memory_mb"
+          v-model:network-profile="edit.network_profile"
+          v-model:host-access="edit.host_access"
+          v-model:networks="edit.networks"
+          v-model:publish-dir="edit.publish_dir"
+          v-model:spa-fallback="edit.spa_fallback"
+          v-model:gate-files="edit.gate_files"
+          :tenant="isTenant"
+          existing
+        />
+      </CollapseSection>
+
+      <CollapseSection title="Build" start-open>
+        <template #meta><span class="mono">{{ edit.build_env ? 'ENV in the build' : 'no ENV in the build' }}</span></template>
+        <label>Deploy script</label>
+        <textarea v-model="edit.deploy_script" class="code" rows="4"></textarea>
+        <p class="hint">⚠ Runs as a shell script on the server — only trusted commands.</p>
+        <label>Working subdirectory</label>
+        <input v-model="edit.cwd" class="code" />
         <label class="check-label">
-          <input type="checkbox" v-model="edit.auto_deploy" />
-          Auto deploy on push to {{ edit.branch || project.branch }}
+          <input type="checkbox" v-model="edit.build_env" />
+          Inject ENV into the deploy script
         </label>
-        <p class="hint">When off, pushes only show up as "commits ahead" — deploy manually.</p>
-      </template>
-      <RuntimeChoice v-model:runtime="edit.runtime" :tenant="isTenant" existing />
-      <label>Deploy script</label>
-      <textarea v-model="edit.deploy_script" class="code" rows="4"></textarea>
-      <p class="hint">⚠ Runs as a shell script on the server — only trusted commands.</p>
-      <template v-if="edit.runtime !== 'static'">
-        <label>Start command</label>
-        <input v-model="edit.start_command" class="code" />
-      </template>
-      <RuntimeFields
-        :runtime="edit.runtime"
-        v-model:build-image="edit.build_image"
-        v-model:run-image="edit.run_image"
-        v-model:pm2-name="edit.pm2_name"
-        v-model:memory-mb="edit.memory_mb"
-        v-model:network-profile="edit.network_profile"
-        v-model:host-access="edit.host_access"
-        v-model:networks="edit.networks"
-        v-model:publish-dir="edit.publish_dir"
-        v-model:spa-fallback="edit.spa_fallback"
-        v-model:gate-files="edit.gate_files"
-        :tenant="isTenant"
-        existing
-      />
-      <label>Working subdirectory</label>
-      <input v-model="edit.cwd" class="code" />
-      <label class="check-label">
-        <input type="checkbox" v-model="edit.build_env" />
-        Inject ENV into the deploy script
-      </label>
-      <p class="hint">
-        On, the build sees every ENV var — needed for generated clients, <span class="mono">VITE_*</span>
-        config or private registries. Off, it gets only a minimal environment and no
-        <span class="mono">.env</span> in the working tree, so a poisoned dependency's postinstall has
-        nothing to take. The running app gets its ENV either way.
-      </p>
-      <label class="check-label">
-        <input type="checkbox" v-model="edit.write_env_file" />
-        Write a plaintext <span class="mono">.env</span> file into the app
-      </label>
-      <p class="hint">
-        ENV vars are injected into the running process (and, with the toggle above on, the deploy script) — decrypted only in
-        memory. Turn this on only if something reads <span class="mono">.env</span> from disk itself
-        (e.g. Vite at build time); it writes <span class="mono">shared/.env</span> plus a copy in
-        the working directory. Turning it off deletes those files.
-      </p>
-      <RoutingFields
-        v-model:subdomain="edit.subdomain"
-        v-model:port="edit.port"
-        :handle="project.owner_role === 'tenant' ? project.owner_handle : ''"
-        :domain="project.owner_role === 'tenant' ? project.owner_domain : ''"
-        :static-site="edit.runtime === 'static'"
-        :gate-files="edit.runtime !== 'static' && edit.gate_files"
-        existing
-      />
+        <p class="hint">
+          On, the build sees every ENV var — needed for generated clients, <span class="mono">VITE_*</span>
+          config or private registries. Off, it gets only a minimal environment and no
+          <span class="mono">.env</span> in the working tree, so a poisoned dependency's postinstall has
+          nothing to take. The running app gets its ENV either way.
+        </p>
+        <label class="check-label">
+          <input type="checkbox" v-model="edit.write_env_file" />
+          Write a plaintext <span class="mono">.env</span> file into the app
+        </label>
+        <p class="hint">
+          ENV vars are injected into the running process (and, with the toggle above on, the deploy script) — decrypted only in
+          memory. Turn this on only if something reads <span class="mono">.env</span> from disk itself
+          (e.g. Vite at build time); it writes <span class="mono">shared/.env</span> plus a copy in
+          the working directory. Turning it off deletes those files.
+        </p>
+      </CollapseSection>
+
+      <CollapseSection title="Routing" start-open>
+        <template #meta><span class="mono">{{ appHost || 'not routed' }}</span></template>
+        <RoutingFields
+          v-model:subdomain="edit.subdomain"
+          v-model:port="edit.port"
+          :handle="project.owner_role === 'tenant' ? project.owner_handle : ''"
+          :domain="project.owner_role === 'tenant' ? project.owner_domain : ''"
+          :static-site="edit.runtime === 'static'"
+          :gate-files="edit.runtime !== 'static' && edit.gate_files"
+          existing
+        />
+      </CollapseSection>
+
       <p v-if="saveError" class="error">{{ saveError }}</p>
-      <p v-if="saved" class="hint">Saved ✔</p>
-      <div class="row" style="margin-top: 22px; justify-content: space-between">
-        <button :disabled="saving" @click="save">{{ saving ? 'Saving…' : 'Save settings' }}</button>
-        <button class="danger" @click="remove">Scuttle project</button>
+      <p v-if="saved && !dirtyFields.length" class="hint" style="margin: 0">Saved ✔</p>
+
+      <!-- Only while something is unsaved, and always in reach at the bottom of the screen. -->
+      <div v-if="dirtyFields.length" class="save-bar">
+        <span>{{ dirtyFields.length }} unsaved change{{ dirtyFields.length === 1 ? '' : 's' }}</span>
+        <span class="spacer"></span>
+        <button type="button" class="small secondary" :disabled="saving" @click="discard">Discard</button>
+        <button type="button" class="small" :disabled="saving" @click="save">
+          <StableLabel :text="saving ? 'Saving…' : 'Save settings'" :variants="['Saving…', 'Save settings']" />
+        </button>
       </div>
 
-      <div style="margin-top: 24px; border-top: 1px solid var(--line); padding-top: 16px">
-        <h2 style="margin: 0 0 8px">Clone manually</h2>
+      <CollapseSection title="Clone manually">
         <p class="hint" v-if="project.git_url">The repository is public — the command is just the URL.</p>
         <p class="hint" v-else>
           Generates a git clone command with a short-lived GitHub App installation token, to run on
@@ -236,7 +281,15 @@
             <span class="hint" v-if="cloneExpiresIn">token expires {{ cloneExpiresIn }}</span>
           </div>
         </template>
-      </div>
+      </CollapseSection>
+
+      <CollapseSection title="Scuttle">
+        <p class="hint" style="margin-top: 0">
+          Removes the project from the panel and its process or container from the server. The files under
+          its apps directory are kept.
+        </p>
+        <button class="danger" @click="remove">Scuttle project</button>
+      </CollapseSection>
     </div>
   </div>
 </template>
@@ -252,33 +305,75 @@ import RuntimeChoice from '../components/RuntimeChoice.vue'
 import RuntimeFields from '../components/RuntimeFields.vue'
 import RoutingFields from '../components/RoutingFields.vue'
 import PierPicker from '../components/PierPicker.vue'
+import StableLabel from '../components/StableLabel.vue'
+import ActionMenu from '../components/ActionMenu.vue'
+import CollapseSection from '../components/CollapseSection.vue'
 import { api } from '../api.js'
-import { confirmDialog, alertDialog } from '../lib/dialog.js'
+import { confirmDialog } from '../lib/dialog.js'
 import { store, liveProject, appUrlFor } from '../store.js'
-import { statusWord } from '../lib/vessels.js'
+import { statusWord, vesselState } from '../lib/vessels.js'
+import { primaryAction, actionMenu, performAction } from '../lib/vesselActions.js'
 import { timeAgo, duration, uptimeSince, bytes } from '../lib/format.js'
 
 const RUNTIME_LABEL = { pm2: 'a pm2 process', container: 'a container', static: 'a static site' }
+const RUNTIME_NAME = { pm2: 'pm2 process', container: 'container', static: 'static site' }
 const TABS = ['deploys', 'logs', 'env', 'files', 'settings']
+// Every label the header's main button can show (StableLabel sizes it to the widest).
+const PRIMARY_LABELS = ['Set sail — deploy', 'Deploy latest', 'Retry deploy', 'Start', 'Deploy', 'Under way…']
+// What the Rigging form edits — what "unsaved changes" counts.
+const FORM_FIELDS = [
+  'name', 'group_id', 'git_url', 'repo_full_name', 'branch', 'auto_deploy', 'runtime', 'start_command',
+  'build_image', 'run_image', 'pm2_name', 'memory_mb', 'network_profile', 'host_access', 'networks',
+  'publish_dir', 'spa_fallback', 'gate_files', 'deploy_script', 'cwd', 'build_env', 'write_env_file',
+  'subdomain', 'port',
+]
+const DISCARD = 'You have unsaved changes in Rigging. Leave them behind?'
+
+const positiveInt = v => (/^\d+$/.test(String(v ?? '')) ? Number(v) : null)
 
 export default {
   name: 'ProjectView',
-  components: { StatusBadge, DeployLog, CommitMessage, EnvEditor, Pm2Logs, SourceFiles, RuntimeChoice, RuntimeFields, RoutingFields, PierPicker },
+  components: {
+    StatusBadge, DeployLog, CommitMessage, EnvEditor, Pm2Logs, SourceFiles, RuntimeChoice, RuntimeFields,
+    RoutingFields, PierPicker, StableLabel, ActionMenu, CollapseSection,
+  },
   props: { id: { type: String, required: true } },
+  // Leaving the page (another route, or the browser) with unsaved Rigging asks first.
+  async beforeRouteLeave() {
+    if (this.dirtyFields.length) return confirmDialog(DISCARD, { confirmLabel: 'Leave', danger: true })
+    return true
+  },
+  // The same page with another query: the back and forward buttons between
+  // tabs. Our own setTab got there already; anything else moves the tab.
+  async beforeRouteUpdate(to) {
+    const tab = TABS.includes(to.query.tab) ? to.query.tab : 'deploys'
+    if (tab === this.tab) return true
+    if (this.tab === 'settings' && this.dirtyFields.length &&
+        !(await confirmDialog(DISCARD, { confirmLabel: 'Leave', danger: true }))) return false
+    if (this.tab === 'settings') this.discard()
+    this.tab = tab
+    return true
+  },
   data() {
+    const query = this.$route?.query ?? {}
     return {
+      PRIMARY_LABELS,
       deployments: [],
       editLoaded: false,
-      // ?tab= opens a tab directly (the harbor's ⋯ → Rigging); anything else is the voyages.
-      tab: TABS.includes(this.$route?.query?.tab) ? this.$route.query.tab : 'deploys',
-      selectedId: null,
+      // The tab and the selected voyage live in the URL (?tab=, ?deployment=),
+      // so a reload, the back button and a link from the ship's log all land
+      // where they mean to; this is where the page starts.
+      tab: TABS.includes(query.tab) ? query.tab : 'deploys',
+      selectedId: positiveInt(query.deployment),
       edit: {},
+      pristine: {}, // the form as last loaded or saved — what "unsaved" is measured against
       saving: false,
       saveError: '',
       saved: false,
-      pm2Busy: false,
+      busy: false,
       checking: false,
       checkResult: '',
+      cloneResult: '', // said whatever banner shows: the one answer a Clone gives
       checkError: '',
       tokenBusy: false,
       tokenError: '',
@@ -309,9 +404,33 @@ export default {
     live() {
       return liveProject(Number(this.id))
     },
+    // No checkout on the server yet (false, not merely unknown): offer Clone.
+    needsClone() {
+      return this.live?.checkedOut === false
+    },
+    checkLabel() {
+      return this.project?.git_url ? '↻ Check remote' : '↻ Check GitHub'
+    },
+    headLabel() {
+      if (this.checking) return this.needsClone ? 'Cloning…' : 'Checking…'
+      return this.needsClone ? '⤓ Clone' : this.checkLabel
+    },
+    headLabels() {
+      return ['⤓ Clone', 'Cloning…', this.checkLabel, 'Checking…']
+    },
     // The same word the harbor row shows ("never deployed" before the first voyage).
     statusWord() {
       return statusWord(this.live)
+    },
+    // The row's action when its state asks for one; deploying otherwise —
+    // on its own page, setting sail is always the main verb.
+    primary() {
+      if (vesselState(this.live) === 'underway') return { key: 'deploy', label: 'Under way…', disabled: true }
+      return primaryAction(this.project, this.live) ?? { key: 'deploy', label: 'Set sail — deploy' }
+    },
+    // Everything else, without repeating the button next to it.
+    menu() {
+      return actionMenu(this.project, this.live, { appUrl: this.appUrl }).filter(i => i.key !== this.primary.key)
     },
     // '' at no pier, or while the pier has not reached the store yet.
     pierName() {
@@ -330,6 +449,26 @@ export default {
     // whatever is currently typed in the form.
     appUrl() {
       return appUrlFor(this.project)
+    },
+    appHost() {
+      return this.appUrl.replace(/^https?:\/\//, '')
+    },
+    // owner/repo for GitHub, the URL without scheme and .git otherwise.
+    repoLabel() {
+      const p = this.project
+      return p.repo_full_name || (p.git_url ?? '').replace(/^https?:\/\//, '').replace(/\.git$/, '')
+    },
+    repoTitle() {
+      return this.project.git_url || `https://github.com/${this.project.repo_full_name}`
+    },
+    // The branch on GitHub, or the remote itself when it is a web address.
+    repoHref() {
+      const p = this.project
+      if (p.repo_full_name && !p.git_url) {
+        const branch = p.branch.split('/').map(encodeURIComponent).join('/')
+        return `https://github.com/${p.repo_full_name}/tree/${branch}`
+      }
+      return /^https:\/\//.test(p.git_url ?? '') ? p.git_url.replace(/\.git$/, '') : ''
     },
     // The project row comes from LiveState, so the view renders instantly on
     // navigation and follows edits made in any session.
@@ -350,6 +489,11 @@ export default {
       const min = Math.round((this.cloneExpiresAt - Date.now()) / 60000)
       return min > 0 ? `in ~${min} min` : 'soon — fetch a fresh one'
     },
+    // The Rigging fields that differ from what was loaded or last saved.
+    dirtyFields() {
+      if (!this.editLoaded) return []
+      return FORM_FIELDS.filter(k => String(this.edit[k] ?? '') !== String(this.pristine[k] ?? ''))
+    },
   },
   watch: {
     // A deploy starting or finishing changes the list — refresh it.
@@ -364,21 +508,62 @@ export default {
       immediate: true,
       handler(p) {
         if (p && !this.editLoaded) {
-          this.edit = this.editable(p)
+          this.seed(p)
           this.editLoaded = true
         }
       },
     },
+    selectedId() {
+      this.syncQuery()
+    },
   },
   async created() {
     await this.loadDeployments()
-    this.selectedId = this.currentDeploymentId ?? this.deployments[0]?.id ?? null
+    // A ?deployment= from a link wins, if it is one of this project's.
+    if (!this.deployments.some(d => d.id === this.selectedId)) {
+      this.selectedId = this.currentDeploymentId ?? this.deployments[0]?.id ?? null
+    }
+  },
+  mounted() {
+    window.addEventListener('beforeunload', this.onBeforeUnload)
+  },
+  unmounted() {
+    window.removeEventListener('beforeunload', this.onBeforeUnload)
   },
   methods: {
     timeAgo,
     duration,
     uptimeSince,
     bytes,
+    onBeforeUnload(event) {
+      if (!this.dirtyFields.length) return
+      event.preventDefault()
+      event.returnValue = '' // what makes the browser ask
+    },
+    // A tab click: leaving Rigging with unsaved changes asks first, and the
+    // tab goes into the URL as its own history entry, so Back returns to it.
+    async setTab(tab) {
+      if (tab === this.tab) return
+      if (this.tab === 'settings' && this.dirtyFields.length) {
+        if (!(await confirmDialog(DISCARD, { confirmLabel: 'Leave', danger: true }))) return
+        this.discard()
+      }
+      this.tab = tab
+      this.syncQuery({ push: true })
+    },
+    // The tab and the selected voyage into the URL. The voyage only replaces
+    // the entry — clicking down the list is not history worth going back through.
+    syncQuery({ push = false } = {}) {
+      const query = { ...(this.$route?.query ?? {}) }
+      if (this.tab === 'deploys') delete query.tab
+      else query.tab = this.tab
+      if (this.tab === 'deploys' && this.selectedId) query.deployment = String(this.selectedId)
+      else delete query.deployment
+      const now = this.$route?.query ?? {}
+      const same = Object.keys({ ...query, ...now }).every(k => String(query[k] ?? '') === String(now[k] ?? ''))
+      if (same) return
+      this.$router?.[push ? 'push' : 'replace']?.({ query })
+    },
     // The banner is one flowing sentence, so a paragraph-long subject is cut
     // in the text itself; the whole of it is in the title.
     brief(message) {
@@ -392,6 +577,30 @@ export default {
       if (d.id === this.currentDeploymentId) return this.live.currentDeployment.status
       if (d.id === this.live?.lastDeployment?.id) return this.live.lastDeployment.status
       return d.status
+    },
+    // A commit that deployed fine once, and is not what is deployed now.
+    canRedeploy(d) {
+      return this.liveStatusFor(d) === 'success' && Boolean(d.commit_sha) && d.commit_sha !== this.live?.deployedSha
+    },
+    async redeploy(d) {
+      const sha = d.commit_sha.slice(0, 7)
+      const what = d.commit_message ? ` — ${d.commit_message.split('\n')[0]}` : ''
+      const ok = await confirmDialog(
+        `Redeploy ${sha}${what}? This deploys an earlier commit; the branch head stays undeployed until the next deploy` +
+          (this.project.auto_deploy && !this.project.git_url ? ', which the next push starts on its own.' : '.'),
+        { confirmLabel: 'Redeploy' }
+      )
+      if (!ok) return
+      this.busy = true
+      try {
+        const { id } = await api.post(`/api/projects/${this.id}/deploy`, { sha: d.commit_sha })
+        this.selectedId = id
+        await this.loadDeployments()
+      } catch (err) {
+        this.checkError = `Redeploy failed: ${err.fields?.sha || err.message}`
+      } finally {
+        this.busy = false
+      }
     },
     async checkHead() {
       this.checking = true
@@ -408,6 +617,20 @@ export default {
         }
       } catch (err) {
         this.checkError = `GitHub check failed: ${err.message}`
+      } finally {
+        this.checking = false
+      }
+    },
+    // The code onto the server, nothing deployed (POST /clone runs only git).
+    async cloneNow() {
+      this.checking = true
+      this.cloneResult = ''
+      this.checkError = ''
+      try {
+        const { sha, message } = await api.post(`/api/projects/${this.id}/clone`)
+        this.cloneResult = `Cloned ${sha.slice(0, 7)} — ${message}. Nothing is deployed; the code is under Freight.`
+      } catch (err) {
+        this.checkError = `Clone failed: ${err.message}`
       } finally {
         this.checking = false
       }
@@ -437,29 +660,25 @@ export default {
         this.tokenError = 'Clipboard unavailable — select the command and copy it manually'
       }
     },
-    async deployNow() {
-      const { id } = await api.post(`/api/projects/${this.id}/deploy`)
-      this.selectedId = id
-      await this.loadDeployments()
-    },
-    async confirmPm2(action) {
-      const label = action.charAt(0).toUpperCase() + action.slice(1)
-      if (await confirmDialog(`Really ${action} "${this.project.pm2_name}"?`, { confirmLabel: label })) {
-        this.pm2(action)
-      }
-    },
-    async pm2(action) {
-      this.pm2Busy = true
+    // The header's button and menu (lib/vesselActions.js does the work).
+    async run(key) {
+      if (key === 'open') return window.open(this.appUrl, '_blank', 'noopener')
+      this.busy = true
       try {
-        await api.post(`/api/projects/${this.id}/pm2/${action}`)
-      } catch (err) {
-        alertDialog(`pm2 ${action} failed: ${err.message}`)
+        const result = await performAction(this.project, key)
+        if (key === 'deploy' && result?.id) {
+          this.selectedId = result.id
+          await this.loadDeployments()
+        }
       } finally {
-        this.pm2Busy = false
+        this.busy = false
       }
     },
     runtimeLabel(runtime) {
       return RUNTIME_LABEL[runtime] ?? runtime
+    },
+    runtimeName(runtime) {
+      return RUNTIME_NAME[runtime] ?? runtime
     },
     editable(p) {
       return {
@@ -484,6 +703,15 @@ export default {
         group_id: p.group_id ?? '', // absent on the wire when at no pier
       }
     },
+    // The form and its baseline, from a project row.
+    seed(p) {
+      this.edit = this.editable(p)
+      this.pristine = this.editable(p)
+    },
+    discard() {
+      if (this.project) this.seed(this.project)
+      this.saveError = ''
+    },
     async save() {
       this.saving = true
       this.saveError = ''
@@ -500,7 +728,7 @@ export default {
         })
         // LiveState carries the update to `project`; re-seed the form with the
         // server-normalized values.
-        this.edit = this.editable(updated)
+        this.seed(updated)
         this.saved = true
       } catch (err) {
         const fields = err.fields ? ' — ' + Object.entries(err.fields).map(([k, v]) => `${k}: ${v}`).join(', ') : ''
@@ -511,6 +739,7 @@ export default {
     },
     async remove() {
       if (!(await confirmDialog(`Delete project "${this.project.name}"? The pm2 process is removed; files on disk are kept.`, { confirmLabel: 'Delete', danger: true }))) return
+      this.pristine = { ...this.edit } // nothing left to lose: no leave prompt
       await api.del(`/api/projects/${this.id}`)
       this.$router.push('/')
     },

@@ -49,6 +49,7 @@ export function logEntries(lives, ownerOf = () => '') {
       entries.push({
         ...base,
         key: `d${d.id}`,
+        to: `/projects/${info.id}?deployment=${d.id}`, // straight to that voyage's log
         ts: at(when),
         text: (TEXT[d.status] ?? (id => `#${id} ${d.status}`))(d.id),
         meta: [whenInDay(at(when)), d.trigger, d.commitSha?.slice(0, 7), duration(d.startedAt, d.finishedAt)]
@@ -65,6 +66,7 @@ export function logEntries(lives, ownerOf = () => '') {
       entries.push({
         ...base,
         key: `c${info.id}`,
+        to: `/projects/${info.id}`,
         ts: at(p.headCommit.pushedAt),
         text: `new commits on ${info.branch}`,
         meta: [whenInDay(at(p.headCommit.pushedAt)), 'push', p.headCommit.sha.slice(0, 7)].filter(Boolean).join(' · '),
