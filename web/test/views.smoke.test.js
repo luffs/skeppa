@@ -297,6 +297,118 @@ test('the harbor groups projects by owner for an admin, and not for a tenant', a
 // Piers sort each fleet: its piers by name (an empty one too), then the
 // projects at no pier under "At anchor" — headed only when there are piers.
 // Nobody is shown someone else's pier, and a folded pier hides its vessels.
+// Search and the state filter narrow the harbor: what does not match goes,
+// piers with no match go, piers with one open (folded or not), the log
+// follows, and both live in the URL.
+describe('filtering the harbor', () => {
+  const names = w => w.findAll('.vessel-row .vessel-name').map(n => n.text())
+
+  test('search narrows rows, piers and the log, and opens a folded pier with a match', async () => {
+    seedStore('admin')
+    try { localStorage.setItem('skeppa.collapsedPiers', '[7]') } catch { /* folded or not, it opens */ }
+    const replaced = []
+    const res = await expectCleanRender(DashboardView, {
+      router: { replace: to => replaced.push(to.query) },
+      steps: async wrapper => {
+        expect(names(wrapper)).toEqual(['bobapp']) // Kunder (adm's pier) is folded
+        await wrapper.find('.harbor-search input').setValue('kund')
+        await settle()
+        expect(names(wrapper)).toEqual(['adm']) // matched by its pier's name, the fold set aside
+        expect(wrapper.findAll('.pier .pier-name').map(n => n.text())).toEqual(['Kunder']) // Tomt has no match
+        expect(wrapper.find('.harbor-count').text()).toBe('1 of 2')
+        expect(wrapper.find('.feed-head').text()).toContain('1 project')
+        expect(wrapper.findAll('.feed-entry .feed-project').every(a => a.text() === 'adm')).toBe(true)
+        expect(replaced.at(-1)).toEqual({ q: 'kund' })
+        // no fold-all while filtering: every pier with a match is open anyway
+        expect(wrapper.findAll('.harbor-tools button').some(b => /Fold all|Unfold all/.test(visibleText(b)))).toBe(false)
+
+        await wrapper.find('.harbor-search input').setValue('nothing-like-it')
+        await settle()
+        expect(wrapper.find('.harbor-none').text()).toContain('No vessel matches “nothing-like-it”')
+        await wrapper.find('.harbor-none .link-button').trigger('click')
+        await settle()
+        expect(names(wrapper)).toEqual(['bobapp']) // the remembered fold is back
+        expect(replaced.at(-1)).toEqual({})
+      },
+    })
+    expect(res.problems.join(' | ')).toBe('')
+  })
+
+  test('the summary\'s counts are filters, with a chip to clear them', async () => {
+    seedStore('admin')
+    store.live.projects[2].headCommit = { sha: 'a'.repeat(40), message: 'x', pushedAt: ISO } // bobapp in step
+    try { localStorage.clear() } catch { /* all open */ }
+    const res = await expectCleanRender(DashboardView, {
+      steps: async wrapper => {
+        const [running, attention] = wrapper.findAll('.summary-filter')
+        expect(running.text()).toBe('1 running')
+        expect(attention.text()).toBe('1 needs attention')
+        await attention.trigger('click')
+        await settle()
+        expect(names(wrapper)).toEqual(['adm'])
+        expect(wrapper.find('.filter-chip').text()).toContain('need attention')
+        await running.trigger('click') // another count switches the filter
+        await settle()
+        expect(names(wrapper)).toEqual(['bobapp'])
+        await wrapper.find('.filter-chip-clear').trigger('click')
+        await settle()
+        expect(names(wrapper).sort()).toEqual(['adm', 'bobapp'])
+      },
+    })
+    expect(res.problems.join(' | ')).toBe('')
+  })
+
+  test('the URL starts the harbor filtered', async () => {
+    seedStore('admin')
+    const res = await expectCleanRender(DashboardView, {
+      route: { query: { q: 'bob', state: 'attention' } },
+      steps: async wrapper => {
+        expect(wrapper.find('.harbor-search input').element.value).toBe('bob')
+        expect(names(wrapper)).toEqual(['bobapp'])
+      },
+    })
+    expect(res.problems.join(' | ')).toBe('')
+  })
+
+  test('Fold all and Unfold all, remembered like a pier\'s own fold', async () => {
+    seedStore('admin')
+    try { localStorage.clear() } catch { /* all open */ }
+    const res = await expectCleanRender(DashboardView, {
+      steps: async wrapper => {
+        const toggle = () => wrapper.findAll('.harbor-tools button').find(b => /Fold all|Unfold all/.test(visibleText(b)))
+        expect(visibleText(toggle())).toBe('Fold all')
+        await toggle().trigger('click')
+        await settle()
+        expect(wrapper.findAll('.pier-toggle').every(t => t.attributes('aria-expanded') === 'false')).toBe(true)
+        expect(visibleText(toggle())).toBe('Unfold all')
+        expect(JSON.parse(localStorage.getItem('skeppa.collapsedPiers')).sort()).toEqual([7, 8])
+        await toggle().trigger('click')
+        await settle()
+        expect(wrapper.findAll('.pier-toggle').every(t => t.attributes('aria-expanded') === 'true')).toBe(true)
+      },
+    })
+    expect(res.problems.join(' | ')).toBe('')
+  })
+
+  test('/ jumps to the search, unless one is typing', async () => {
+    seedStore('admin')
+    const res = await expectCleanRender(DashboardView, {
+      steps: async wrapper => {
+        const focus = vi.spyOn(wrapper.find('.harbor-search input').element, 'focus')
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: '/' }))
+        expect(focus).toHaveBeenCalledTimes(1)
+        // typed into a field, / is just a character
+        const typing = document.createElement('input')
+        document.body.appendChild(typing)
+        typing.dispatchEvent(new KeyboardEvent('keydown', { key: '/', bubbles: true }))
+        expect(focus).toHaveBeenCalledTimes(1)
+        typing.remove()
+      },
+    })
+    expect(res.problems.join(' | ')).toBe('')
+  })
+})
+
 test('the harbor lists each fleet by pier, an empty pier too, and folds one away', async () => {
   seedStore('admin')
   try { localStorage.clear() } catch { /* no storage: everything starts open */ }

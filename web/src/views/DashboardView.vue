@@ -3,12 +3,57 @@
     <div class="page-head" style="margin-bottom: 10px">
       <div>
         <h1 style="margin: 0">The harbor</h1>
-        <div class="page-sub">{{ fleetSummary }}</div>
+        <!-- The counts are filters too: a click shows just those vessels. -->
+        <div class="page-sub harbor-summary">
+          {{ projects.length }} vessel{{ projects.length === 1 ? '' : 's' }} moored ·
+          <button
+            type="button"
+            class="summary-filter"
+            :class="{ active: stateFilter === 'running' }"
+            :aria-pressed="stateFilter === 'running' ? 'true' : 'false'"
+            title="Show only the vessels running"
+            @click="toggleState('running')"
+          >{{ counts.running }} running</button> ·
+          <button
+            type="button"
+            class="summary-filter"
+            :class="{ active: stateFilter === 'attention', warn: counts.attention > 0 }"
+            :aria-pressed="stateFilter === 'attention' ? 'true' : 'false'"
+            title="Show only the vessels that are down, failed or have new commits"
+            @click="toggleState('attention')"
+          >{{ counts.attention }} need{{ counts.attention === 1 ? 's' : '' }} attention</button>
+        </div>
       </div>
       <div class="row">
         <button v-if="projects.length" class="secondary" @click="startPier">+ New pier</button>
         <router-link to="/projects/new"><button>+ Moor a project</button></router-link>
       </div>
+    </div>
+
+    <!-- Search and filter, both kept in the URL (?q=, ?state=), so a reload or
+         Back from a project keeps them. / jumps here, Escape clears. -->
+    <div v-if="projects.length" class="harbor-tools">
+      <div class="harbor-search">
+        <input
+          ref="search"
+          v-model="query"
+          type="search"
+          placeholder="Search vessels — name, repo, branch, pier"
+          aria-label="Search vessels"
+          autocomplete="off"
+          @keydown.esc="query = ''"
+        />
+        <span v-if="filtering" class="harbor-count">{{ visible.length }} of {{ projects.length }}</span>
+      </div>
+      <span v-if="stateFilter" class="chip blue filter-chip">
+        {{ STATE_FILTERS[stateFilter].label }}
+        <button type="button" class="filter-chip-clear" aria-label="Clear the filter" @click="stateFilter = ''">✕</button>
+      </span>
+      <span class="spacer"></span>
+      <!-- While filtering every pier with a match is open, so there is nothing to fold. -->
+      <button v-if="pierIds.length && !filtering" type="button" class="small secondary" @click="toggleAll">
+        <StableLabel :text="allFolded ? 'Unfold all' : 'Fold all'" :variants="['Unfold all', 'Fold all']" />
+      </button>
     </div>
 
     <div v-if="projects.length" class="harbor-layout">
@@ -34,6 +79,10 @@
             Moor vessels at it from each project's Rigging.
           </p>
         </div>
+        <p v-if="filtering && !visible.length" class="hint harbor-none">
+          No vessel matches<template v-if="query"> “{{ query }}”</template><template v-if="stateFilter"> among those that {{ stateFilter === 'running' ? 'are running' : 'need attention' }}</template>.
+          <button type="button" class="link-button" @click="clearFilters">Clear</button>
+        </p>
         <template v-for="f in fleets" :key="f.key">
           <!-- One fleet is the whole harbor: headings only once there is more than one. -->
           <div v-if="fleets.length > 1" class="fleet-head">
@@ -71,7 +120,7 @@
       <div class="feed-panel">
         <div class="feed-head">
           <span class="section-label">Ship's log</span>
-          <span class="mono" style="font-size: 11px; color: var(--dim)">all projects</span>
+          <span class="mono" style="font-size: 11px; color: var(--dim)">{{ filtering ? `${visible.length} project${visible.length === 1 ? '' : 's'}` : 'all projects' }}</span>
         </div>
         <template v-if="feed.length">
           <!-- The entries scroll inside the panel; the buttons stay in reach under them. -->
@@ -144,8 +193,10 @@
 
 <script>
 import ProjectRow from '../components/ProjectRow.vue'
+import StableLabel from '../components/StableLabel.vue'
 import PierHead from '../components/PierHead.vue'
-import { store } from '../store.js'
+import { store, liveProject } from '../store.js'
+import { STATE_FILTERS, filterWords, matchesSearch, matchesState, stateCounts } from '../lib/harborFilter.js'
 import { api } from '../api.js'
 import { logEntries, byDay } from '../lib/shiplog.js'
 
@@ -175,9 +226,13 @@ function saveCollapsed(map) {
 
 export default {
   name: 'DashboardView',
-  components: { ProjectRow, PierHead },
+  components: { ProjectRow, PierHead, StableLabel },
   data() {
+    const q = this.$route?.query ?? {}
     return {
+      STATE_FILTERS,
+      query: typeof q.q === 'string' ? q.q : '',
+      stateFilter: q.state in STATE_FILTERS ? q.state : '',
       FEED_FIRST, // read by the template
       FEED_STEP,
       setup: null,
@@ -203,13 +258,31 @@ export default {
         .filter(p => !mineOnly || p.owner_id === store.user.id)
         .sort((a, b) => a.name.localeCompare(b.name))
     },
+    filtering() {
+      return Boolean(this.query.trim() || this.stateFilter)
+    },
+    // The projects the search and the state filter let through.
+    visible() {
+      const words = filterWords(this.query)
+      return this.projects.filter(p =>
+        matchesState(liveProject(p.id), this.stateFilter) &&
+        matchesSearch(p, words, {
+          pierName: store.live.groups?.[p.group_id]?.name ?? '',
+          ownerName: p.owner_id === store.user?.id ? '' : this.ownerName(p),
+        }))
+    },
+    // The summary's numbers, over the whole harbor whatever is filtered.
+    counts() {
+      return stateCounts(this.projects.map(p => liveProject(p.id)))
+    },
     // The harbor split by owner: your own projects first, then everyone
     // else's by name. A tenant only ever has one fleet (their own), so for
     // them nothing changes; an admin sees who owns what without a legend.
+    // Filtered, only what matches — piers with nothing to show included.
     fleets() {
       const me = store.user?.id
       const groups = new Map()
-      for (const p of this.projects) {
+      for (const p of this.visible) {
         const key = p.owner_id ?? 'none'
         if (!groups.has(key)) groups.set(key, { key, ...this.ownerLabel(p), mine: p.owner_id === me, projects: [] })
         groups.get(key).projects.push(p)
@@ -227,9 +300,15 @@ export default {
         const byId = new Map(own.map(s => [s.pier.id, s]))
         f.loose = []
         for (const p of f.projects) (byId.get(p.group_id)?.projects ?? f.loose).push(p)
-        f.piers = own
+        f.piers = this.filtering ? own.filter(x => x.projects.length) : own
       }
       return fleets
+    },
+    pierIds() {
+      return this.fleets.flatMap(f => f.piers.map(x => x.pier.id))
+    },
+    allFolded() {
+      return this.pierIds.length > 0 && this.pierIds.every(id => this.collapsed[id])
     },
     ready() {
       return store.ready
@@ -247,23 +326,12 @@ export default {
     setupProblem() {
       return this.setupError || this.setup?.error || ''
     },
-    fleetSummary() {
-      const all = Object.values(store.live.projects ?? {}).filter(p => p.info)
-      const n = all.length
-      const running = all.filter(p => ['online', 'published'].includes(p.pm2?.status)).length
-      const attention = all.filter(
-        p =>
-          (p.headCommit?.sha && !p.currentDeployment && p.headCommit.sha !== p.deployedSha) ||
-          ['stopped', 'errored'].includes(p.pm2?.status)
-      ).length
-      return `${n} vessel${n === 1 ? '' : 's'} moored · ${running} running · ${attention} need${attention === 1 ? 's' : ''} attention`
-    },
     // Built straight off the LiveState mirror: the server keeps the tail of
     // each project's history in `recentDeployments`, so the log needs no
     // request of its own — Show more included — and moves as deploys queue,
     // start and finish. lib/shiplog.js says how far back it can be trusted.
     log() {
-      const shown = new Set(this.projects.map(p => p.id)) // the same scope as the list
+      const shown = new Set(this.visible.map(p => p.id)) // the same scope as the list, filter included
       const lives = Object.values(store.live.projects ?? {}).filter(p => shown.has(p.info?.id))
       return logEntries(lives, info => this.feedOwner(info))
     },
@@ -283,11 +351,54 @@ export default {
     },
   },
   watch: {
+    query() {
+      this.syncQuery()
+    },
+    stateFilter() {
+      this.syncQuery()
+    },
     // The checklist only concerns an empty harbor — don't poke GitHub on
     // every dashboard visit once projects exist.
     needsSetup: { immediate: true, handler(v) { if (v && !this.setup) this.checkSetup() } },
   },
+  mounted() {
+    window.addEventListener('keydown', this.onSlash)
+  },
+  unmounted() {
+    window.removeEventListener('keydown', this.onSlash)
+  },
   methods: {
+    // / jumps to the search, unless someone is typing somewhere already.
+    onSlash(event) {
+      if (event.key !== '/' || event.ctrlKey || event.metaKey || event.altKey) return
+      const el = event.target
+      if (el?.closest?.('input, textarea, select, [contenteditable="true"]')) return
+      event.preventDefault()
+      this.$refs.search?.focus()
+    },
+    toggleState(key) {
+      this.stateFilter = this.stateFilter === key ? '' : key
+    },
+    clearFilters() {
+      this.query = ''
+      this.stateFilter = ''
+    },
+    // Search and filter into the URL, replacing the entry: typing is not
+    // history worth stepping back through.
+    syncQuery() {
+      const query = { ...(this.$route?.query ?? {}) }
+      const q = this.query.trim()
+      if (q) query.q = q
+      else delete query.q
+      if (this.stateFilter) query.state = this.stateFilter
+      else delete query.state
+      this.$router?.replace?.({ query })
+    },
+    toggleAll() {
+      if (this.allFolded) for (const id of this.pierIds) delete this.collapsed[id]
+      else for (const id of this.pierIds) this.collapsed[id] = true
+      saveCollapsed(this.collapsed)
+    },
     showLess() {
       this.feedShown = FEED_FIRST
       if (this.$refs.feedScroll) this.$refs.feedScroll.scrollTop = 0
@@ -314,8 +425,10 @@ export default {
         this.pierBusy = false
       }
     },
+    // While filtering, a pier with a match is open, whatever is remembered —
+    // and the remembered folds come back with the filter cleared.
     isCollapsed(id) {
-      return Boolean(this.collapsed[id])
+      return !this.filtering && Boolean(this.collapsed[id])
     },
     toggleCollapsed(id) {
       if (this.collapsed[id]) delete this.collapsed[id]
