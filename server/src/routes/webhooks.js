@@ -4,7 +4,7 @@ import { verifySignature } from '../github/webhook.js'
 
 // No session on this route — authentication is the HMAC signature.
 // Respond quickly; the actual deploy work happens asynchronously.
-export function webhookRoutes({ db, config, runner, liveState }) {
+export function webhookRoutes({ db, config, runner, liveState, github = null }) {
   const app = new Hono()
 
   app.post('/github', async c => {
@@ -18,7 +18,9 @@ export function webhookRoutes({ db, config, runner, liveState }) {
 
     const event = c.req.header('x-github-event')
     if (event === 'ping') return c.json({ pong: true })
-    if (event !== 'push') return c.json({ ignored: event })
+    // The repo picker's cache: which repos an installation holds changed.
+    const LISTING_EVENTS = ['installation', 'installation_repositories', 'repository']
+    if (event !== 'push' && !LISTING_EVENTS.includes(event)) return c.json({ ignored: event })
 
     let payload
     try {
@@ -26,7 +28,14 @@ export function webhookRoutes({ db, config, runner, liveState }) {
     } catch {
       return c.json({ error: 'invalid JSON payload' }, 400)
     }
+    if (LISTING_EVENTS.includes(event)) {
+      github?.forgetRepos(payload.installation?.id ?? null)
+      return c.json({ forgotten: event })
+    }
     if (payload.deleted) return c.json({ ignored: 'branch deleted' })
+    if (payload.repository?.full_name && payload.head_commit?.timestamp) {
+      github?.notePush(payload.repository.full_name, new Date(payload.head_commit.timestamp).toISOString())
+    }
 
     const repo = payload.repository?.full_name
     const ref = payload.ref

@@ -7,6 +7,7 @@
     :model-value="buildImage"
     @update:model-value="$emit('update:buildImage', $event)"
   />
+  <FieldError :errors="errors" name="build_image" />
   <p class="hint">
     OCI image the deploy script runs in when the podman build sandbox is enabled
     (<span class="mono">SKEPPA_SANDBOX=podman</span>). Ignored in host mode.
@@ -20,6 +21,7 @@
       fallback-label="same as build image"
       @update:model-value="$emit('update:runImage', $event)"
     />
+    <FieldError :errors="errors" name="run_image" />
 
     <label>Memory limit <span class="soft">(MB, blank = unlimited)</span></label>
     <input
@@ -28,6 +30,7 @@
       placeholder="unlimited"
       @input="$emit('update:memoryMb', $event.target.value)"
     />
+    <FieldError :errors="errors" name="memory_mb" />
     <p class="hint">
       Hard cap: past it the app is OOM-killed and restarted by the engine, so a
       leak crashes this project instead of starving the server.<template v-if="existing">
@@ -39,6 +42,7 @@
       <option value="open">open — internet and LAN, as before</option>
       <option value="restricted">restricted — only its shared networks, nothing else</option>
     </select>
+    <FieldError :errors="errors" name="network_profile" />
     <p class="hint" v-if="networkProfile === 'restricted'">
       No internet, no LAN, no host — enforced by having no route out. The app
       port stays routable, and it reaches the containers on its shared networks.
@@ -54,6 +58,7 @@
       placeholder="db-net"
       @input="$emit('update:networks', $event.target.value)"
     />
+    <FieldError :errors="errors" name="networks" />
     <p class="hint">
       Projects listing the same name can reach each other by container name
       (<span class="mono">skeppa-app-&lt;slug&gt;</span>). Shared networks never
@@ -68,6 +73,7 @@
       />
       Host access — reach services on the server's own 127.0.0.1
     </label>
+    <FieldError :errors="errors" name="host_access" />
   </template>
 
   <template v-else-if="runtime === 'pm2'">
@@ -77,6 +83,7 @@
       class="code"
       @input="$emit('update:pm2Name', $event.target.value)"
     />
+    <FieldError :errors="errors" name="pm2_name" />
   </template>
 
   <template v-if="runtime !== 'static'">
@@ -106,6 +113,7 @@
       placeholder="dist"
       @input="$emit('update:publishDir', $event.target.value)"
     />
+    <FieldError :errors="errors" name="publish_dir" />
     <p class="suggest">
       <button
         v-for="dir in otherDirs"
@@ -142,6 +150,7 @@
 
 <script>
 import ImagePicker from './ImagePicker.vue'
+import FieldError from './FieldError.vue'
 
 const COMMON_PUBLISH_DIRS = ['dist', 'web/dist', 'client/dist']
 
@@ -152,7 +161,7 @@ const COMMON_PUBLISH_DIRS = ['dist', 'web/dist', 'client/dist']
 // Rigging tab so a change to how apps build and run reaches both at once.
 export default {
   name: 'RuntimeFields',
-  components: { ImagePicker },
+  components: { ImagePicker, FieldError },
   props: {
     runtime: { type: String, default: 'container' },
     buildImage: { type: String, default: '' },
@@ -172,6 +181,8 @@ export default {
     tenant: { type: Boolean, default: false },
     // Wording differs slightly for a project that already exists.
     existing: { type: Boolean, default: false },
+    // The server's field errors, each shown under its field (FieldError).
+    errors: { type: Object, default: () => ({}) },
   },
   emits: ['update:buildImage', 'update:runImage', 'update:pm2Name', 'update:memoryMb',
     'update:networkProfile', 'update:hostAccess', 'update:networks', 'update:publishDir', 'update:spaFallback', 'update:gateFiles'],

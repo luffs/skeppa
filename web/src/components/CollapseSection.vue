@@ -18,9 +18,17 @@ export default {
   props: {
     title: { type: String, required: true },
     startOpen: { type: Boolean, default: false },
+    // Opens the section when it turns true — a folded section holding a
+    // field error must not keep it out of sight.
+    reveal: { type: Boolean, default: false },
   },
   data() {
-    return { open: this.startOpen }
+    return { open: this.startOpen || this.reveal }
+  },
+  watch: {
+    reveal(now) {
+      if (now) this.open = true
+    },
   },
 }
 </script>

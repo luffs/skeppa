@@ -568,7 +568,9 @@ describe('the project page', () => {
       route: { query: { tab: 'settings' } },
       steps: async wrapper => {
         expect(wrapper.find('.save-bar').exists()).toBe(false)
-        await wrapper.find('.rigging input').setValue('adm-renamed')
+        const name = wrapper.findAll('.rigging label').find(l => l.text() === 'Name').element.nextElementSibling
+        name.value = 'adm-renamed'
+        name.dispatchEvent(new Event('input'))
         await settle()
         expect(wrapper.find('.save-bar').text()).toContain('1 unsaved change')
         expect(wrapper.find('.tab-dirty').exists()).toBe(true)
@@ -636,6 +638,75 @@ describe('the project page', () => {
     })
     expect(page.problems.join(' | ')).toBe('')
   })
+})
+
+// Mooring: the repository is picked from a searchable, sortable list, with
+// repos a project already uses marked, archived ones tucked away, and the
+// pick filling in the branch and the name — then the list folds into the
+// choice, until Change.
+test('the repository picker searches, sorts, marks what is moored, and folds into the choice', async () => {
+  seedStore('admin')
+  const repos = [
+    { full_name: 'o/zeta', owner: 'o', name: 'zeta', private: false, default_branch: 'main', pushed_at: ISO, created_at: '2020-01-01T00:00:00Z', description: '', language: 'Go', archived: false, fork: false },
+    { full_name: 'o/adm', owner: 'o', name: 'adm', private: true, default_branch: 'trunk', pushed_at: '2026-01-01T00:00:00Z', created_at: '2025-01-01T00:00:00Z', description: 'The admin app', language: 'JavaScript', archived: false, fork: false },
+    { full_name: 'o/old', owner: 'o', name: 'old', private: false, default_branch: 'main', pushed_at: '', created_at: '', description: '', language: '', archived: true, fork: false },
+  ]
+  const get = vi.spyOn(api, 'get').mockImplementation(async url => {
+    if (url.startsWith('/api/github/repos')) return url.endsWith('?fresh=1') ? [...repos, { ...repos[0], full_name: 'o/new', name: 'new' }] : repos
+    return {}
+  })
+  try { localStorage.clear() } catch { /* sorts by name */ }
+  const page = await expectCleanRender(ProjectNewView, {
+    steps: async wrapper => {
+      const rows = () => wrapper.findAll('.repo-option').map(r => r.find('.repo-name').text())
+      expect(rows()).toEqual(['adm', 'zeta']) // A–Z, the archived one tucked away
+      expect(wrapper.find('.repo-option .chip.blue').text()).toContain('moored as adm')
+
+      // Refresh asks past the server's cache, and the list follows
+      // under the frame: the count and Refresh, which asks past the server's cache
+      const refresh = () => wrapper.findAll('.repo-meta .link-button').find(b => b.text().includes('Refresh'))
+      expect(wrapper.find('.repo-picker .repo-meta').exists()).toBe(false)
+      await refresh().trigger('click')
+      await settle()
+      expect(get).toHaveBeenCalledWith('/api/github/repos?fresh=1')
+      expect(rows()).toEqual(['adm', 'new', 'zeta'])
+      expect(wrapper.find('.repo-meta').text()).toContain('4 repos')
+      expect(wrapper.text()).not.toContain('Missing one?')
+
+      await wrapper.findAll('.repo-sort button').find(b => b.text() === 'Last push').trigger('click')
+      await settle()
+      expect(rows()).toEqual(['new', 'zeta', 'adm'])
+
+      await wrapper.find('.repo-archived .link-button').trigger('click')
+      await settle()
+      expect(rows()).toContain('old')
+
+      await wrapper.find('.repo-search').setValue('admin app')
+      await settle()
+      expect(rows()).toEqual(['adm'])
+      await wrapper.find('.repo-search').trigger('keydown', { key: 'Enter' })
+      await settle()
+      expect(wrapper.vm.form.repo_full_name).toBe('o/adm')
+      expect(wrapper.vm.form.branch).toBe('trunk')
+      expect(wrapper.vm.form.name).toBe('adm')
+
+      // picked: one card, no search, no list, no Refresh
+      expect(wrapper.find('.repo-picked .repo-name').text()).toBe('adm')
+      expect(wrapper.find('.repo-picked .chip.blue').text()).toContain('moored as adm')
+      for (const gone of ['.repo-search', '.repo-option', '.repo-meta']) expect(wrapper.find(gone).exists()).toBe(false)
+
+      // Change brings the list back at the picked one; Escape keeps it
+      await wrapper.findAll('.repo-picked button').find(b => b.text() === 'Change').trigger('click')
+      await settle()
+      expect(wrapper.find('.repo-option.selected .repo-check').exists()).toBe(true)
+      await wrapper.find('.repo-search').trigger('keydown', { key: 'Escape' })
+      await settle()
+      expect(wrapper.find('.repo-picked').exists()).toBe(true)
+      expect(wrapper.vm.form.repo_full_name).toBe('o/adm')
+    },
+  })
+  get.mockRestore()
+  expect(page.problems.join(' | ')).toBe('')
 })
 
 test('the project page names its pier, and the chip leads to Rigging; no pier, no chip', async () => {
@@ -744,6 +815,116 @@ test('a pending runtime change keeps the live controls and says so', async () =>
 
 // The deploy script and start command start empty — nothing runs that was
 // not chosen — with the suggestion one click away.
+// Mooring and Rigging are one set of sections (ProjectFields), in one order.
+test('mooring and Rigging show the same sections, in the same order', async () => {
+  seedStore('admin')
+  const titles = async (View, opts) => {
+    let out = []
+    const res = await expectCleanRender(View, { ...opts, steps: async w => { out = w.findAll('.project-fields .collapse-title').map(t => t.text()) } })
+    expect(res.problems.join(' | ')).toBe('')
+    return out
+  }
+  const moor = await titles(ProjectNewView)
+  const rigging = await titles(ProjectView, { props: { id: '1' }, route: { query: { tab: 'settings' } } })
+  expect(moor).toEqual(['Source', 'Runtime', 'Build', 'Routing'])
+  expect(rigging).toEqual(moor)
+})
+
+// A refused save marks each field it is about, opens a folded section that
+// holds one, and lets a message go once its field is edited.
+test('the server\'s field errors show under their fields, and go when the field changes', async () => {
+  seedStore('admin')
+  const patch = vi.spyOn(api, 'patch').mockRejectedValue(Object.assign(new Error('validation failed'), {
+    fields: { subdomain: 'subdomain already routed', deploy_script: 'too long', something_new: 'odd' },
+  }))
+  const page = await expectCleanRender(ProjectView, {
+    props: { id: '1' },
+    route: { query: { tab: 'settings' } },
+    steps: async wrapper => {
+      // fold Routing away first: the error must open it again
+      const routing = wrapper.findAll('.collapse-section').find(s => s.find('.collapse-title').text() === 'Routing')
+      await routing.find('.collapse-head').trigger('click')
+      await wrapper.find('.rigging textarea').setValue('make')
+      await settle()
+      await wrapper.findAll('.save-bar button').find(b => b.text().startsWith('Save') && !b.text().includes('deploy')).trigger('click')
+      await settle()
+      const errors = () => wrapper.findAll('.field-error').map(e => e.text())
+      expect(errors()).toEqual(['too long', 'subdomain already routed', 'something_new: odd'])
+      expect(routing.classes()).toContain('open')
+      expect(wrapper.text()).toContain('Some fields need a look')
+      await wrapper.find('.rigging textarea').setValue('make again')
+      await settle()
+      expect(errors()).toEqual(['subdomain already routed', 'something_new: odd'])
+    },
+  })
+  patch.mockRestore()
+  expect(page.problems.join(' | ')).toBe('')
+})
+
+// Most settings wait for the next deploy: the bar says so, and offers to do both.
+test('Save and deploy, when what changed waits for the next deploy', async () => {
+  seedStore('admin')
+  const patch = vi.spyOn(api, 'patch').mockImplementation(async (url, body) => ({ ...store.live.projects[1].info, ...body }))
+  const post = vi.spyOn(api, 'post').mockResolvedValue({ id: 9 })
+  const page = await expectCleanRender(ProjectView, {
+    props: { id: '1' },
+    route: { query: { tab: 'settings' } },
+    steps: async wrapper => {
+      // a name alone applies on save: no deploy offered
+      const name = wrapper.findAll('.rigging label').find(l => l.text() === 'Name').element.nextElementSibling
+      name.value = 'renamed'
+      name.dispatchEvent(new Event('input'))
+      await settle()
+      expect(wrapper.find('.save-bar').text()).not.toContain('next deploy')
+      expect(wrapper.findAll('.save-bar button').map(visibleText)).toEqual(['Discard', 'Save'])
+
+      await wrapper.find('.rigging textarea').setValue('make')
+      await settle()
+      expect(wrapper.find('.save-bar').text()).toContain('1 take effect on the next deploy')
+      await wrapper.findAll('.save-bar button').find(b => visibleText(b) === 'Save and deploy').trigger('click')
+      await settle()
+      expect(patch).toHaveBeenCalled()
+      expect(post).toHaveBeenCalledWith('/api/projects/1/deploy')
+      expect(wrapper.vm.tab).toBe('deploys')
+      expect(wrapper.vm.selectedId).toBe(9)
+    },
+  })
+  patch.mockRestore()
+  post.mockRestore()
+  expect(page.problems.join(' | ')).toBe('')
+})
+
+// Picking a repository reads its package.json: the offers become its own
+// commands, and a site builder without a start script is offered as static.
+test('the picked repository\'s package.json decides the offers', async () => {
+  seedStore('admin')
+  const repos = [{ full_name: 'o/site', owner: 'o', name: 'site', private: false, default_branch: 'main', pushed_at: ISO, created_at: ISO, description: '', language: '', archived: false, fork: false }]
+  const get = vi.spyOn(api, 'get').mockImplementation(async url => {
+    if (url.startsWith('/api/github/repos/suggest')) {
+      return { found: true, deploy: 'bun install && bun run build', start: '', runtime: 'static', publish_dir: 'dist', notes: ['a build script', 'no start script', 'Vite'] }
+    }
+    if (url.startsWith('/api/github/repos')) return repos
+    return {}
+  })
+  const page = await expectCleanRender(ProjectNewView, {
+    steps: async wrapper => {
+      expect(wrapper.find('.moor-bar').text()).toContain('Pick a repository and give it a name.')
+      await wrapper.find('.repo-option').trigger('click')
+      await settle()
+      expect(get).toHaveBeenCalledWith('/api/github/repos/suggest?repo=o%2Fsite&branch=main')
+      expect(wrapper.find('.repo-read').text()).toBe('Read from the repository: a build script · no start script · Vite')
+      const offer = wrapper.findAll('p.suggest button').find(b => b.text().startsWith('Looks like a static site'))
+      await offer.trigger('click')
+      await settle()
+      expect(wrapper.vm.form.runtime).toBe('static')
+      expect(wrapper.vm.form.publish_dir).toBe('dist')
+      expect(wrapper.find('.moor-bar').text()).toContain('Ready')
+    },
+  })
+  get.mockRestore()
+  expect(page.problems.join(' | ')).toBe('')
+})
+
 test('the new-project form offers its suggestions as one-click values', async () => {
   seedStore('admin')
   const { problems } = await expectCleanRender(ProjectNewView, {
@@ -751,10 +932,11 @@ test('the new-project form offers its suggestions as one-click values', async ()
       expect(wrapper.vm.form.deploy_script).toBe('')
       expect(wrapper.vm.form.start_command).toBe('')
       const offers = () => wrapper.findAll('p.suggest button')
-      expect(offers().map(b => b.text().replace(/\s+/g, ' '))).toEqual(['Use bun install && bun run build', 'Use bun run start'])
+      // in section order: the start command is the Runtime's, the script the Build's
+      expect(offers().map(b => b.text().replace(/\s+/g, ' '))).toEqual(['Use bun run start', 'Use bun install && bun run build'])
       expect(wrapper.find('textarea').attributes('placeholder')).toBe('bun install && bun run build')
 
-      await offers()[0].trigger('click')
+      await offers()[1].trigger('click')
       expect(wrapper.vm.form.deploy_script).toBe('bun install && bun run build')
       expect(offers().map(b => b.text())).toEqual(['Use bun run start']) // a filled field needs no offer
       await offers()[0].trigger('click')
@@ -766,10 +948,10 @@ test('the new-project form offers its suggestions as one-click values', async ()
       await wrapper.find('textarea').setValue('')
       wrapper.vm.form.runtime = 'static'
       await settle()
-      expect(offers().map(b => b.text().replace(/\s+/g, ' '))).toEqual(['Use bun install && bun run build', 'Use web/dist', 'Use client/dist'])
-      await offers()[1].trigger('click')
+      expect(offers().map(b => b.text().replace(/\s+/g, ' '))).toEqual(['Use web/dist', 'Use client/dist', 'Use bun install && bun run build'])
+      await offers()[0].trigger('click')
       expect(wrapper.vm.form.publish_dir).toBe('web/dist')
-      expect(offers().map(b => b.text().replace(/\s+/g, ' ')).slice(1)).toEqual(['Use dist', 'Use client/dist'])
+      expect(offers().map(b => b.text().replace(/\s+/g, ' ')).slice(0, 2)).toEqual(['Use dist', 'Use client/dist'])
     },
   })
   expect(problems.join(' | ')).toBe('')

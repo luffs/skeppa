@@ -148,107 +148,38 @@
     <!-- Rigging: one form in sections, saved together. v-show inside the
          sections keeps half-typed fields when one is folded. -->
     <div v-else-if="tab === 'settings'" class="rigging">
-      <CollapseSection title="Source" start-open>
-        <template #meta><span class="mono">{{ project.branch }}</span></template>
-        <label>Name</label>
-        <input v-model="edit.name" />
-        <PierPicker v-model="edit.group_id" :owner-id="project.owner_id" />
-        <template v-if="project.git_url">
-          <label>Git URL</label>
-          <input v-model="edit.git_url" class="code" />
-          <p class="hint">External repository — no webhook; use the ↻ Check remote button up top to look for new commits.</p>
-        </template>
-        <template v-else>
-          <label>Repository (owner/repo)</label>
-          <input v-model="edit.repo_full_name" class="code" />
-        </template>
-        <label>Branch</label>
-        <input v-model="edit.branch" class="code" />
-        <template v-if="!project.git_url">
-          <label class="check-label">
-            <input type="checkbox" v-model="edit.auto_deploy" />
-            Auto deploy on push to {{ edit.branch || project.branch }}
-          </label>
-          <p class="hint">When off, pushes only show up as "commits ahead" — deploy manually.</p>
-        </template>
-      </CollapseSection>
-
-      <CollapseSection title="Runtime" start-open>
-        <template #meta><span class="mono">{{ runtimeName(edit.runtime) }}</span></template>
-        <RuntimeChoice v-model:runtime="edit.runtime" :tenant="isTenant" existing />
-        <template v-if="edit.runtime !== 'static'">
-          <label>Start command</label>
-          <input v-model="edit.start_command" class="code" />
-        </template>
-        <RuntimeFields
-          :runtime="edit.runtime"
-          v-model:build-image="edit.build_image"
-          v-model:run-image="edit.run_image"
-          v-model:pm2-name="edit.pm2_name"
-          v-model:memory-mb="edit.memory_mb"
-          v-model:network-profile="edit.network_profile"
-          v-model:host-access="edit.host_access"
-          v-model:networks="edit.networks"
-          v-model:publish-dir="edit.publish_dir"
-          v-model:spa-fallback="edit.spa_fallback"
-          v-model:gate-files="edit.gate_files"
-          :tenant="isTenant"
-          existing
-        />
-      </CollapseSection>
-
-      <CollapseSection title="Build" start-open>
-        <template #meta><span class="mono">{{ edit.build_env ? 'ENV in the build' : 'no ENV in the build' }}</span></template>
-        <label>Deploy script</label>
-        <textarea v-model="edit.deploy_script" class="code" rows="4"></textarea>
-        <p class="hint">⚠ Runs as a shell script on the server — only trusted commands.</p>
-        <label>Working subdirectory</label>
-        <input v-model="edit.cwd" class="code" />
-        <label class="check-label">
-          <input type="checkbox" v-model="edit.build_env" />
-          Inject ENV into the deploy script
-        </label>
-        <p class="hint">
-          On, the build sees every ENV var — needed for generated clients, <span class="mono">VITE_*</span>
-          config or private registries. Off, it gets only a minimal environment and no
-          <span class="mono">.env</span> in the working tree, so a poisoned dependency's postinstall has
-          nothing to take. The running app gets its ENV either way.
-        </p>
-        <label class="check-label">
-          <input type="checkbox" v-model="edit.write_env_file" />
-          Write a plaintext <span class="mono">.env</span> file into the app
-        </label>
-        <p class="hint">
-          ENV vars are injected into the running process (and, with the toggle above on, the deploy script) — decrypted only in
-          memory. Turn this on only if something reads <span class="mono">.env</span> from disk itself
-          (e.g. Vite at build time); it writes <span class="mono">shared/.env</span> plus a copy in
-          the working directory. Turning it off deletes those files.
-        </p>
-      </CollapseSection>
-
-      <CollapseSection title="Routing" start-open>
-        <template #meta><span class="mono">{{ appHost || 'not routed' }}</span></template>
-        <RoutingFields
-          v-model:subdomain="edit.subdomain"
-          v-model:port="edit.port"
-          :handle="project.owner_role === 'tenant' ? project.owner_handle : ''"
-          :domain="project.owner_role === 'tenant' ? project.owner_domain : ''"
-          :static-site="edit.runtime === 'static'"
-          :gate-files="edit.runtime !== 'static' && edit.gate_files"
-          existing
-        />
-      </CollapseSection>
+      <ProjectFields
+        ref="fields"
+        :form="edit"
+        existing
+        :external="Boolean(project.git_url)"
+        :tenant="isTenant"
+        :owner-id="project.owner_id"
+        :handle="project.owner_role === 'tenant' ? project.owner_handle : ''"
+        :domain="project.owner_role === 'tenant' ? project.owner_domain : ''"
+        :route-label="appHost"
+        :errors="fieldErrors"
+        @set="(key, value) => (edit[key] = value)"
+      />
 
       <p v-if="saveError" class="error">{{ saveError }}</p>
       <p v-if="saved && !dirtyFields.length" class="hint" style="margin: 0">Saved ✔</p>
 
-      <!-- Only while something is unsaved, and always in reach at the bottom of the screen. -->
+      <!-- Only while something is unsaved, and always in reach at the bottom of
+           the screen. Most settings only take effect when the project next sets
+           sail: then saving and deploying is one click. -->
       <div v-if="dirtyFields.length" class="save-bar">
-        <span>{{ dirtyFields.length }} unsaved change{{ dirtyFields.length === 1 ? '' : 's' }}</span>
+        <span>
+          {{ dirtyFields.length }} unsaved change{{ dirtyFields.length === 1 ? '' : 's' }}<template v-if="deployFields.length">
+            <span class="save-bar-note"> · {{ deployFields.length === dirtyFields.length ? (dirtyFields.length === 1 ? 'takes' : 'take') : `${deployFields.length} take` }} effect on the next deploy</span></template>
+        </span>
         <span class="spacer"></span>
-        <button type="button" class="small secondary" :disabled="saving" @click="discard">Discard</button>
-        <button type="button" class="small" :disabled="saving" @click="save">
-          <StableLabel :text="saving ? 'Saving…' : 'Save settings'" :variants="['Saving…', 'Save settings']" />
+        <button type="button" class="small secondary" :disabled="!!saving" @click="discard">Discard</button>
+        <button type="button" class="small" :class="{ secondary: deployFields.length }" :disabled="!!saving" @click="save()">
+          <StableLabel :text="saving === 'save' ? 'Saving…' : 'Save'" :variants="['Saving…', 'Save']" />
+        </button>
+        <button v-if="deployFields.length" type="button" class="small" :disabled="!!saving || !!live?.currentDeployment" @click="save({ deploy: true })">
+          <StableLabel :text="saving === 'deploy' ? 'Setting sail…' : 'Save and deploy'" :variants="['Setting sail…', 'Save and deploy']" />
         </button>
       </div>
 
@@ -301,13 +232,10 @@ import EnvEditor from '../components/EnvEditor.vue'
 import Pm2Logs from '../components/Pm2Logs.vue'
 import CommitMessage from '../components/CommitMessage.vue'
 import SourceFiles from '../components/SourceFiles.vue'
-import RuntimeChoice from '../components/RuntimeChoice.vue'
-import RuntimeFields from '../components/RuntimeFields.vue'
-import RoutingFields from '../components/RoutingFields.vue'
-import PierPicker from '../components/PierPicker.vue'
 import StableLabel from '../components/StableLabel.vue'
 import ActionMenu from '../components/ActionMenu.vue'
 import CollapseSection from '../components/CollapseSection.vue'
+import ProjectFields from '../components/ProjectFields.vue'
 import { api } from '../api.js'
 import { confirmDialog } from '../lib/dialog.js'
 import { store, liveProject, appUrlFor } from '../store.js'
@@ -316,7 +244,6 @@ import { primaryAction, actionMenu, performAction } from '../lib/vesselActions.j
 import { timeAgo, duration, uptimeSince, bytes } from '../lib/format.js'
 
 const RUNTIME_LABEL = { pm2: 'a pm2 process', container: 'a container', static: 'a static site' }
-const RUNTIME_NAME = { pm2: 'pm2 process', container: 'container', static: 'static site' }
 const TABS = ['deploys', 'logs', 'env', 'files', 'settings']
 // Every label the header's main button can show (StableLabel sizes it to the widest).
 const PRIMARY_LABELS = ['Set sail — deploy', 'Deploy latest', 'Retry deploy', 'Start', 'Deploy', 'Under way…']
@@ -328,14 +255,21 @@ const FORM_FIELDS = [
   'subdomain', 'port',
 ]
 const DISCARD = 'You have unsaved changes in Rigging. Leave them behind?'
+// What a save alone does not put into effect — the next deploy does. The
+// rest (name, pier, auto deploy, routing, the .env toggle) applies on save.
+const DEPLOY_FIELDS = [
+  'git_url', 'repo_full_name', 'branch', 'runtime', 'start_command', 'build_image', 'run_image', 'pm2_name',
+  'memory_mb', 'network_profile', 'host_access', 'networks', 'publish_dir', 'gate_files', 'deploy_script', 'cwd',
+  'build_env', 'port',
+]
 
 const positiveInt = v => (/^\d+$/.test(String(v ?? '')) ? Number(v) : null)
 
 export default {
   name: 'ProjectView',
   components: {
-    StatusBadge, DeployLog, CommitMessage, EnvEditor, Pm2Logs, SourceFiles, RuntimeChoice, RuntimeFields,
-    RoutingFields, PierPicker, StableLabel, ActionMenu, CollapseSection,
+    StatusBadge, DeployLog, CommitMessage, EnvEditor, Pm2Logs, SourceFiles,
+    StableLabel, ActionMenu, CollapseSection, ProjectFields,
   },
   props: { id: { type: String, required: true } },
   // Leaving the page (another route, or the browser) with unsaved Rigging asks first.
@@ -367,8 +301,9 @@ export default {
       selectedId: positiveInt(query.deployment),
       edit: {},
       pristine: {}, // the form as last loaded or saved — what "unsaved" is measured against
-      saving: false,
+      saving: '', // 'save' | 'deploy' while under way
       saveError: '',
+      fieldErrors: {}, // the server's `fields` map, shown under each field
       saved: false,
       busy: false,
       checking: false,
@@ -493,6 +428,10 @@ export default {
     dirtyFields() {
       if (!this.editLoaded) return []
       return FORM_FIELDS.filter(k => String(this.edit[k] ?? '') !== String(this.pristine[k] ?? ''))
+    },
+    // Of those, the ones that wait for the next deploy.
+    deployFields() {
+      return this.dirtyFields.filter(k => DEPLOY_FIELDS.includes(k))
     },
   },
   watch: {
@@ -677,9 +616,6 @@ export default {
     runtimeLabel(runtime) {
       return RUNTIME_LABEL[runtime] ?? runtime
     },
-    runtimeName(runtime) {
-      return RUNTIME_NAME[runtime] ?? runtime
-    },
     editable(p) {
       return {
         ...p,
@@ -711,10 +647,13 @@ export default {
     discard() {
       if (this.project) this.seed(this.project)
       this.saveError = ''
+      this.fieldErrors = {}
     },
-    async save() {
-      this.saving = true
+    // `deploy` sets sail right after a good save, and shows the voyage.
+    async save({ deploy = false } = {}) {
+      this.saving = deploy ? 'deploy' : 'save'
       this.saveError = ''
+      this.fieldErrors = {}
       this.saved = false
       try {
         const updated = await api.patch(`/api/projects/${this.id}`, {
@@ -731,11 +670,21 @@ export default {
         this.seed(updated)
         this.saved = true
       } catch (err) {
-        const fields = err.fields ? ' — ' + Object.entries(err.fields).map(([k, v]) => `${k}: ${v}`).join(', ') : ''
-        this.saveError = err.message + fields
-      } finally {
-        this.saving = false
+        this.fieldErrors = err.fields ?? {}
+        this.saveError = err.fields ? 'Some fields need a look — they are marked above.' : err.message
+        if (err.fields) this.$refs.fields?.revealErrors()
+        this.saving = ''
+        return
       }
+      if (deploy) {
+        const result = await performAction(this.project, 'deploy')
+        if (result?.id) {
+          await this.setTab('deploys')
+          this.selectedId = result.id
+          await this.loadDeployments()
+        }
+      }
+      this.saving = ''
     },
     async remove() {
       if (!(await confirmDialog(`Delete project "${this.project.name}"? The pm2 process is removed; files on disk are kept.`, { confirmLabel: 'Delete', danger: true }))) return

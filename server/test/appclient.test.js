@@ -85,6 +85,21 @@ test('listRepos merges every installation, so friend-installed repos appear in t
   expect(repos.map(r => r.full_name).sort()).toEqual(['friend/secret', 'rasmus/mine'])
 })
 
+// The picker sorts by name, last push and creation, groups by account and
+// describes each row; missing optional fields arrive as '' / false.
+test('listRepos carries what the picker sorts, groups and describes by', async () => {
+  const { fetchFn } = fakeGitHub()
+  const app = makeApp(fetchFn)
+  const mine = (await app.listRepos()).find(r => r.full_name === 'rasmus/mine')
+  expect(Object.keys(mine).sort()).toEqual([
+    'archived', 'created_at', 'default_branch', 'description', 'fork', 'full_name', 'language', 'name', 'owner', 'private', 'pushed_at',
+  ])
+  expect(mine.owner).toBe('rasmus')
+  expect(mine.name).toBe('mine')
+  for (const key of ['description', 'language', 'created_at']) expect(typeof mine[key]).toBe('string')
+  expect(typeof mine.archived).toBe('boolean')
+})
+
 test('a repo no installation covers gets the friendly error, naming the repo', async () => {
   const { fetchFn } = fakeGitHub()
   const app = makeApp(fetchFn)

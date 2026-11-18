@@ -4,117 +4,63 @@
     <p class="hint" style="font-size: 14px; margin: 6px 0 22px">
       Pick a repository, tell Skeppa how to build and start it.
     </p>
-    <div class="panel">
-      <p v-if="repoError" class="error">
-        {{ repoError }} — check the <router-link to="/settings">GitHub App settings</router-link>.
-      </p>
-
-      <label class="check-label">
-        <input type="checkbox" v-model="externalRepo" />
-        External repository — a public git URL outside the GitHub App
-      </label>
-
-      <template v-if="externalRepo">
-        <label>Git URL</label>
-        <input v-model="form.git_url" class="code" placeholder="https://github.com/user/repo.git" />
-        <p class="hint">
-          Any public https host (GitHub, GitLab, Codeberg…). No webhook reaches these —
-          check for updates from the project page instead.
+    <!-- The same sections, in the same order, as the project's Rigging tab (ProjectFields). -->
+    <ProjectFields
+      ref="fields"
+      :form="form"
+      :external="externalRepo"
+      :tenant="isTenant"
+      :owner-id="myId"
+      :handle="isTenant ? myHandle : ''"
+      :domain="isTenant ? myDomain : ''"
+      :route-label="form.subdomain"
+      :errors="fieldErrors"
+      :suggested="suggested"
+      :suggestion="suggestion"
+      @set="(key, value) => (form[key] = value)"
+      @runtime="runtimeTouched = true"
+      @name-input="syncPm2Name"
+    >
+      <template #source>
+        <p v-if="repoError" class="error">
+          {{ repoError }} — check the <router-link to="/settings">GitHub App settings</router-link>.
         </p>
-      </template>
-      <template v-else>
-        <label>Repository</label>
-        <select v-model="form.repo_full_name" @change="onRepoPicked">
-          <option disabled value="">{{ reposLoading ? 'Loading repos…' : 'Pick a repository' }}</option>
-          <option v-for="r in repos" :key="r.full_name" :value="r.full_name">
-            {{ r.full_name }}{{ r.private ? ' 🔒' : '' }}
-          </option>
-        </select>
-      </template>
-
-      <label>Branch</label>
-      <input v-model="form.branch" class="code" placeholder="main" />
-
-      <template v-if="!externalRepo">
-        <label class="check-label">
-          <input type="checkbox" v-model="form.auto_deploy" />
-          Auto deploy on push
+        <label class="check-label" style="margin-top: 0">
+          <input type="checkbox" v-model="externalRepo" />
+          External repository — a public git URL outside the GitHub App
         </label>
-        <p class="hint">When off, pushes only show up as "commits ahead" — deploy manually.</p>
+        <template v-if="externalRepo">
+          <label>Git URL</label>
+          <input v-model="form.git_url" class="code" placeholder="https://github.com/user/repo.git" />
+          <FieldError :errors="fieldErrors" name="git_url" />
+          <p class="hint">
+            Any public https host (GitHub, GitLab, Codeberg…). No webhook reaches these —
+            check for updates from the project page instead.
+          </p>
+        </template>
+        <template v-else>
+          <label>Repository</label>
+          <RepoPicker
+            v-model="form.repo_full_name"
+            :repos="repos"
+            :loading="reposLoading"
+            :refreshing="reposRefreshing"
+            @picked="onRepoPicked"
+            @refresh="loadRepos({ fresh: true })"
+          />
+          <FieldError :errors="fieldErrors" name="repo_full_name" />
+        </template>
       </template>
+    </ProjectFields>
 
-      <label>Name</label>
-      <input v-model="form.name" placeholder="My app" @input="syncPm2Name" />
-      <PierPicker v-model="form.group_id" :owner-id="myId" />
-
-      <RuntimeChoice :runtime="form.runtime" :tenant="isTenant" @update:runtime="pickRuntime" />
-
-      <label>Deploy script</label>
-      <textarea v-model="form.deploy_script" class="code" rows="4" :placeholder="suggested.deploy"></textarea>
-      <!-- The placeholder is a suggestion, not a default: nothing runs that was
-           not chosen. One click makes it the value. -->
-      <p v-if="!form.deploy_script.trim()" class="suggest">
-        <button type="button" class="secondary small" @click="form.deploy_script = suggested.deploy">
-          Use <span class="mono">{{ suggested.deploy }}</span>
-        </button>
-      </p>
-      <p class="hint">
-        ⚠ This runs as a shell script on the server with the project's ENV — that is the point of a
-        deploy panel, so only put trusted commands here.
-      </p>
-      <label class="check-label">
-        <input type="checkbox" v-model="form.build_env" />
-        Inject ENV into the deploy script
-      </label>
-      <p class="hint">
-        Off, the build gets only a minimal environment and no <span class="mono">.env</span> —
-        the setting for repos whose dependencies you don't fully trust. The running app gets
-        its ENV either way.
-      </p>
-
-      <template v-if="form.runtime !== 'static'">
-        <label>Start command <span class="soft">(optional — empty for build-only)</span></label>
-        <input v-model="form.start_command" class="code" :placeholder="suggested.start" />
-        <p v-if="!form.start_command.trim()" class="suggest">
-          <button type="button" class="secondary small" @click="form.start_command = suggested.start">
-            Use <span class="mono">{{ suggested.start }}</span>
-          </button>
-        </p>
-      </template>
-
-      <label>Working subdirectory <span class="soft">(optional, relative to repo root)</span></label>
-      <input v-model="form.cwd" class="code" placeholder="apps/api" />
-
-      <RuntimeFields
-        :runtime="form.runtime"
-        v-model:build-image="form.build_image"
-        v-model:run-image="form.run_image"
-        v-model:pm2-name="form.pm2_name"
-        v-model:memory-mb="form.memory_mb"
-        v-model:network-profile="form.network_profile"
-        v-model:host-access="form.host_access"
-        v-model:networks="form.networks"
-        v-model:publish-dir="form.publish_dir"
-        v-model:spa-fallback="form.spa_fallback"
-        v-model:gate-files="form.gate_files"
-        :tenant="isTenant"
-      />
-
-      <RoutingFields
-        v-model:subdomain="form.subdomain"
-        v-model:port="form.port"
-        :handle="isTenant ? myHandle : ''"
-        :domain="isTenant ? myDomain : ''"
-        :static-site="form.runtime === 'static'"
-        :gate-files="form.runtime !== 'static' && form.gate_files"
-      />
-
-      <p v-if="error" class="error">{{ error }}</p>
-      <p style="margin: 22px 0 0">
-        <button :disabled="busy || !form.name || (externalRepo ? !form.git_url.trim() : !form.repo_full_name)" @click="submit">
-          {{ busy ? 'Mooring…' : 'Moor project' }}
-        </button>
-      </p>
+    <!-- Mooring is the one thing this page is for: the button stays in reach. -->
+    <div class="save-bar moor-bar">
+      <span v-if="error" class="error" style="margin: 0">{{ error }}</span>
+      <span v-else class="hint" style="margin: 0">{{ missing || 'Ready — nothing is deployed until you set sail.' }}</span>
+      <span class="spacer"></span>
+      <button :disabled="busy || Boolean(missing)" @click="submit">
+        <StableLabel :text="busy ? 'Mooring…' : 'Moor project'" :variants="['Mooring…', 'Moor project']" />
+      </button>
     </div>
   </div>
 </template>
@@ -122,20 +68,24 @@
 <script>
 import { api } from '../api.js'
 import { store } from '../store.js'
-import RuntimeChoice from '../components/RuntimeChoice.vue'
-import RuntimeFields from '../components/RuntimeFields.vue'
-import RoutingFields from '../components/RoutingFields.vue'
-import PierPicker from '../components/PierPicker.vue'
+import ProjectFields from '../components/ProjectFields.vue'
+import FieldError from '../components/FieldError.vue'
+import RepoPicker from '../components/RepoPicker.vue'
+import StableLabel from '../components/StableLabel.vue'
+
+const GENERIC_SUGGESTED = { deploy: 'bun install && bun run build', start: 'bun run start' }
 
 export default {
   name: 'ProjectNewView',
-  components: { RuntimeChoice, RuntimeFields, RoutingFields, PierPicker },
+  components: { ProjectFields, FieldError, RepoPicker, StableLabel },
   data() {
     return {
       repos: [],
       reposLoading: true,
+      reposRefreshing: false,
       repoError: '',
       error: '',
+      fieldErrors: {}, // the server's `fields` map, shown under each field
       busy: false,
       pm2NameTouched: false,
       runtimeTouched: false,
@@ -144,8 +94,10 @@ export default {
       myId: store.user?.id ?? null, // a new project is the mooring user's, and so is its pier
       myHandle: store.user?.handle ?? '',
       // Shown as placeholders and offered as one-click values — one source, so
-      // the hint and what the button fills in can never drift apart.
-      suggested: { deploy: 'bun install && bun run build', start: 'bun run start' },
+      // the hint and what the button fills in can never drift apart. Replaced
+      // by what the picked repository's package.json says (loadSuggestion).
+      suggested: { ...GENERIC_SUGGESTED },
+      suggestion: null, // { notes, runtime?, publish_dir? } read from the repository
       myDomain: store.user?.domain ?? '',
       form: {
         repo_full_name: '',
@@ -159,6 +111,7 @@ export default {
         start_command: '',
         cwd: '',
         auto_deploy: true,
+        write_env_file: false,
         // Set here rather than in Rigging afterwards: these decide what the
         // very first deploy does. The .env-file toggle has a working default
         // and stays in the project settings.
@@ -180,15 +133,17 @@ export default {
     }
   },
   async created() {
-    try {
-      this.repos = await api.get('/api/github/repos')
-    } catch (err) {
-      this.repoError = err.message
-    } finally {
-      this.reposLoading = false
-    }
+    await this.loadRepos()
   },
   computed: {
+    // Why Moor is not ready yet, or '' when it is.
+    missing() {
+      const repo = this.externalRepo ? this.form.git_url.trim() : this.form.repo_full_name
+      if (!repo && !this.form.name.trim()) return this.externalRepo ? 'Give it a git URL and a name.' : 'Pick a repository and give it a name.'
+      if (!repo) return this.externalRepo ? 'Give it a git URL.' : 'Pick a repository.'
+      if (!this.form.name.trim()) return 'Give it a name.'
+      return ''
+    },
     // An admin's panel started without a container socket: a container
     // default would only fail the first deploy, so pm2 is the default there.
     noEngine() {
@@ -197,6 +152,20 @@ export default {
     },
   },
   methods: {
+    // The server answers from its cache (fast after the first time); `fresh`
+    // is the picker's Refresh, straight to GitHub, keeping the list meanwhile.
+    async loadRepos({ fresh = false } = {}) {
+      if (fresh) this.reposRefreshing = true
+      this.repoError = ''
+      try {
+        this.repos = await api.get(fresh ? '/api/github/repos?fresh=1' : '/api/github/repos')
+      } catch (err) {
+        this.repoError = err.message
+      } finally {
+        this.reposLoading = false
+        this.reposRefreshing = false
+      }
+    },
     pickRuntime(runtime) {
       this.form.runtime = runtime
       this.runtimeTouched = true
@@ -209,6 +178,23 @@ export default {
           this.form.name = repo.full_name.split('/')[1]
           this.syncPm2Name()
         }
+        this.loadSuggestion(repo.full_name, this.form.branch)
+      }
+    },
+    // What the repository's package.json suggests for its commands — read
+    // by the server, offered as one-click values, never filled in by itself.
+    // A late answer for a repository no longer picked is dropped.
+    async loadSuggestion(repo, branch) {
+      this.suggestion = null
+      this.suggested = { ...GENERIC_SUGGESTED }
+      try {
+        const q = new URLSearchParams({ repo, branch })
+        const found = await api.get(`/api/github/repos/suggest?${q}`)
+        if (this.form.repo_full_name !== repo || !found) return
+        this.suggestion = found
+        if (found.found) this.suggested = { deploy: found.deploy, start: found.start }
+      } catch {
+        // nothing read: the generic suggestions stay
       }
     },
     syncPm2Name() {
@@ -222,6 +208,7 @@ export default {
     async submit() {
       this.busy = true
       this.error = ''
+      this.fieldErrors = {}
       try {
         const created = await api.post('/api/projects', {
           ...this.form,
@@ -236,8 +223,9 @@ export default {
         })
         this.$router.push(`/projects/${created.id}`)
       } catch (err) {
-        const fields = err.fields ? ' — ' + Object.entries(err.fields).map(([k, v]) => `${k}: ${v}`).join(', ') : ''
-        this.error = err.message + fields
+        this.fieldErrors = err.fields ?? {}
+        this.error = err.fields ? 'Some fields need a look — they are marked above.' : err.message
+        if (err.fields) this.$refs.fields?.revealErrors()
       } finally {
         this.busy = false
       }

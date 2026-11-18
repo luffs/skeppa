@@ -9,6 +9,7 @@
           placeholder="myapp"
           @input="$emit('update:subdomain', $event.target.value)"
         />
+        <FieldError :errors="errors" name="subdomain" />
       </div>
       <div v-if="!staticSite" style="flex: 1 1 120px">
         <label>App port <span class="soft">(blank = auto)</span></label>
@@ -18,6 +19,7 @@
           placeholder="auto"
           @input="$emit('update:port', $event.target.value)"
         />
+        <FieldError :errors="errors" name="port" />
       </div>
     </div>
 
@@ -50,6 +52,7 @@
 </template>
 
 <script>
+import FieldError from './FieldError.vue'
 import { store } from '../store.js'
 
 // Subdomain + port with the harbor gate preview. Shared by the new-project
@@ -57,7 +60,10 @@ import { store } from '../store.js'
 // preview needs no request of its own.
 export default {
   name: 'RoutingFields',
+  components: { FieldError },
   props: {
+    // The server's field errors, each shown under its field (FieldError).
+    errors: { type: Object, default: () => ({}) },
     subdomain: { type: String, default: '' },
     // The owner's namespace: tenant projects route as subdomain.handle.base —
     // or subdomain.<domain> (and the domain itself for '@') when the tenant

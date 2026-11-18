@@ -1,4 +1,6 @@
 import { Hono } from 'hono'
+import { REPO_RE, isValidBranch } from '../lib/validate.js'
+import { suggestSetup } from '../lib/suggest.js'
 import { sendNotification, notifyUrl } from '../lib/notify.js'
 import { randomBytes } from 'node:crypto'
 import {
@@ -26,7 +28,30 @@ export function githubRoutes({ db, config, github }) {
     const user = c.get('user')
     if (user && user.role !== 'admin' && !user.github_login) return c.json([])
     try {
-      return c.json(await github.listRepos(user && user.role !== 'admin' ? user.github_login : null))
+      // ?fresh=1 is the picker's Refresh: past the cache, straight to GitHub.
+      const fresh = c.req.query('fresh') === '1'
+      return c.json(await github.listRepos(user && user.role !== 'admin' ? user.github_login : null, { fresh }))
+    } catch (err) {
+      return c.json({ error: err.message }, 502)
+    }
+  })
+
+  // What the repository's root suggests for its deploy script, start
+  // command and runtime (lib/suggest.js). A tenant asks only about repos of
+  // their own installation — anything else is a 404, as everywhere.
+  app.get('/repos/suggest', async c => {
+    const repo = c.req.query('repo') ?? ''
+    const branch = c.req.query('branch') || 'main'
+    if (!REPO_RE.test(repo) || !isValidBranch(branch)) return c.json({ error: 'validation failed' }, 400)
+    const user = c.get('user')
+    try {
+      if (user && user.role !== 'admin') {
+        const inst = await github.getRepoInstallation(repo).catch(() => null)
+        if (!inst || !user.github_login || inst.account.toLowerCase() !== user.github_login.toLowerCase()) {
+          return c.json({ error: 'not found' }, 404)
+        }
+      }
+      return c.json(suggestSetup(await github.readRepoRoot(repo, branch)))
     } catch (err) {
       return c.json({ error: err.message }, 502)
     }

@@ -29,6 +29,8 @@ export class GitHubApp {
     this._tokens = new Map() // installationId -> { token, expiresAt (ms) }
     this._repoInstallations = new Map() // repo_full_name -> installationId
     this._installationId = null // first installation - the no-repo fallback
+    this._repos = new Map() // installationId -> { repos, at (ms), pending? } — listRepos' cache
+    this._installations = null // { list, at } — the installation list, briefly cached
   }
 
   credentials() {
@@ -49,6 +51,8 @@ export class GitHubApp {
     this._tokens.clear()
     this._repoInstallations.clear()
     this._installationId = null
+    this._repos.clear()
+    this._installations = null
   }
 
   // Exchange a one-time code from GitHub's app-manifest creation flow for the
@@ -208,12 +212,40 @@ export class GitHubApp {
     }
   }
 
+  // A repository's root: its file names, and package.json if there is one —
+  // what the mooring form's suggestions are read from (lib/suggest.js).
+  async readRepoRoot(repoFullName, branch) {
+    const token = await this.getInstallationToken(repoFullName)
+    const ref = encodeURIComponent(branch)
+    const root = await this._fetch(`/repos/${repoFullName}/contents?ref=${ref}`, { token })
+    const files = Array.isArray(root) ? root.filter(e => e.type === 'file').map(e => e.name) : []
+    let packageJson = null
+    if (files.includes('package.json')) {
+      const file = await this._fetch(`/repos/${repoFullName}/contents/package.json?ref=${ref}`, { token })
+      try {
+        packageJson = JSON.parse(Buffer.from(file?.content ?? '', file?.encoding === 'base64' ? 'base64' : 'utf8').toString('utf8'))
+      } catch {
+        packageJson = null // not JSON: no suggestions from it
+      }
+    }
+    return { files, packageJson }
+  }
+
   // Every repo across every installation — the panel owner sees a friend-
   // installed repo in the picker exactly like their own.
   // accountLogin scopes the listing to installations owned by that GitHub
   // account — how a tenant sees their repos and nobody else's. null = all.
-  async listRepos(accountLogin = null) {
-    let installations = await this.listInstallations()
+  //
+  // Cached per installation, so the admin's listing and each tenant's share
+  // one copy: a listing younger than REPOS_FRESH_MS is answered as it is; an
+  // older one is still answered at once while a fresh one is fetched behind
+  // it (stale-while-revalidate), so the picker never waits on GitHub after
+  // the first time. Webhooks keep it honest in between (forgetRepos on an
+  // installation change, notePush on a push), `fresh` skips it (the
+  // picker's Refresh). A cold fetch asks for every installation, and every
+  // page after the first, at once rather than one after another.
+  async listRepos(accountLogin = null, { fresh = false } = {}) {
+    let installations = await this._installationsCached(fresh)
     if (!installations.length) {
       throw new Error('The GitHub App has no installations — install it on your account/org first')
     }
@@ -222,22 +254,104 @@ export class GitHubApp {
         i => i.account?.login?.toLowerCase() === accountLogin.toLowerCase()
       )
     }
-    const repos = []
-    for (const installation of installations) {
-      const token = await this._tokenForInstallation(installation.id)
-      const mine = []
-      for (let page = 1; page <= 10; page++) {
-        const data = await this._fetch(`/installation/repositories?per_page=100&page=${page}`, { token })
-        mine.push(...data.repositories)
-        if (mine.length >= data.total_count || data.repositories.length === 0) break
-      }
-      repos.push(...mine)
+    const lists = await Promise.all(installations.map(i => this._installationRepos(i, fresh)))
+    return lists.flat().map(r => ({ ...r }))
+  }
+
+  // An installation's listing changed (repos added or removed, installed,
+  // uninstalled): its cache goes, and the installation list with it. No id
+  // forgets everything.
+  forgetRepos(installationId = null) {
+    this._installations = null
+    if (installationId == null) this._repos.clear()
+    else this._repos.delete(Number(installationId))
+    for (const [repo, entry] of this._repoInstallations) {
+      if (installationId == null || entry.id === Number(installationId)) this._repoInstallations.delete(repo)
     }
-    return repos.map(r => ({
-      full_name: r.full_name,
-      private: r.private,
-      default_branch: r.default_branch,
-      pushed_at: r.pushed_at,
-    }))
+  }
+
+  // A push moved a repo's last push: the cached row follows, so sorting by
+  // last push stays right without refetching anything.
+  notePush(repoFullName, pushedAt) {
+    for (const entry of this._repos.values()) {
+      const row = entry.repos?.find(r => r.full_name === repoFullName)
+      if (row) row.pushed_at = pushedAt
+    }
+  }
+
+  async _installationsCached(fresh) {
+    const cached = this._installations
+    if (!fresh && cached && Date.now() - cached.at < INSTALLATIONS_FRESH_MS) return cached.list
+    const list = await this.listInstallations()
+    this._installations = { list, at: Date.now() }
+    return list
+  }
+
+  async _installationRepos(installation, fresh) {
+    const id = installation.id
+    const entry = this._repos.get(id)
+    if (!fresh && entry?.repos) {
+      if (Date.now() - entry.at >= REPOS_FRESH_MS && !entry.pending) {
+        // A failed refresh keeps the old listing and tries again next time.
+        const refresh = this._fetchInstallationRepos(installation)
+          .catch(err => {
+            console.error(`[github] refreshing the repos of installation ${id} failed: ${err.message}`)
+            return entry.repos
+          })
+          .finally(() => { if (entry.pending === refresh) delete entry.pending })
+        entry.pending = refresh
+      }
+      return entry.repos
+    }
+    // Nothing cached (or Refresh): wait for it — and share one fetch between
+    // callers asking at the same moment.
+    if (!fresh && entry?.pending) return entry.pending
+    const pending = this._fetchInstallationRepos(installation)
+    this._repos.set(id, { ...(entry ?? {}), pending })
+    try {
+      return await pending
+    } finally {
+      const now = this._repos.get(id)
+      if (now?.pending === pending) delete now.pending
+    }
+  }
+
+  async _fetchInstallationRepos(installation) {
+    const token = await this._tokenForInstallation(installation.id)
+    const page = n => this._fetch(`/installation/repositories?per_page=100&page=${n}`, { token })
+    const first = await page(1)
+    const pages = Math.min(10, Math.ceil((first.total_count ?? 0) / 100))
+    const rest = await Promise.all(Array.from({ length: Math.max(0, pages - 1) }, (_, i) => page(i + 2)))
+    const repos = [first, ...rest].flatMap(d => d.repositories ?? []).map(mapRepo)
+    // The listing says which installation covers each repo — what
+    // getRepoInstallation would otherwise ask GitHub about one by one.
+    const account = installation.account?.login ?? ''
+    for (const r of repos) this._repoInstallations.set(r.full_name, { id: installation.id, account })
+    this._repos.set(installation.id, { repos, at: Date.now() })
+    return repos
+  }
+}
+
+// How long a listing is answered without asking GitHub again. Older ones are
+// still answered at once, and refreshed behind the answer.
+export const REPOS_FRESH_MS = 10 * 60_000
+const INSTALLATIONS_FRESH_MS = 10 * 60_000
+
+// What the repo picker sorts, groups and describes by — all already in the
+// listing, so nothing costs a request of its own. '' rather than null for the
+// optional strings, so the client compares without guards.
+function mapRepo(r) {
+  return {
+    full_name: r.full_name,
+    owner: r.owner?.login ?? r.full_name.split('/')[0],
+    name: r.name ?? r.full_name.split('/')[1],
+    private: Boolean(r.private),
+    default_branch: r.default_branch,
+    pushed_at: r.pushed_at ?? '',
+    created_at: r.created_at ?? '',
+    description: r.description ?? '',
+    language: r.language ?? '',
+    archived: Boolean(r.archived),
+    fork: Boolean(r.fork),
   }
 }
