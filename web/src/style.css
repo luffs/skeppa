@@ -694,7 +694,10 @@ button.hm-key:disabled { opacity: 0.45; cursor: default; }
 .harbor-layout.as-map { flex-direction: column; align-items: stretch; flex-wrap: nowrap; }
 .harbor-layout.as-map .harbor-list { flex: none; }
 .harbor-layout.as-map .feed-panel { flex: none; position: static; max-height: none; }
-.harbor-layout.as-map .feed-scroll { max-height: 60vh; }
+/* In the page's own flow now, not beside it: at either end of the log the
+   wheel goes on to the page, or a pointer resting on the log would hold the
+   page still. */
+.harbor-layout.as-map .feed-scroll { max-height: 60vh; overscroll-behavior: auto; }
 /* Under the map the log has the map's width, and is ruled like a logbook:
    a line per entry and a column per particular, so it reads one way — down —
    and the width holds what the list squeezes into a second line. The columns
@@ -989,9 +992,10 @@ a.repo-link:hover { color: var(--accent); }
   .stat-grid { grid-template-columns: 1fr 1fr; }
   .stat-grid .stat-card:first-child { grid-column: 1 / -1; }
   .harbor-layout { flex-wrap: wrap; }
-  /* Under the list now: nothing to keep beside, so it stops at a screenful. */
+  /* Under the list now: nothing to keep beside, so it stops at a screenful —
+     and, in the page's flow, hands the scroll on to the page at its ends. */
   .feed-panel { position: static; max-height: none; }
-  .feed-scroll { max-height: 60vh; }
+  .feed-scroll { max-height: 60vh; overscroll-behavior: auto; }
 }
 /* The mid container is always narrower than three cards want, whatever the
    viewport — same 2+1 arrangement as the media query above. */
