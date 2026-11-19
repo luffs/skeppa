@@ -1,5 +1,5 @@
 <template>
-  <div class="pier-picker">
+  <div class="field pier-picker">
     <label>Pier <span class="soft">(optional — where it is listed in the harbor; changes nothing it runs)</span></label>
     <select v-if="!creating" v-model="selected">
       <option value="">No pier — at anchor</option>

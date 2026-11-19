@@ -1,5 +1,5 @@
 <template>
-  <div class="branch-select">
+  <div class="field branch-select">
     <label :for="id">Branch</label>
     <!-- the repository's branches, once they are read -->
     <div v-if="useList" class="row">

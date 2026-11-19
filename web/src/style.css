@@ -318,6 +318,10 @@ label .soft { font-weight: 400; text-transform: none; letter-spacing: 0; }
 /* Fields sitting side by side carry the top margin a stacked label would have
    given them: their labels are :first-child inside the columns, so zeroed. */
 .field-row { margin-top: 16px; }
+/* A component that begins with its own label (a picker in its wrapper) has
+   that label as :first-child too: the wrapper carries the margin instead. */
+.field { margin-top: 16px; }
+.field:first-child, .field-row:first-child { margin-top: 0; }
 
 .check-label {
   display: flex;
@@ -342,6 +346,8 @@ input, textarea, select {
   font-size: 14px;
   font-family: var(--sans);
 }
+/* on the baseline a textarea keeps the line's descender under it: a gap the next label does not expect */
+textarea { vertical-align: top; }
 textarea.code, input.code, select.code { font-family: var(--mono); font-size: 13px; }
 input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); }
 

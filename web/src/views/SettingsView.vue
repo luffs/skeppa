@@ -326,7 +326,7 @@
       <label>Base domain</label>
       <input v-model="gateForm.base_domain" class="code" placeholder="apps.example.com" />
 
-      <div class="row">
+      <div class="row field-row">
         <div style="flex: 1 1 140px">
           <label>Listen port</label>
           <input v-model="gateForm.http_port" class="code" placeholder="8100" />
