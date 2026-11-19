@@ -66,6 +66,7 @@
         :network-profile="form.network_profile" @update:network-profile="set('network_profile', $event)"
         :host-access="form.host_access" @update:host-access="set('host_access', $event)"
         :networks="form.networks" @update:networks="set('networks', $event)"
+        :mounts="form.mounts ?? ''" @update:mounts="set('mounts', $event)"
         :publish-dir="form.publish_dir" @update:publish-dir="set('publish_dir', $event)"
         :spa-fallback="form.spa_fallback" @update:spa-fallback="set('spa_fallback', $event)"
         :gate-files="form.gate_files" @update:gate-files="set('gate_files', $event)"
@@ -146,7 +147,7 @@ import RoutingFields from './RoutingFields.vue'
 
 // Which section shows which field's error — and opens for it.
 const SOURCE = ['repo_full_name', 'git_url', 'branch', 'name', 'slug', 'group_id']
-const RUNTIME = ['runtime', 'start_command', 'build_image', 'run_image', 'pm2_name', 'memory_mb', 'network_profile', 'networks', 'host_access', 'publish_dir']
+const RUNTIME = ['runtime', 'start_command', 'build_image', 'run_image', 'pm2_name', 'memory_mb', 'network_profile', 'networks', 'host_access', 'mounts', 'publish_dir']
 const BUILD = ['deploy_script', 'cwd']
 const ROUTING = ['subdomain', 'port']
 const KNOWN = new Set([...SOURCE, ...RUNTIME, ...BUILD, ...ROUTING])

@@ -250,7 +250,7 @@ const PRIMARY_LABELS = ['Set sail — deploy', 'Deploy latest', 'Retry deploy', 
 // What the Rigging form edits — what "unsaved changes" counts.
 const FORM_FIELDS = [
   'name', 'group_id', 'git_url', 'repo_full_name', 'branch', 'auto_deploy', 'runtime', 'start_command',
-  'build_image', 'run_image', 'pm2_name', 'memory_mb', 'network_profile', 'host_access', 'networks',
+  'build_image', 'run_image', 'pm2_name', 'memory_mb', 'network_profile', 'host_access', 'networks', 'mounts',
   'publish_dir', 'spa_fallback', 'gate_files', 'deploy_script', 'cwd', 'build_env', 'write_env_file',
   'subdomain', 'port',
 ]
@@ -259,7 +259,7 @@ const DISCARD = 'You have unsaved changes in Rigging. Leave them behind?'
 // rest (name, pier, auto deploy, routing, the .env toggle) applies on save.
 const DEPLOY_FIELDS = [
   'git_url', 'repo_full_name', 'branch', 'runtime', 'start_command', 'build_image', 'run_image', 'pm2_name',
-  'memory_mb', 'network_profile', 'host_access', 'networks', 'publish_dir', 'gate_files', 'deploy_script', 'cwd',
+  'memory_mb', 'network_profile', 'host_access', 'networks', 'mounts', 'publish_dir', 'gate_files', 'deploy_script', 'cwd',
   'build_env', 'port',
 ]
 
@@ -632,6 +632,7 @@ export default {
         network_profile: p.network_profile ?? 'open',
         host_access: !!p.host_access,
         networks: p.networks ?? '',
+        mounts: p.mounts ?? '',
         publish_dir: p.publish_dir ?? 'dist',
         spa_fallback: !!p.spa_fallback,
         gate_files: !!p.gate_files,

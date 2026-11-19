@@ -1438,6 +1438,53 @@ test("Rigging offers only the owner's piers, and New pier… asks for a name", a
   expect(page.problems.join(' | ')).toBe('')
 })
 
+// Host mounts: an admin writes them where MOUNT_ROOTS allows any, is told
+// how to allow them where it does not; a tenant reads what they were given.
+test('Rigging lets an admin write host mounts, and shows a tenant the ones they have', async () => {
+  seedStore('admin')
+  store.live.system.mountRoots = ['/mnt/nas']
+  const admin = await expectCleanRender(ProjectView, {
+    props: { id: '1' },
+    steps: async wrapper => {
+      wrapper.vm.tab = 'settings'
+      await settle()
+      const box = wrapper.find('textarea[placeholder="/mnt/nas/media:/media:ro"]')
+      expect(box.exists()).toBe(true)
+      expect(wrapper.text()).toContain('Only from under /mnt/nas')
+      await box.setValue('/mnt/nas/media:/media:ro')
+      await settle()
+      expect(wrapper.vm.edit.mounts).toBe('/mnt/nas/media:/media:ro')
+      expect(wrapper.vm.deployFields).toContain('mounts')
+    },
+  })
+  expect(admin.problems.join(' | ')).toBe('')
+
+  store.live.system.mountRoots = []
+  const none = await expectCleanRender(ProjectView, {
+    props: { id: '1' },
+    steps: async wrapper => {
+      wrapper.vm.tab = 'settings'
+      await settle()
+      expect(wrapper.find('textarea[placeholder="/mnt/nas/media:/media:ro"]').exists()).toBe(false)
+      expect(wrapper.text()).toContain('MOUNT_ROOTS=/mnt/nas in the panel config')
+    },
+  })
+  expect(none.problems.join(' | ')).toBe('')
+
+  seedStore('tenant')
+  store.live.projects[2].info.mounts = '/mnt/nas/media:/media:ro'
+  const tenant = await expectCleanRender(ProjectView, {
+    props: { id: '2' },
+    steps: async wrapper => {
+      wrapper.vm.tab = 'settings'
+      await settle()
+      expect(wrapper.find('.mount-list').text()).toBe('/media — server directory /mnt/nas/media, read-only')
+      expect(wrapper.text()).not.toContain('MOUNT_ROOTS')
+    },
+  })
+  expect(tenant.problems.join(' | ')).toBe('')
+})
+
 // A static site has no process: the project page drops the process controls
 // and the log tab, and Rigging swaps start command and port for the publish
 // directory. A tenant picks between a container and a static site.

@@ -180,6 +180,8 @@ export function createPoller({ db, config, liveState, intervalMs = 5000, idleInt
         // '' when no engine is configured at all — the UI hides the whole
         // container section rather than reporting a missing socket as a fault.
         containerSocket: config.containerSocket ?? '',
+        // Where host mounts may come from (lib/mounts.js) — [] for nowhere.
+        mountRoots: config.mountRoots ?? [],
         containerError,
         containers,
       }

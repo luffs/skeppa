@@ -74,6 +74,38 @@
       Host access — reach services on the server's own 127.0.0.1
     </label>
     <FieldError :errors="errors" name="host_access" />
+
+    <!-- Server directories in the app's container: an admin's to set (the server enforces it). -->
+    <template v-if="!tenant && (mountRoots.length || mounts.trim())">
+      <label>Host mounts <span class="soft">(one per line — <span class="mono">host:container</span>, <span class="mono">:ro</span> after it for read-only)</span></label>
+      <textarea
+        :value="mounts"
+        class="code"
+        rows="2"
+        :placeholder="`${mountRoots[0] || '/mnt/nas'}/media:/media:ro`"
+        @input="$emit('update:mounts', $event.target.value)"
+      ></textarea>
+      <FieldError :errors="errors" name="mounts" />
+      <p class="hint">
+        Directories on the server — a network share mounted there, say — inside the app's container.
+        <template v-if="mountRoots.length">Only from under <span class="mono">{{ mountRoots.join(', ') }}</span>
+        (<span class="mono">MOUNT_ROOTS</span>), and never the panel's own directories.</template>
+        <template v-else>Nothing is mountable now: <span class="mono">MOUNT_ROOTS</span> is not set in the panel config.</template>
+        The deploy script never sees them, and the owner of a tenant's project cannot change them.<template v-if="existing">
+        Applies on the next deploy or restart.</template>
+      </p>
+    </template>
+    <p v-else-if="!tenant" class="hint">
+      To mount server directories (a network share) into containers, name where they may come from with
+      <span class="mono">MOUNT_ROOTS=/mnt/nas</span> in the panel config, and restart the panel.
+    </p>
+    <template v-else-if="mountList.length">
+      <label>Host mounts</label>
+      <ul class="mount-list">
+        <li v-for="m in mountList" :key="m.target"><span class="mono">{{ m.target }}</span> — server directory <span class="mono">{{ m.host }}</span>{{ m.readOnly ? ', read-only' : '' }}</li>
+      </ul>
+      <p class="hint">Given to this project by an admin; only an admin can change them.</p>
+    </template>
   </template>
 
   <template v-else-if="runtime === 'pm2'">
@@ -151,6 +183,7 @@
 <script>
 import ImagePicker from './ImagePicker.vue'
 import FieldError from './FieldError.vue'
+import { store } from '../store.js'
 
 const COMMON_PUBLISH_DIRS = ['dist', 'web/dist', 'client/dist']
 
@@ -171,6 +204,8 @@ export default {
     networkProfile: { type: String, default: 'open' },
     hostAccess: { type: Boolean, default: false },
     networks: { type: String, default: '' },
+    // Host directories in the container, as the server stores them (lib/mounts.js).
+    mounts: { type: String, default: '' },
     publishDir: { type: String, default: 'dist' },
     spaFallback: { type: Boolean, default: false },
     // An app (container or pm2) whose build output the gate serves.
@@ -185,8 +220,20 @@ export default {
     errors: { type: Object, default: () => ({}) },
   },
   emits: ['update:buildImage', 'update:runImage', 'update:pm2Name', 'update:memoryMb',
-    'update:networkProfile', 'update:hostAccess', 'update:networks', 'update:publishDir', 'update:spaFallback', 'update:gateFiles'],
+    'update:networkProfile', 'update:hostAccess', 'update:networks', 'update:publishDir', 'update:spaFallback', 'update:gateFiles', 'update:mounts'],
   computed: {
+    // Where the panel allows host mounts from (MOUNT_ROOTS) — admins see the panel store.
+    mountRoots() {
+      const roots = store.live?.system?.mountRoots
+      return Array.isArray(roots) ? roots : []
+    },
+    // The stored lines, for reading: { host, target, readOnly }.
+    mountList() {
+      return this.mounts.split(/\r?\n/).map(line => line.trim()).filter(Boolean).map(line => {
+        const [host = '', target = '', mode = ''] = line.split(':')
+        return { host, target, readOnly: mode === 'ro' }
+      })
+    },
     // Where builds usually put a site, as one-click values; the current one
     // is left out.
     otherDirs() {

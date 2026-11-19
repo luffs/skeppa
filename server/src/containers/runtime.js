@@ -4,12 +4,14 @@ import { createContainerClient } from './client.js'
 import { createContainerEnsuringImage } from './images.js'
 import { projectEngineNetworks, ensureProjectNetworks } from './networks.js'
 import { tailFile } from '../lib/tail.js'
+import { mountBinds } from '../lib/mounts.js'
 
 // App containers ("container" runtime): stateless and rebuilt on every deploy.
 // The git working copy is mounted read-only at /app, the durable shared/ dir
 // writable at /data, the routed port is published on localhost only, and the
 // env travels in the create request body — the container inherits nothing
-// from the host. Crash restarts are the engine's job (on-failure, capped like
+// from the host. Host directories an admin mounted in (projects.mounts, a
+// network share say) come after those, checked on their real paths first. Crash restarts are the engine's job (on-failure, capped like
 // pm2's max_restarts); starting at boot stays panel-driven (deploy/resurrect
 // honoring auto_start), so "stopped stays stopped" works the same as for pm2.
 
@@ -37,7 +39,8 @@ export const START_SHELL = 'trap "trap \'\' TERM INT; kill -TERM 0" TERM INT; ' 
   '(trap : TERM; eval "$1") & app=$!; ' +
   'wait $app; code=$?; while kill -0 $app 2>/dev/null; do wait $app; code=$?; done; exit $code'
 
-export function appContainerSpec(config, project, dirs, env) {
+// `mounts` are the engine Binds of the project's own mounts (mountBinds).
+export function appContainerSpec(config, project, dirs, env, mounts = []) {
   // Naming any network replaces the engine-default (slirp) mode, so the
   // profile decides egress: restricted lists only Internal convoys (no
   // route out), open-with-convoys adds the default bridge for internet,
@@ -55,7 +58,7 @@ export function appContainerSpec(config, project, dirs, env) {
       ? { NetworkingConfig: { EndpointsConfig: Object.fromEntries(nets.map(n => [n, {}])) } }
       : {}),
     HostConfig: {
-      Binds: [`${dirs.source}:/app:ro`, `${dirs.shared}:/data`],
+      Binds: [`${dirs.source}:/app:ro`, `${dirs.shared}:/data`, ...mounts],
       ...(nets.length
         ? { NetworkMode: nets[0] }
         : project.host_access
@@ -88,7 +91,10 @@ export function appContainerSpec(config, project, dirs, env) {
 export async function recreateAppContainer({ config, project, dirs, env, onLine = () => {}, client = null, db = null }) {
   const engine = client ?? createContainerClient({ socketPath: config.containerSocket })
   const name = appContainerName(project.slug)
-  const spec = appContainerSpec(config, project, dirs, env)
+  // Before anything is stopped: a mount that cannot be made refuses the
+  // create, and whatever runs now keeps running.
+  const mounts = mountBinds(config, project)
+  const spec = appContainerSpec(config, project, dirs, env, mounts)
   mkdirSync(dirs.shared, { recursive: true })
 
   // Convoy networks the spec names must exist before the create call.

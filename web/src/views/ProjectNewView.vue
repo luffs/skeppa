@@ -123,6 +123,7 @@ export default {
         network_profile: 'open',
         host_access: false,
         networks: '',
+        mounts: '',
         publish_dir: 'dist',
         spa_fallback: false,
         gate_files: false,

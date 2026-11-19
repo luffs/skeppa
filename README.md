@@ -206,6 +206,31 @@ One trade-off to know: the engine stores a created container's spec — ENV incl
 `~/.local/share/containers` (panel-user-only permissions). Exclude that directory from backups,
 like the master key.
 
+### Host mounts (a network share in a container)
+
+An admin can mount server directories into a container app under **Rigging → Runtime → Host
+mounts**, one per line in `podman run -v` shape: `/mnt/nas/media:/media:ro`. Nothing is
+mountable until the panel config names where mounts may come from:
+
+```
+MOUNT_ROOTS=/mnt/nas            # colon- or comma-separated; / is never accepted
+```
+
+Mount the share on the host first (fstab or a systemd mount, with `x-systemd.automount` so it
+is there when the panel recreates containers after a reboot). Rootless podman maps the
+container's root to the panel user, so give that user the files: `uid=`/`gid=` for CIFS, a
+matching uid (or `all_squash,anonuid=`) on the NFS server. Rootless podman cannot mount NFS or
+CIFS volumes itself, which is why the share is mounted on the host and bound in.
+
+Mounts are checked when saved and again, on the real paths with symlinks resolved, each time
+the container is created; one that is missing or out of bounds refuses the create and leaves
+the running container alone. Never mountable, whatever the roots: the panel's data, the apps
+directory, the panel checkout and its config/master-key directory. Container paths `/`,
+`/app`, `/data` itself, `/proc`, `/sys` and `/dev` are refused. Only admins set mounts — a
+tenant's project keeps the ones an admin gave it, read-only in their view, and a Crew move
+to a tenant is refused while a project has any. The deploy script's build sandbox never gets
+them. Applies on the next deploy or restart.
+
 ### Network profiles
 
 A container project is **open** (internet and LAN, as before) or **restricted**: no internet,

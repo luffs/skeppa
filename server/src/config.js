@@ -2,6 +2,7 @@ import { join, resolve, dirname } from 'node:path'
 import { readFileSync, statSync, existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
+import { parseMountRoots } from './lib/mounts.js'
 
 const HEX_KEY_RE = /^[0-9a-fA-F]{64}$/
 
@@ -133,6 +134,12 @@ export function loadConfig({ requireMasterKey = true } = {}) {
     process.exit(1)
   }
 
+  const dataDir = resolve(env.DATA_DIR || join(rootDir, 'data'))
+  // Under HOME so a non-root panel user can create it without sudo.
+  const appsDir = resolve(env.APPS_DIR || join(homedir(), 'apps'))
+  const mounts = parseMountRoots(env.MOUNT_ROOTS)
+  for (const bad of mounts.ignored) console.warn(`warning: MOUNT_ROOTS entry "${bad}" ignored — an absolute path other than /`)
+
   return {
     port: Number(env.PORT || 3000),
     // Loopback by default: the panel is meant to sit behind the admin's
@@ -143,9 +150,16 @@ export function loadConfig({ requireMasterKey = true } = {}) {
     host: env.HOST || '127.0.0.1',
     isProd: env.NODE_ENV === 'production',
     masterKey,
-    dataDir: resolve(env.DATA_DIR || join(rootDir, 'data')),
-    // Under HOME so a non-root panel user can create it without sudo.
-    appsDir: resolve(env.APPS_DIR || join(homedir(), 'apps')),
+    dataDir,
+    appsDir,
+    // Where container apps may have host directories mounted (lib/mounts.js):
+    // nothing until the admin names a root, e.g. MOUNT_ROOTS=/mnt/nas.
+    mountRoots: mounts.roots,
+    // What no mount may be at, around or under, whatever the roots say.
+    mountGuarded: [...new Set([
+      dataDir, appsDir, rootDir, dirname(configPath),
+      ...(env.MASTER_KEY_FILE ? [dirname(resolve(env.MASTER_KEY_FILE))] : []),
+    ])],
     webDist: join(rootDir, 'web', 'dist'),
     deployTimeoutMs: Number(env.DEPLOY_TIMEOUT_MS || 10 * 60 * 1000),
     sandbox,

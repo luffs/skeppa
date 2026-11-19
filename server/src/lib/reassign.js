@@ -46,6 +46,9 @@ export async function planReassign({ db, github = null }, from, to) {
         refuse('runs as a pm2 process — a tenant gets containers and static sites only; switch it to a container first')
       }
       if (p.host_access) refuse('has host access, which is admin-only')
+      // A mount is a way onto the host an admin gave one project's owner;
+      // it is not passed on to another tenant by a move.
+      if (p.mounts) refuse('has host mounts — remove them first, and give them again after the move if they should stay')
       if (p.repo_full_name && !p.git_url) {
         if (!to.github_login) {
           refuse(`is a GitHub repo, and ${to.username} has no linked GitHub account`)
