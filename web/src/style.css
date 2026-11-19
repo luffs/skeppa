@@ -355,7 +355,20 @@ input, textarea, select {
 /* on the baseline a textarea keeps the line's descender under it: a gap the next label does not expect */
 textarea { vertical-align: top; }
 .narrow-input { max-width: 220px; }
-.mount-list { margin: 4px 0 0; padding-left: 18px; font-size: 13px; }
+/* Storage: a row per path in the container — the path, what it is, where it is on the server. */
+.container-paths { margin: 8px 0 0; font-size: 13px; color: var(--dim); }
+.container-paths > div {
+  display: grid; grid-template-columns: 4.5rem minmax(0, 1fr) minmax(0, 17rem); gap: 2px 12px; align-items: baseline;
+  padding: 5px 0; border-top: 1px solid var(--line-soft);
+}
+.container-paths > div:first-child { border-top: 0; }
+.container-paths dt { color: var(--ink); overflow-wrap: anywhere; }
+.container-paths dd { margin: 0; min-width: 0; }
+.container-path-host { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 560px) {
+  .container-paths > div { grid-template-columns: 4.5rem minmax(0, 1fr); }
+  .container-path-host { grid-column: 2; }
+}
 textarea.code, input.code, select.code { font-family: var(--mono); font-size: 13px; }
 input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); }
 

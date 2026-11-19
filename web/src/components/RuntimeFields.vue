@@ -92,14 +92,20 @@
 
     <section class="section-part">
       <h3 class="section-part-title">Storage</h3>
-      <p class="hint">
-        <span class="mono">/app</span> the source, read-only · <span class="mono">/data</span> the project's
-        <span class="mono">shared/</span>, kept between deploys
-      </p>
+      <!-- What the container sees, a row per path: what it is, and — for an
+           admin, who can go and look — where it is on the server. -->
+      <dl class="container-paths">
+        <div v-for="p in containerPaths" :key="p.path">
+          <dt class="mono">{{ p.path }}</dt>
+          <dd>{{ p.what }}<template v-if="p.env">, holds <span class="mono">.env</span></template></dd>
+          <dd v-if="p.host" class="mono container-path-host" :title="p.title || p.host">{{ p.host }}</dd>
+        </div>
+      </dl>
       <!-- Server directories in the container: an admin's to set (the server enforces it). -->
       <template v-if="!tenant">
-        <label>Host mounts <span class="soft">(one per line — <span class="mono">host:container</span>, <span class="mono">:ro</span> for read-only)</span></label>
-        <template v-if="mountRoots.length || mounts.trim()">
+        <!-- the format only where there is a field to write it in -->
+        <label>Host mounts<span v-if="mountable" class="soft"> (one per line — <span class="mono">host:container</span>, <span class="mono">:ro</span> for read-only)</span></label>
+        <template v-if="mountable">
           <textarea
             :value="mounts"
             class="code"
@@ -118,13 +124,7 @@
           Off — set <span class="mono">MOUNT_ROOTS=/mnt/nas</span> in the panel config, and restart the panel, to allow server directories.
         </p>
       </template>
-      <template v-else-if="mountList.length">
-        <label>Host mounts</label>
-        <ul class="mount-list">
-          <li v-for="m in mountList" :key="m.target"><span class="mono">{{ m.target }}</span> — server directory <span class="mono">{{ m.host }}</span>{{ m.readOnly ? ', read-only' : '' }}</li>
-        </ul>
-        <p class="hint">Given to this project by an admin; only an admin can change them.</p>
-      </template>
+      <p v-else-if="mountList.length" class="hint">The server directories were given to this project by an admin; only an admin can change them.</p>
     </section>
   </template>
 </template>
@@ -169,8 +169,10 @@ export default {
     tenant: { type: Boolean, default: false },
     // Wording differs slightly for a project that already exists.
     existing: { type: Boolean, default: false },
-    // Its slug, once it has one: names its container (skeppa-app-<slug>).
+    // Its slug, once it has one: names its container (skeppa-app-<slug>) and its directories.
     slug: { type: String, default: '' },
+    // A plaintext .env is written into shared/ — so into /data.
+    writeEnvFile: { type: Boolean, default: false },
     // The server's field errors, each shown under its field (FieldError).
     errors: { type: Object, default: () => ({}) },
   },
@@ -183,12 +185,40 @@ export default {
       const roots = store.live?.system?.mountRoots
       return Array.isArray(roots) ? roots : []
     },
-    // The stored lines, for reading: { host, target, readOnly }.
+    // A field to write mounts in: the panel allows some, or the project has some to edit.
+    mountable() {
+      return this.mountRoots.length > 0 || this.mounts.trim() !== ''
+    },
+    // The lines that read as mounts: { host, target, readOnly } — what is
+    // being typed shows as it becomes one.
     mountList() {
       return this.mounts.split(/\r?\n/).map(line => line.trim()).filter(Boolean).map(line => {
         const [host = '', target = '', mode = ''] = line.split(':')
         return { host, target, readOnly: mode === 'ro' }
-      })
+      }).filter(m => m.host.startsWith('/') && m.target.startsWith('/') && m.target !== '/')
+    },
+    // Every path in the container: { path, what, host?, env? }. The server
+    // side only for an admin (the panel store's appsDir) — a tenant can do
+    // nothing with it — and the project's directory once it has a slug.
+    containerPaths() {
+      const appsDir = this.tenant ? '' : (store.live?.system?.appsDir ?? '').replace(/[\\/]+$/, '')
+      // Shown from the apps directory's own name down (apps/api/source) — the
+      // part that says which project; the whole path is the tooltip.
+      const own = sub => {
+        if (!appsDir) return {}
+        const tail = `${this.slug || '<slug>'}/${sub}`
+        const name = appsDir.split(/[\\/]/).pop()
+        return { host: name ? `${name}/${tail}` : tail, title: `${appsDir}/${tail}` }
+      }
+      return [
+        { path: '/app', what: 'the source, read-only — replaced on every deploy', ...own('source') },
+        { path: '/data', what: 'writable, kept between deploys', ...own('shared'), env: this.writeEnvFile },
+        ...this.mountList.map(m => ({
+          path: m.target,
+          what: `server directory${m.readOnly ? ', read-only' : ''}`,
+          host: m.host,
+        })),
+      ]
     },
   },
 }

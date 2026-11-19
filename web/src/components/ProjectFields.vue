@@ -55,6 +55,7 @@
         :publish-dir="form.publish_dir" @update:publish-dir="set('publish_dir', $event)"
         :spa-fallback="form.spa_fallback" @update:spa-fallback="set('spa_fallback', $event)"
         :slug="existing ? (form.slug ?? '') : ''"
+        :write-env-file="!!form.write_env_file"
         :tenant="tenant"
         :existing="existing"
         :errors="shown"

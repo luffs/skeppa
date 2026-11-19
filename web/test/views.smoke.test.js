@@ -1488,6 +1488,7 @@ test("Rigging offers only the owner's piers, and New pier… asks for a name", a
 // Host mounts: an admin writes them where MOUNT_ROOTS allows any, is told
 // how to allow them where it does not; a tenant reads what they were given.
 test('Rigging lets an admin write host mounts, and shows a tenant the ones they have', async () => {
+  const paths = wrapper => wrapper.findAll('.container-paths > div').map(row => row.findAll('dt, dd').map(c => c.text().replace(/\s+/g, ' ')))
   seedStore('admin')
   store.live.system.mountRoots = ['/mnt/nas']
   const admin = await expectCleanRender(ProjectView, {
@@ -1502,6 +1503,17 @@ test('Rigging lets an admin write host mounts, and shows a tenant the ones they 
       await settle()
       expect(wrapper.vm.edit.mounts).toBe('/mnt/nas/media:/media:ro')
       expect(wrapper.vm.deployFields).toContain('mounts')
+      // a row per path in the container, with where it is on the server
+      expect(paths(wrapper)).toEqual([
+        ['/app', 'the source, read-only — replaced on every deploy', 'apps/adm/source'],
+        ['/data', 'writable, kept between deploys', 'apps/adm/shared'],
+        ['/media', 'server directory, read-only', '/mnt/nas/media'],
+      ])
+      // from the apps directory's name down; the whole path on hover
+      expect(wrapper.find('.container-path-host').attributes('title')).toBe('/home/skeppa/apps/adm/source')
+      wrapper.vm.edit.write_env_file = true
+      await settle()
+      expect(paths(wrapper)[1][1]).toBe('writable, kept between deploys, holds .env')
     },
   })
   expect(admin.problems.join(' | ')).toBe('')
@@ -1514,6 +1526,8 @@ test('Rigging lets an admin write host mounts, and shows a tenant the ones they 
       await settle()
       expect(wrapper.find('textarea[placeholder="/mnt/nas/media:/media:ro"]').exists()).toBe(false)
       expect(wrapper.text()).toContain('MOUNT_ROOTS=/mnt/nas in the panel config')
+      // headed like the field it stands in for, without the format of a field that is not there
+      expect(wrapper.findAll('label').map(l => l.text())).toContain('Host mounts')
     },
   })
   expect(none.problems.join(' | ')).toBe('')
@@ -1525,7 +1539,13 @@ test('Rigging lets an admin write host mounts, and shows a tenant the ones they 
     steps: async wrapper => {
       wrapper.vm.tab = 'settings'
       await settle()
-      expect(wrapper.find('.mount-list').text()).toBe('/media — server directory /mnt/nas/media, read-only')
+      // no server paths of the panel's own for a tenant; the mount says where it comes from
+      expect(paths(wrapper)).toEqual([
+        ['/app', 'the source, read-only — replaced on every deploy'],
+        ['/data', 'writable, kept between deploys'],
+        ['/media', 'server directory, read-only', '/mnt/nas/media'],
+      ])
+      expect(wrapper.text()).toContain('given to this project by an admin')
       expect(wrapper.text()).not.toContain('MOUNT_ROOTS')
     },
   })
