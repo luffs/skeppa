@@ -11,6 +11,7 @@ import { createContainerClient } from '../containers/client.js'
 import { appContainerName, appLogResponse, previousLogResponse } from '../containers/runtime.js'
 import { applyProjectAction } from '../deploy/control.js'
 import { DeployError } from '../deploy/runner.js'
+import { SlugError } from '../deploy/rename.js'
 import { tailFile } from '../lib/tail.js'
 import { readSourcePath, openSourceDownload, SourceFileError } from '../lib/sourcefiles.js'
 import { proxySettings } from '../proxy/index.js'
@@ -481,28 +482,6 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
     }
   })
 
-  // A short-lived installation token wrapped in a ready-to-paste clone
-  // command, for manually pulling the repo on another machine. The token is
-  // returned to the (session-authenticated) user on purpose — it is never
-  // logged or persisted here.
-  app.post('/:id/clone-command', async c => {
-    const project = getProjectFor(c)
-    if (!project) return c.json({ error: 'not found' }, 404)
-    // A plain-git project needs no token — the URL is the command.
-    if (project.git_url) {
-      return c.json({ command: `git clone --branch ${project.branch} ${project.git_url}`, expiresAt: null })
-    }
-    try {
-      const { token, expiresAt } = await github.getInstallationTokenInfo(project.repo_full_name)
-      const command =
-        `git clone --branch ${project.branch} ` +
-        `https://x-access-token:${token}@github.com/${project.repo_full_name}.git`
-      return c.json({ command, expiresAt })
-    } catch (err) {
-      return c.json({ error: err.message }, 502)
-    }
-  })
-
   app.get('/:id/deployments', c => {
     const project = getProjectFor(c)
     if (!project) return c.json({ error: 'not found' }, 404)
@@ -526,6 +505,30 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
     } catch (err) {
       return c.json({ error: err.message }, err instanceof DeployError ? 409 : 500)
     }
+  })
+
+  // A new slug: the berth APPS_DIR/<slug> and the container move with it, so
+  // the app is taken down and brought back (runner.renameSlug). 409 while a
+  // deploy is under way; a refusal is a field error under `slug`. A rename
+  // that stood but could not start the app again answers 200 with `warning`.
+  app.post('/:id/slug', async c => {
+    const project = getProjectFor(c)
+    if (!project) return c.json({ error: 'not found' }, 404)
+    const body = await c.req.json().catch(() => ({}))
+    let result
+    try {
+      result = await runner.renameSlug(project.id, body.slug, { engine })
+    } catch (err) {
+      if (err instanceof SlugError) return c.json({ error: 'validation failed', fields: { slug: err.message } }, 400)
+      return c.json({ error: err.message }, err instanceof DeployError ? 409 : 500)
+    }
+    if (result.slug !== project.slug) {
+      // The gate's file routes are rooted in the berth; images list their users by slug.
+      await applyProxy()
+      syncManagedImages(db, liveState)
+      poller?.tick()
+    }
+    return c.json({ ...getProject(project.id), warning: result.warning })
   })
 
   // --- pm2 controls ---------------------------------------------------------

@@ -1272,9 +1272,45 @@ describe('the project page', () => {
       props: { id: '1' },
       route: { query: { tab: 'settings' } },
       steps: async wrapper => {
-        expect(wrapper.findAll('.collapse-title').map(t => t.text())).toEqual(['Source', 'Runtime', 'Build', 'Routing', 'Clone manually', 'Scuttle'])
+        expect(wrapper.findAll('.collapse-title').map(t => t.text())).toEqual(['Source', 'Runtime', 'Build', 'Routing', 'Advanced'])
+        expect(wrapper.findAll('.section-part-title').map(t => t.text())).toEqual(['Slug', 'Scuttle'])
       },
     })
+    expect(page.problems.join(' | ')).toBe('')
+  })
+
+  // A new slug moves the directory after a confirm; the server's refusal shows
+  // under the field. The panel's own project has no Slug part at all.
+  test('Slug changes the slug, says why not, and is not offered for the panel itself', async () => {
+    seedStore('admin')
+    const post = vi.spyOn(api, 'post')
+      .mockRejectedValueOnce(Object.assign(new Error('validation failed'), { fields: { slug: 'slug already used by another project' } }))
+      .mockResolvedValueOnce({ slug: 'blog', warning: '' })
+    const page = await expectCleanRender(ProjectView, {
+      props: { id: '1' },
+      route: { query: { tab: 'settings' } },
+      steps: async wrapper => {
+        const move = () => wrapper.findAll('button').find(b => /Change slug/.test(visibleText(b)))
+        expect(move().attributes('disabled')).toBeDefined() // nothing typed yet
+        wrapper.vm.slugInput = 'blog'
+        await settle()
+        for (const answer of ['refused', 'moved']) {
+          await move().trigger('click')
+          await settle()
+          expect(dialogState.message).toContain('to blog?')
+          settleDialog(true)
+          await settle()
+          if (answer === 'refused') expect(wrapper.find('.error').text()).toBe('slug already used by another project')
+        }
+        expect(post).toHaveBeenCalledWith('/api/projects/1/slug', { slug: 'blog' })
+        expect(wrapper.text()).toContain('Moved to blog.')
+
+        Object.assign(store.live.projects[1].info, { runtime: 'pm2', pm2_name: 'skeppa' })
+        await settle()
+        expect(wrapper.findAll('.section-part-title').map(t => t.text())).toEqual(['Scuttle'])
+      },
+    })
+    post.mockRestore()
     expect(page.problems.join(' | ')).toBe('')
   })
 
@@ -1690,6 +1726,25 @@ test('the new-project form offers its suggestions as one-click values', async ()
       await offers()[0].trigger('click')
       expect(wrapper.vm.form.publish_dir).toBe('web/dist')
       expect(offers().map(b => b.text().replace(/\s+/g, ' ')).slice(0, 2)).toEqual(['Use dist', 'Use client/dist'])
+    },
+  })
+  expect(problems.join(' | ')).toBe('')
+})
+
+// An admin's own account is the last section of Rigging — the password only,
+// the username in its head — and /account is a tenant's page.
+test("Rigging ends with the admin's own account", async () => {
+  seedStore('admin')
+  const { problems } = await expectCleanRender(SettingsView, {
+    steps: async wrapper => {
+      const titles = wrapper.findAll('.collapse-title').map(t => t.text())
+      expect(titles.at(-1)).toBe('Your account')
+      const section = wrapper.findAll('.collapse-section').at(-1)
+      expect(section.find('.collapse-meta').text()).toBe(store.user.username)
+      await section.find('.collapse-head').trigger('click')
+      await settle()
+      expect(section.findAll('.section-part-title').map(t => t.text())).toEqual(['Change password'])
+      expect(section.text()).not.toContain('Role')
     },
   })
   expect(problems.join(' | ')).toBe('')

@@ -25,13 +25,16 @@ export const router = createRouter({
   ],
 })
 
+// An admin's account lives under Rigging; an old /account link still lands.
+const accountHome = to => (to.path === '/account' && store.user?.role !== 'tenant' ? '/settings' : true)
+
 router.beforeEach(async to => {
   if (to.path === '/login') return true
-  if (store.user) return true
+  if (store.user) return accountHome(to)
   try {
     store.user = await api.get('/api/auth/me')
     connectLive()
-    return true
+    return accountHome(to)
   } catch {
     return '/login'
   }

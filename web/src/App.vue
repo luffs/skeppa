@@ -1,6 +1,6 @@
 <template>
   <div style="min-height: 100vh; display: flex; flex-direction: column">
-    <nav v-if="store.user" class="masthead">
+    <nav v-if="store.user" class="masthead" :class="{ 'full-nav': store.user?.role !== 'tenant' }">
       <router-link to="/" class="brand">
         <span class="sail">⛵</span>
         <span class="name">Skeppa</span>
@@ -9,22 +9,26 @@
         <router-link to="/" class="nav-link" :class="{ active: harborActive }">Harbor</router-link>
         <template v-if="store.user?.role !== 'tenant'">
           <router-link to="/system" class="nav-link" :class="{ active: $route.path === '/system' }">Engine room</router-link>
-          <router-link to="/settings" class="nav-link" :class="{ active: $route.path === '/settings' }">Rigging</router-link>
           <router-link to="/shipyard" class="nav-link" :class="{ active: $route.path === '/shipyard' }">Shipyard</router-link>
+          <router-link to="/settings" class="nav-link" :class="{ active: $route.path === '/settings' }">Rigging</router-link>
         </template>
-        <router-link to="/account" class="nav-link" :class="{ active: $route.path === '/account' }">Account</router-link>
+        <!-- An admin's account is a section of Rigging. -->
+        <router-link v-else to="/account" class="nav-link" :class="{ active: $route.path === '/account' }">Account</router-link>
       </div>
       <span class="spacer"></span>
-      <span class="conn" :title="`${store.connected ? 'live' : 'disconnected'} · ${store.user.username}`">
-        <span class="conn-dot" :class="{ on: store.connected }"></span>
-        <span class="conn-text">{{ store.connected ? 'live' : 'offline' }} · {{ store.user.username }}</span>
-      </span>
-      <button
-        class="secondary small"
-        :title="theme === 'dark' ? 'Switch to day watch' : 'Switch to night watch'"
-        @click="flipTheme"
-      >{{ theme === 'dark' ? '☀' : '☾' }}</button>
-      <button class="secondary small" @click="logout">Log out</button>
+      <!-- One group: when the masthead wraps, the session moves as a whole. -->
+      <div class="session">
+        <span class="conn" :title="`${store.connected ? 'live' : 'disconnected'} · ${store.user.username}`">
+          <span class="conn-dot" :class="{ on: store.connected }"></span>
+          <span class="conn-text">{{ store.connected ? 'live' : 'offline' }} · {{ store.user.username }}</span>
+        </span>
+        <button
+          class="secondary small"
+          :title="theme === 'dark' ? 'Switch to day watch' : 'Switch to night watch'"
+          @click="flipTheme"
+        >{{ theme === 'dark' ? '☀' : '☾' }}</button>
+        <button class="secondary small" @click="logout">Log out</button>
+      </div>
     </nav>
     <router-view />
     <AppDialog />

@@ -426,6 +426,12 @@
         </button>
       </div>
     </CollapseSection>
+
+    <!-- An admin's own account: a tenant has an Account page for it instead. -->
+    <CollapseSection title="Your account">
+      <template #meta><span class="mono">{{ me?.username }}</span></template>
+      <AccountFields :identity="false" />
+    </CollapseSection>
   </div>
 </template>
 
@@ -435,10 +441,11 @@ import { confirmDialog } from '../lib/dialog.js'
 import { store } from '../store.js'
 import { timeAgo } from '../lib/format.js'
 import CollapseSection from '../components/CollapseSection.vue'
+import AccountFields from '../components/AccountFields.vue'
 
 export default {
   name: 'SettingsView',
-  components: { CollapseSection },
+  components: { CollapseSection, AccountFields },
   data() {
     return {
       status: { github_app_id: null, has_private_key: false, has_webhook_secret: false },
@@ -482,6 +489,9 @@ export default {
     }
   },
   computed: {
+    me() {
+      return store.user
+    },
     webhookUrl() {
       return `${location.origin}/api/webhooks/github`
     },

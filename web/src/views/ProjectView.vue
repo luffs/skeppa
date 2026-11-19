@@ -73,8 +73,8 @@
     <div class="tabs">
       <button :class="{ active: tab === 'deploys' }" @click="setTab('deploys')">Voyages</button>
       <button v-if="!isStatic" :class="{ active: tab === 'logs' }" @click="setTab('logs')">Logbook</button>
-      <button :class="{ active: tab === 'env' }" @click="setTab('env')">Manifest (env)</button>
-      <button :class="{ active: tab === 'files' }" @click="setTab('files')">Freight (files)</button>
+      <button :class="{ active: tab === 'env' }" @click="setTab('env')">Manifest<span class="tab-note"> (env)</span></button>
+      <button :class="{ active: tab === 'files' }" @click="setTab('files')">Freight<span class="tab-note"> (files)</span></button>
       <button :class="{ active: tab === 'settings' }" @click="setTab('settings')">
         Rigging<span v-if="dirtyFields.length" class="tab-dirty" title="Unsaved changes"> •</span>
       </button>
@@ -183,43 +183,38 @@
         </button>
       </div>
 
-      <CollapseSection title="Clone manually">
-        <p class="hint" v-if="project.git_url">The repository is public — the command is just the URL.</p>
-        <p class="hint" v-else>
-          Generates a git clone command with a short-lived GitHub App installation token, to run on
-          another server. The token expires after about an hour, grants access to every repo of the
-          installation covering this one, and ends up in the clone's <span class="mono">.git/config</span> — after
-          cloning, reset the remote with
-          <span class="mono">git remote set-url origin https://github.com/{{ project.repo_full_name }}.git</span>.
-        </p>
-        <button class="secondary" :disabled="tokenBusy" @click="getCloneCommand">
-          {{ tokenBusy ? 'Fetching token…' : 'Get clone command' }}
-        </button>
-        <p v-if="tokenError" class="error">{{ tokenError }}</p>
-        <template v-if="cloneCommand">
-          <textarea
-            class="code"
-            readonly
-            rows="3"
-            style="margin-top: 12px"
-            :value="cloneCommand"
-            @focus="$event.target.select()"
-          ></textarea>
-          <div class="row" style="margin-top: 8px; justify-content: space-between">
-            <button class="secondary small" @click="copyCloneCommand">
-              {{ copiedCommand ? 'Copied ✔' : 'Copy' }}
+      <!-- The rarely-needed things, one section: each a part of its own. -->
+      <CollapseSection title="Advanced">
+        <!-- Not for the panel's own project: its directory is the running panel. -->
+        <section v-if="!isPanel" class="section-part">
+          <h3 class="section-part-title">Slug</h3>
+          <p class="hint">
+            The slug names the project's directory on the server
+            (<span class="mono">apps/{{ project.slug }}/</span>)<template v-if="liveRuntime === 'container'"> and its container,
+            <span class="mono">skeppa-app-{{ project.slug }}</span> — the name convoy neighbours reach it by</template>.
+            Changing it moves the directory<template v-if="!isStatic"> and restarts the app under the new name: it is down for
+            a few seconds, and comes back only if it was running</template>.
+          </p>
+          <div class="row inline-action">
+            <input aria-label="New slug" v-model.trim="slugInput" class="code" :placeholder="project.slug" @keydown.enter="renameSlug" />
+            <button class="secondary" :disabled="slugBusy || !slugInput || slugInput === project.slug" @click="renameSlug">
+              <StableLabel :text="slugBusy ? 'Changing…' : 'Change slug'" :variants="['Changing…', 'Change slug']" />
             </button>
-            <span class="hint" v-if="cloneExpiresIn">token expires {{ cloneExpiresIn }}</span>
           </div>
-        </template>
-      </CollapseSection>
+          <p v-if="slugError" class="error">{{ slugError }}</p>
+          <p v-else-if="slugNote" class="hint">{{ slugNote }}</p>
+        </section>
 
-      <CollapseSection title="Scuttle">
-        <p class="hint" style="margin-top: 0">
-          Removes the project from the panel and its process or container from the server. The files under
-          its apps directory are kept.
-        </p>
-        <button class="danger" @click="remove">Scuttle project</button>
+        <section class="section-part">
+          <h3 class="section-part-title">Scuttle</h3>
+          <div class="row inline-action">
+            <p class="hint">
+              Removes the project from the panel and its process or container from the server. The files under
+              its apps directory are kept.
+            </p>
+            <button class="danger" @click="remove">Scuttle project</button>
+          </div>
+        </section>
       </CollapseSection>
     </div>
   </div>
@@ -310,11 +305,10 @@ export default {
       checkResult: '',
       cloneResult: '', // said whatever banner shows: the one answer a Clone gives
       checkError: '',
-      tokenBusy: false,
-      tokenError: '',
-      cloneCommand: '',
-      cloneExpiresAt: null,
-      copiedCommand: false,
+      slugInput: '',
+      slugBusy: false,
+      slugError: '',
+      slugNote: '',
     }
   },
   computed: {
@@ -322,6 +316,11 @@ export default {
     // template throw, so the role check lives here.
     isTenant() {
       return store.user?.role === 'tenant'
+    },
+    // The panel's own project (only an admin ever sees it).
+    isPanel() {
+      const self = store.live.system?.selfPm2Name
+      return Boolean(self) && this.project?.pm2_name === self
     },
     // What the project is being served as right now: the runtime of its
     // last successful deploy, or the configured one before any deploy.
@@ -419,11 +418,6 @@ export default {
     currentDeploymentId() {
       return this.live?.currentDeployment?.id ?? null
     },
-    cloneExpiresIn() {
-      if (!this.cloneExpiresAt) return ''
-      const min = Math.round((this.cloneExpiresAt - Date.now()) / 60000)
-      return min > 0 ? `in ~${min} min` : 'soon — fetch a fresh one'
-    },
     // The Rigging fields that differ from what was loaded or last saved.
     dirtyFields() {
       if (!this.editLoaded) return []
@@ -435,6 +429,14 @@ export default {
     },
   },
   watch: {
+    // On a phone the tab line scrolls sideways: keep the open tab in sight.
+    tab() {
+      this.$nextTick(this.showActiveTab)
+    },
+    // …and once there is a tab line at all: it waits for the project.
+    'project.id'() {
+      this.$nextTick(this.showActiveTab)
+    },
     // A deploy starting or finishing changes the list — refresh it.
     currentDeploymentId(now, before) {
       this.loadDeployments()
@@ -465,11 +467,22 @@ export default {
   },
   mounted() {
     window.addEventListener('beforeunload', this.onBeforeUnload)
+    this.showActiveTab()
   },
   unmounted() {
     window.removeEventListener('beforeunload', this.onBeforeUnload)
   },
   methods: {
+    // Scrolls only the tab line, never the page (scrollIntoView would).
+    showActiveTab() {
+      const line = this.$el?.querySelector?.('.tabs')
+      const active = line?.querySelector('button.active')
+      if (!active || line.scrollWidth <= line.clientWidth) return
+      const left = active.offsetLeft - line.offsetLeft
+      if (left < line.scrollLeft || left + active.offsetWidth > line.scrollLeft + line.clientWidth) {
+        line.scrollLeft = left - (line.clientWidth - active.offsetWidth) / 2
+      }
+    },
     timeAgo,
     duration,
     uptimeSince,
@@ -574,31 +587,6 @@ export default {
         this.checking = false
       }
     },
-    async getCloneCommand() {
-      this.tokenBusy = true
-      this.tokenError = ''
-      this.copiedCommand = false
-      try {
-        const { command, expiresAt } = await api.post(`/api/projects/${this.id}/clone-command`)
-        this.cloneCommand = command
-        this.cloneExpiresAt = expiresAt
-      } catch (err) {
-        this.tokenError = `Could not get a token: ${err.message}`
-      } finally {
-        this.tokenBusy = false
-      }
-    },
-    async copyCloneCommand() {
-      try {
-        await navigator.clipboard.writeText(this.cloneCommand)
-        this.copiedCommand = true
-        setTimeout(() => (this.copiedCommand = false), 2000)
-      } catch {
-        // Clipboard API unavailable (http, permissions) — the textarea
-        // selects itself on focus, so manual copy still works.
-        this.tokenError = 'Clipboard unavailable — select the command and copy it manually'
-      }
-    },
     // The header's button and menu (lib/vesselActions.js does the work).
     async run(key) {
       this.busy = true
@@ -685,6 +673,25 @@ export default {
         }
       }
       this.saving = ''
+    },
+    // POST /slug moves the directory and restarts the app under the new name.
+    async renameSlug() {
+      const slug = this.slugInput
+      if (!slug || slug === this.project.slug || this.slugBusy) return
+      const restart = this.isStatic ? '' : ' The app is restarted under the new name.'
+      if (!(await confirmDialog(`Move "${this.project.name}" from ${this.project.slug} to ${slug}?${restart}`, { confirmLabel: 'Move' }))) return
+      this.slugBusy = true
+      this.slugError = ''
+      this.slugNote = ''
+      try {
+        const { warning } = await api.post(`/api/projects/${this.id}/slug`, { slug })
+        this.slugInput = ''
+        this.slugNote = warning ? `Moved to ${slug} — but ${warning}. Start it from the top of the page.` : `Moved to ${slug}.`
+      } catch (err) {
+        this.slugError = err.fields?.slug ?? err.message
+      } finally {
+        this.slugBusy = false
+      }
     },
     async remove() {
       if (!(await confirmDialog(`Delete project "${this.project.name}"? The pm2 process is removed; files on disk are kept.`, { confirmLabel: 'Delete', danger: true }))) return

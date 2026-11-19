@@ -10,9 +10,12 @@ import * as realPm2 from './pm2.js'
 import { createContainerClient } from '../containers/client.js'
 import { appContainerName, recreateAppContainer } from '../containers/runtime.js'
 import { isReservedPm2Name } from '../lib/runtime.js'
+import { renameSlug } from './rename.js'
 
-// Holds a project's queue while clone() runs git (a deployment id otherwise).
+// Hold a project's queue while clone() runs git, or renameSlug() moves the
+// berth (a deployment id otherwise).
 const CLONING = 'clone'
+const RENAMING = 'rename'
 
 export class DeployError extends Error {
   constructor(message, exitCode = null) {
@@ -237,11 +240,7 @@ export class DeployRunner {
   async clone(projectId) {
     const project = this.db.query('SELECT * FROM projects WHERE id = ?').get(projectId)
     if (!project) throw new Error(`project ${projectId} not found`)
-    let q = this.queues.get(project.id)
-    if (!q) this.queues.set(project.id, (q = { runningId: null, queuedId: null }))
-    if (q.runningId != null) throw new DeployError('a deploy is under way — it checks the code out itself')
-    q.runningId = CLONING
-    try {
+    return this._hold(project.id, CLONING, 'a deploy is under way — it checks the code out itself', async () => {
       const token = project.git_url ? null : await this.github.getInstallationToken(project.repo_full_name)
       const head = await syncRepo({
         dir: projectDirs(this.config, project).source,
@@ -253,8 +252,40 @@ export class DeployRunner {
       this._live(project.id).checkedOut = true
       this.poller?.diskChanged()
       return head
+    })
+  }
+
+  // A new slug moves the berth (deploy/rename.js) — the directory a deploy
+  // works in and the container it recreates — so it holds the queue the way
+  // a clone does: refused while a deploy is under way, and a deploy asked
+  // for meanwhile waits and then sets out from the new place.
+  async renameSlug(projectId, slug, { engine }) {
+    const project = this.db.query(
+      `SELECT p.*, u.role AS owner_role, u.handle AS owner_handle
+       FROM projects p LEFT JOIN users u ON u.id = p.owner_id WHERE p.id = ?`
+    ).get(projectId)
+    if (!project) throw new Error(`project ${projectId} not found`)
+    return this._hold(project.id, RENAMING, 'a deploy is under way — wait for it to finish', async () => {
+      const result = await renameSlug({ db: this.db, config: this.config, project, slug, engine, pm2: this.pm2 })
+      const live = this._live(project.id)
+      live.info = getProjectInfo(this.db, project.id)
+      // The process was taken down and brought back on purpose.
+      this.poller?.expectRestart(project.id)
+      return result
+    })
+  }
+
+  // Runs `fn` with the project's queue held by `marker` instead of a
+  // deployment; DeployError(busy) when something already holds it.
+  async _hold(projectId, marker, busy, fn) {
+    let q = this.queues.get(projectId)
+    if (!q) this.queues.set(projectId, (q = { runningId: null, queuedId: null }))
+    if (q.runningId != null) throw new DeployError(busy)
+    q.runningId = marker
+    try {
+      return await fn()
     } finally {
-      this._next(project.id)
+      this._next(projectId)
     }
   }
 

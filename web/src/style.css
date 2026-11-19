@@ -183,14 +183,20 @@ h2 { font-size: 16px; font-weight: 800; letter-spacing: 0.04em; margin: 24px 0 8
 .masthead a.nav-link:hover { color: var(--ink); }
 .masthead a.nav-link.active { color: var(--ink); border-bottom-color: var(--ink); }
 .masthead .spacer { flex: 1; }
+/* Pushed right on its own (not by the spacer alone): should it ever wrap,
+   it lands on the right of its line rather than stranded on the left. */
+.masthead .session { display: flex; align-items: center; gap: 10px; flex-wrap: nowrap; min-width: 0; margin-left: auto; }
 .masthead .conn {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
   font-family: var(--mono);
   font-size: 12px;
   color: var(--dim);
 }
+/* A long username (an email) is cut short; the title has all of it. */
+.masthead .conn-text { max-width: 24ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .conn-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--red); display: inline-block; }
 .conn-dot.on { background: var(--green); }
@@ -1379,14 +1385,39 @@ a.repo-link:hover { color: var(--accent); }
 .branch-select .row > button { flex: none; white-space: nowrap; }
 .branch-select .hint { margin-top: 6px; }
 
+/* A field and the button that acts on it, on one line: the field takes the rest. */
+.inline-action { flex-wrap: nowrap; }
+.inline-action > input, .inline-action > select { flex: 1; min-width: 0; width: auto; }
+.inline-action > button { flex: none; white-space: nowrap; }
+/* Or a text and the button it explains, the text wrapping beside it. */
+.inline-action > .hint { flex: 1; min-width: 0; }
+.section-part-title + .inline-action { margin-top: 6px; }
+/* On a phone the text would be a sliver beside the button: it goes under. */
+@media (max-width: 560px) {
+  .inline-action:has(> .hint) { flex-wrap: wrap; }
+  .inline-action > .hint { flex-basis: 100%; }
+}
+
+/* Parts of one section (Advanced, the account), each under a small heading, a rule between them. */
+.section-part + .section-part { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--line-soft); }
+.section-part-title { margin: 0; font-size: 14px; font-weight: 700; }
+.section-part > .hint:first-of-type { margin-top: 6px; }
+.section-part-title + form > label:first-child { margin-top: 12px; }
+
 /* ---- narrow screens ---- */
 
 /* Below this the masthead no longer fits on one line: give the section links
    their own row instead of letting the session controls wrap unevenly. */
 @media (max-width: 820px) {
   .masthead .spacer { display: none; }
-  .masthead .conn { margin-left: auto; }
-  .masthead .links { order: 3; width: 100%; gap: 18px; }
+  /* An admin's links are wider than a phone: they wrap, never push the page sideways. */
+  .masthead .links { order: 3; width: 100%; gap: 8px 18px; flex-wrap: wrap; }
+}
+/* An admin's four links need the room sooner: below this the brand, the
+   links and the session no longer share one line. Same layout as above. */
+@media (max-width: 1000px) {
+  .masthead.full-nav .spacer { display: none; }
+  .masthead.full-nav .links { order: 3; width: 100%; gap: 8px 18px; flex-wrap: wrap; }
 }
 
 @media (max-width: 700px) {
@@ -1397,6 +1428,9 @@ a.repo-link:hover { color: var(--accent); }
   .masthead { gap: 12px 14px; padding: 12px 16px; }
   /* Just the dot: the connection state stays visible, the label costs a row. */
   .masthead .conn-text { display: none; }
+  /* A little tighter-set, so an admin's four links fit one line on a phone. */
+  .masthead.full-nav .links { gap: 8px 14px; }
+  .masthead.full-nav a.nav-link { letter-spacing: 0.05em; }
 
   .page-head { flex-direction: column; align-items: flex-start; gap: 4px; }
   .stat-grid { gap: 10px; }
@@ -1416,11 +1450,33 @@ a.repo-link:hover { color: var(--accent); }
   /* Keeps the stream switch, refresh and live toggle on one row. */
   .log-meta { display: none; }
   .logview, .proc-logs .logview { height: 240px; }
-  .tabs { gap: 18px; }
+  /* The tab names alone, tighter-set and closer together, on one line that
+     scrolls sideways when even that is wider than the phone — the page
+     itself never does. A scrolling box clips what hangs out of it, so the
+     line under the tabs is drawn inside it (inset shadow) for the active tab
+     to cover. */
+  .tabs {
+    gap: 16px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    border-bottom: none;
+    box-shadow: inset 0 -2px var(--tabs-line);
+    margin-inline: -16px;
+    padding-inline: 16px;
+  }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tabs button { white-space: nowrap; flex: none; margin-bottom: 0; padding-inline: 0; font-size: 12px; letter-spacing: 0.05em; }
+  .tabs .tab-note { display: none; }
   /* The actions stay on the right; the second line and the address under the name wrap. */
   .vessel-row { padding: 12px 12px; gap: 2px 10px; }
   .vessel-l2 { margin-left: 0; white-space: normal; }
   .vessel-row a.vessel-row-addr { margin-left: 0; }
+}
+
+/* On a phone proper the four links spread edge to edge with what room is
+   left, down to a 10px gap: one line to about 355px, wrapping only below. */
+@media (max-width: 480px) {
+  .masthead.full-nav .links { justify-content: space-between; column-gap: 10px; }
 }
 
 /* Its own breakpoint: 720px of table plus the container's padding. */
