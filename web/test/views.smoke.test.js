@@ -1013,9 +1013,11 @@ describe('a harbor row', () => {
   test('new commits: amber, the head commit underneath, Deploy latest', () => rowOf(() => {}, row => {
     expect(row.classes()).toContain('state-ahead')
     expect(row.find('.vessel-status').text()).toBe('new commits')
-    expect(row.find('.vessel-l2').text()).toBe('main · bbbbbbb feat: something')
+    expect(row.find('.vessel-l2').text()).toBe('bbbbbbb feat: something')
+    expect(row.find('.vessel-l2 code').text()).toBe('bbbbbbb') // the commit id set as code, the rest a sentence
+    expect(row.find('.vessel-branch').exists()).toBe(false) // main: nothing to say
     expect(button(row).text()).toBe('Deploy latest')
-    expect(row.find('.vessel-addr').text()).toContain('app.apps.example.com')
+    expect(row.find('.vessel-row-addr').text()).toContain('app.apps.example.com')
   }))
 
   test('in step: running, uptime and what is deployed, no button', () => rowOf(live => {
@@ -1023,7 +1025,7 @@ describe('a harbor row', () => {
   }, row => {
     expect(row.classes()).toContain('state-running')
     expect(row.find('.vessel-status').text()).toBe('online')
-    expect(row.find('.vessel-l2').text()).toMatch(/^main · up .+ · deployed aaaaaaa · /)
+    expect(row.find('.vessel-l2').text()).toMatch(/^Up .+ · deployed aaaaaaa \d+[smhd] ago$/)
     expect(button(row).exists()).toBe(false)
   }))
 
@@ -1031,8 +1033,17 @@ describe('a harbor row', () => {
     live.lastDeployment = { ...live.lastDeployment, status: 'failed' }
   }, row => {
     expect(row.classes()).toContain('state-failed')
-    expect(row.find('.vessel-l2').text()).toContain('previous build still serving')
+    expect(row.find('.vessel-status').text()).toBe('voyage failed')
+    expect(row.find('.vessel-l2').text()).toMatch(/^Failed on aaaaaaa \d+[smhd] ago — the previous build is still serving$/)
     expect(button(row).text()).toBe('Retry deploy')
+  }))
+
+  test('another branch than main is marked; an unknown status says so', () => rowOf(live => {
+    live.info.branch = 'release/2'
+    live.pm2 = { ...live.pm2, status: 'unknown' }
+  }, row => {
+    expect(row.find('.vessel-branch').text()).toBe('release/2')
+    expect(row.find('.vessel-status').text()).not.toBe('')
   }))
 
   test('down: Start', () => rowOf(live => {
