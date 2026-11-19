@@ -1273,7 +1273,17 @@ describe('the project page', () => {
       route: { query: { tab: 'settings' } },
       steps: async wrapper => {
         expect(wrapper.findAll('.collapse-title').map(t => t.text())).toEqual(['Source', 'Runtime', 'Build', 'Routing', 'Advanced'])
-        expect(wrapper.findAll('.section-part-title').map(t => t.text())).toEqual(['Slug', 'Scuttle'])
+        // Runtime in its groups (a container's), Advanced in its parts
+        expect(wrapper.findAll('.section-part-title').map(t => t.text())).toEqual(['What runs', 'Resources', 'Network', 'Storage', 'Slug', 'Scuttle'])
+        // the deploy script's image with the script, the gate's files with the routing
+        const section = title => wrapper.findAll('.collapse-section').find(s => s.find('.collapse-title').text() === title)
+        const labels = title => section(title).findAll('label').map(l => l.text())
+        expect(labels('Build')[0]).toBe('Build image')
+        expect(labels('Runtime')).not.toContain('Build image')
+        expect(labels('Routing').some(l => l.includes("serve the build's files"))).toBe(true)
+        expect(labels('Runtime').some(l => l.includes("serve the build's files"))).toBe(false)
+        // shared networks name this project's own container
+        expect(section('Runtime').text()).toContain('this one is skeppa-app-adm')
       },
     })
     expect(page.problems.join(' | ')).toBe('')
@@ -1307,7 +1317,8 @@ describe('the project page', () => {
 
         Object.assign(store.live.projects[1].info, { runtime: 'pm2', pm2_name: 'skeppa' })
         await settle()
-        expect(wrapper.findAll('.section-part-title').map(t => t.text())).toEqual(['Scuttle'])
+        const advanced = wrapper.findAll('.collapse-section').find(s => s.find('.collapse-title').text() === 'Advanced')
+        expect(advanced.findAll('.section-part-title').map(t => t.text())).toEqual(['Scuttle'])
       },
     })
     post.mockRestore()

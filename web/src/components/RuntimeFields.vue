@@ -1,202 +1,158 @@
 <template>
-  <!-- No wrapper element: the fields are siblings of the form's own labels, so
-       they keep the shared vertical rhythm (a wrapper would make the first
-       label a :first-child and zero its top margin). -->
-  <label>Build image</label>
-  <ImagePicker
-    :model-value="buildImage"
-    @update:model-value="$emit('update:buildImage', $event)"
-  />
-  <FieldError :errors="errors" name="build_image" />
-  <p class="hint">
-    OCI image the deploy script runs in when the podman build sandbox is enabled
-    (<span class="mono">SKEPPA_SANDBOX=podman</span>). Ignored in host mode.
-  </p>
-
-  <template v-if="runtime === 'container'">
-    <label>Run image</label>
-    <ImagePicker
-      :model-value="runImage"
-      :fallback="buildImage"
-      fallback-label="same as build image"
-      @update:model-value="$emit('update:runImage', $event)"
-    />
-    <FieldError :errors="errors" name="run_image" />
-
-    <label>Memory limit <span class="soft">(MB, blank = unlimited)</span></label>
-    <input
-      :value="memoryMb"
-      class="code"
-      placeholder="unlimited"
-      @input="$emit('update:memoryMb', $event.target.value)"
-    />
-    <FieldError :errors="errors" name="memory_mb" />
-    <p class="hint">
-      Hard cap: past it the app is OOM-killed and restarted by the engine, so a
-      leak crashes this project instead of starving the server.<template v-if="existing">
-      Applies on the next deploy or restart.</template>
-    </p>
-
-    <label>Network profile</label>
-    <select :value="networkProfile" class="code" @change="$emit('update:networkProfile', $event.target.value)">
-      <option value="open">open — internet and LAN, as before</option>
-      <option value="restricted">restricted — only its shared networks, nothing else</option>
-    </select>
-    <FieldError :errors="errors" name="network_profile" />
-    <p class="hint" v-if="networkProfile === 'restricted'">
-      No internet, no LAN, no host — enforced by having no route out. The app
-      port stays routable, and it reaches the containers on its shared networks.
-      With no networks listed it gets a private one of its own. The setting for
-      code you don't fully trust.<template v-if="existing"> Applies on the next
-      deploy or restart.</template>
-    </p>
-
-    <label>Shared networks <span class="soft">(names, space-separated — blank for none)</span></label>
-    <input
-      :value="networks"
-      class="code"
-      placeholder="db-net"
-      @input="$emit('update:networks', $event.target.value)"
-    />
-    <FieldError :errors="errors" name="networks" />
-    <p class="hint">
-      Projects listing the same name can reach each other by container name
-      (<span class="mono">skeppa-app-&lt;slug&gt;</span>). Shared networks never
-      grant internet — that comes from the profile.
-    </p>
-
-    <label class="check-label" v-if="!tenant && networkProfile === 'open' && !networks.trim()">
-      <input
-        type="checkbox"
-        :checked="hostAccess"
-        @change="$emit('update:hostAccess', $event.target.checked)"
-      />
-      Host access — reach services on the server's own 127.0.0.1
-    </label>
-    <FieldError :errors="errors" name="host_access" />
-
-    <!-- Server directories in the app's container: an admin's to set (the server enforces it). -->
-    <template v-if="!tenant && (mountRoots.length || mounts.trim())">
-      <label>Host mounts <span class="soft">(one per line — <span class="mono">host:container</span>, <span class="mono">:ro</span> after it for read-only)</span></label>
-      <textarea
-        :value="mounts"
-        class="code"
-        rows="2"
-        :placeholder="`${mountRoots[0] || '/mnt/nas'}/media:/media:ro`"
-        @input="$emit('update:mounts', $event.target.value)"
-      ></textarea>
-      <FieldError :errors="errors" name="mounts" />
-      <p class="hint">
-        Directories on the server — a network share mounted there, say — inside the app's container.
-        <template v-if="mountRoots.length">Only from under <span class="mono">{{ mountRoots.join(', ') }}</span>
-        (<span class="mono">MOUNT_ROOTS</span>), and never the panel's own directories.</template>
-        <template v-else>Nothing is mountable now: <span class="mono">MOUNT_ROOTS</span> is not set in the panel config.</template>
-        The deploy script never sees them, and the owner of a tenant's project cannot change them.<template v-if="existing">
-        Applies on the next deploy or restart.</template>
-      </p>
-    </template>
-    <p v-else-if="!tenant" class="hint">
-      To mount server directories (a network share) into containers, name where they may come from with
-      <span class="mono">MOUNT_ROOTS=/mnt/nas</span> in the panel config, and restart the panel.
-    </p>
-    <template v-else-if="mountList.length">
-      <label>Host mounts</label>
-      <ul class="mount-list">
-        <li v-for="m in mountList" :key="m.target"><span class="mono">{{ m.target }}</span> — server directory <span class="mono">{{ m.host }}</span>{{ m.readOnly ? ', read-only' : '' }}</li>
-      </ul>
-      <p class="hint">Given to this project by an admin; only an admin can change them.</p>
-    </template>
-  </template>
-
-  <template v-else-if="runtime === 'pm2'">
-    <label>pm2 process name</label>
-    <input
-      :value="pm2Name"
-      class="code"
-      @input="$emit('update:pm2Name', $event.target.value)"
-    />
-    <FieldError :errors="errors" name="pm2_name" />
-  </template>
-
-  <template v-if="runtime !== 'static'">
-    <label class="check-label">
-      <input
-        type="checkbox"
-        :checked="gateFiles"
-        @change="$emit('update:gateFiles', $event.target.checked)"
-      />
-      Let the harbor gate serve the build's files
-    </label>
-    <p class="hint">
-      After the deploy script, the publish directory is copied into a snapshot, and a
-      <span class="mono">GET</span> for a file in it — <span class="mono">index.html</span>,
-      <span class="mono">/assets/…</span> — is answered by the gate, compressed and cached; every other
-      request goes to the app as before. Only for files anyone may see: the app's own login does not
-      guard them.<template v-if="existing"> Switched on, the files are served from the next deploy;
-      switched off, the app answers everything again at once.</template>
-    </p>
-  </template>
-
-  <template v-if="runtime === 'static' || gateFiles">
-    <label>Publish directory <span class="soft">(relative to the working subdirectory — blank for the directory itself)</span></label>
-    <input
-      :value="publishDir"
-      class="code"
-      placeholder="dist"
-      @input="$emit('update:publishDir', $event.target.value)"
-    />
-    <FieldError :errors="errors" name="publish_dir" />
-    <p class="suggest">
-      <button
-        v-for="dir in otherDirs"
-        :key="dir"
-        type="button"
-        class="secondary small"
-        @click="$emit('update:publishDir', dir)"
-      >
-        Use <span class="mono">{{ dir }}</span>
+  <!-- What runs, then — for a container — what it may use, reach and see,
+       each under a small heading. The build image lives under Build (it is
+       the deploy script's), the gate's files under Routing. -->
+  <section class="section-part">
+    <h3 v-if="runtime === 'container'" class="section-part-title">What runs</h3>
+    <RuntimeChoice :runtime="runtime" :tenant="tenant" :existing="existing" @update:runtime="$emit('update:runtime', $event)" />
+    <FieldError :errors="errors" name="runtime" />
+    <!-- Read from the repository: no start script, a site builder — a static site. -->
+    <p v-if="staticSuggestion && runtime !== 'static'" class="suggest">
+      <button type="button" class="secondary small" @click="$emit('use-static')">
+        Looks like a static site — use it, publishing <span class="mono">{{ staticSuggestion.publish_dir }}</span>
       </button>
     </p>
-    <p class="hint">
-      What the build produces — <span class="mono">dist</span> for Vite, <span class="mono">web/dist</span> or
-      <span class="mono">client/dist</span> when the frontend has a folder of its own. A deploy that cannot
-      find it fails and names the built sites it did find. Dot-files and symlinks are never published.
-    </p>
-  </template>
 
-  <template v-if="runtime === 'static'">
-    <label class="check-label">
-      <input
-        type="checkbox"
-        :checked="spaFallback"
-        @change="$emit('update:spaFallback', $event.target.checked)"
-      />
-      Single-page app — answer unknown paths with <span class="mono">index.html</span>
-    </label>
-    <p class="hint">
-      For client-side routers (vue-router history mode): a reload on
-      <span class="mono">/about</span> loads the app instead of a 404.
-    </p>
+    <template v-if="runtime === 'static'">
+      <PublishDirField :model-value="publishDir" :errors="errors" @update:model-value="$emit('update:publishDir', $event)" />
+      <label class="check-label">
+        <input type="checkbox" :checked="spaFallback" @change="$emit('update:spaFallback', $event.target.checked)" />
+        Single-page app — answer unknown paths with <span class="mono">index.html</span>
+      </label>
+      <p class="hint">For client-side routers: a reload on <span class="mono">/about</span> loads the app instead of a 404.</p>
+    </template>
+
+    <template v-else>
+      <label>Start command <span v-if="!existing" class="soft">(optional — empty for build-only)</span></label>
+      <input :value="startCommand" class="code" :placeholder="suggestedStart" @input="$emit('update:startCommand', $event.target.value)" />
+      <p v-if="suggestedStart && !startCommand.trim()" class="suggest">
+        <button type="button" class="secondary small" @click="$emit('update:startCommand', suggestedStart)">
+          Use <span class="mono">{{ suggestedStart }}</span>
+        </button>
+      </p>
+      <FieldError :errors="errors" name="start_command" />
+
+      <template v-if="runtime === 'container'">
+        <label>Image</label>
+        <ImagePicker
+          :model-value="runImage"
+          :fallback="buildImage"
+          fallback-label="same as build image"
+          @update:model-value="$emit('update:runImage', $event)"
+        />
+        <FieldError :errors="errors" name="run_image" />
+      </template>
+      <template v-else>
+        <label>pm2 process name</label>
+        <input :value="pm2Name" class="code" @input="$emit('update:pm2Name', $event.target.value)" />
+        <FieldError :errors="errors" name="pm2_name" />
+      </template>
+    </template>
+  </section>
+
+  <template v-if="runtime === 'container'">
+    <section class="section-part">
+      <h3 class="section-part-title">Resources</h3>
+      <label>Memory limit <span class="soft">(MB, blank = unlimited)</span></label>
+      <input :value="memoryMb" class="code narrow-input" placeholder="unlimited" @input="$emit('update:memoryMb', $event.target.value)" />
+      <FieldError :errors="errors" name="memory_mb" />
+      <p class="hint">A hard cap: past it the app is killed and restarted, instead of starving the server.</p>
+    </section>
+
+    <section class="section-part">
+      <h3 class="section-part-title">Network</h3>
+      <div class="row field-row">
+        <div style="flex: 1 1 220px">
+          <label>Profile</label>
+          <select :value="networkProfile" class="code" @change="$emit('update:networkProfile', $event.target.value)">
+            <option value="open">open — internet and LAN</option>
+            <option value="restricted">restricted — only its shared networks</option>
+          </select>
+          <FieldError :errors="errors" name="network_profile" />
+        </div>
+        <div style="flex: 1 1 220px">
+          <label>Shared networks <span class="soft">(space-separated)</span></label>
+          <input :value="networks" class="code" placeholder="db-net" @input="$emit('update:networks', $event.target.value)" />
+          <FieldError :errors="errors" name="networks" />
+        </div>
+      </div>
+      <p v-if="networkProfile === 'restricted'" class="hint">
+        No internet, LAN or host — only its shared networks, or a private one of its own. The app port stays routable.
+      </p>
+      <p class="hint">
+        Projects listing the same name reach each other by container name<template v-if="slug"> — this one is
+        <span class="mono">skeppa-app-{{ slug }}</span></template><template v-else>, <span class="mono">skeppa-app-&lt;slug&gt;</span></template>.
+      </p>
+      <label v-if="!tenant && networkProfile === 'open' && !networks.trim()" class="check-label">
+        <input type="checkbox" :checked="hostAccess" @change="$emit('update:hostAccess', $event.target.checked)" />
+        Host access — reach services on the server's own 127.0.0.1
+      </label>
+      <FieldError :errors="errors" name="host_access" />
+    </section>
+
+    <section class="section-part">
+      <h3 class="section-part-title">Storage</h3>
+      <p class="hint">
+        <span class="mono">/app</span> the source, read-only · <span class="mono">/data</span> the project's
+        <span class="mono">shared/</span>, kept between deploys
+      </p>
+      <!-- Server directories in the container: an admin's to set (the server enforces it). -->
+      <template v-if="!tenant">
+        <label>Host mounts <span class="soft">(one per line — <span class="mono">host:container</span>, <span class="mono">:ro</span> for read-only)</span></label>
+        <template v-if="mountRoots.length || mounts.trim()">
+          <textarea
+            :value="mounts"
+            class="code"
+            rows="2"
+            :placeholder="`${mountRoots[0] || '/mnt/nas'}/media:/media:ro`"
+            @input="$emit('update:mounts', $event.target.value)"
+          ></textarea>
+          <FieldError :errors="errors" name="mounts" />
+          <p class="hint">
+            Server directories, a network share say.<template v-if="mountRoots.length"> Only from under
+            <span class="mono">{{ mountRoots.join(', ') }}</span>.</template><template v-else> Nothing is mountable:
+            <span class="mono">MOUNT_ROOTS</span> is not set.</template> Never seen by the deploy script; a tenant cannot change them.
+          </p>
+        </template>
+        <p v-else class="hint">
+          Off — set <span class="mono">MOUNT_ROOTS=/mnt/nas</span> in the panel config, and restart the panel, to allow server directories.
+        </p>
+      </template>
+      <template v-else-if="mountList.length">
+        <label>Host mounts</label>
+        <ul class="mount-list">
+          <li v-for="m in mountList" :key="m.target"><span class="mono">{{ m.target }}</span> — server directory <span class="mono">{{ m.host }}</span>{{ m.readOnly ? ', read-only' : '' }}</li>
+        </ul>
+        <p class="hint">Given to this project by an admin; only an admin can change them.</p>
+      </template>
+    </section>
   </template>
 </template>
 
 <script>
 import ImagePicker from './ImagePicker.vue'
 import FieldError from './FieldError.vue'
+import RuntimeChoice from './RuntimeChoice.vue'
+import PublishDirField from './PublishDirField.vue'
 import { store } from '../store.js'
 
-const COMMON_PUBLISH_DIRS = ['dist', 'web/dist', 'client/dist']
-
-// What goes with the chosen runtime (RuntimeChoice.vue picks it): the build
-// sandbox image; per runtime the run image and limits or the pm2 process
-// name; and the publish directory, for a static site or an app whose build
-// output the gate serves. Shared by the new-project form and the project's
-// Rigging tab so a change to how apps build and run reaches both at once.
+// The Runtime section's body: the runtime (RuntimeChoice) and what runs —
+// the start command and image, the pm2 process name, or a static site's
+// publish directory — then, for a container, its resources, network and
+// storage. Shared by the mooring form and Rigging (ProjectFields). No
+// wrapper element: the parts are siblings in the section, so they keep its
+// rhythm and the rule between parts.
 export default {
   name: 'RuntimeFields',
-  components: { ImagePicker, FieldError },
+  components: { ImagePicker, FieldError, RuntimeChoice, PublishDirField },
   props: {
     runtime: { type: String, default: 'container' },
+    startCommand: { type: String, default: '' },
+    // A start command read from the repository, offered as one click.
+    suggestedStart: { type: String, default: '' },
+    // The repository looks like a static site: { publish_dir }.
+    staticSuggestion: { type: Object, default: null },
+    // The build image, which the run image falls back to.
     buildImage: { type: String, default: '' },
     runImage: { type: String, default: '' },
     pm2Name: { type: String, default: '' },
@@ -208,19 +164,19 @@ export default {
     mounts: { type: String, default: '' },
     publishDir: { type: String, default: 'dist' },
     spaFallback: { type: Boolean, default: false },
-    // An app (container or pm2) whose build output the gate serves.
-    gateFiles: { type: Boolean, default: false },
-    // Tenant projects never run as a host process and get no host access —
-    // the pm2 option and the host-access toggle disappear (the server
-    // enforces both).
+    // Tenant projects never run as a host process and get no host access or
+    // mounts of their own — those controls disappear (the server enforces it).
     tenant: { type: Boolean, default: false },
     // Wording differs slightly for a project that already exists.
     existing: { type: Boolean, default: false },
+    // Its slug, once it has one: names its container (skeppa-app-<slug>).
+    slug: { type: String, default: '' },
     // The server's field errors, each shown under its field (FieldError).
     errors: { type: Object, default: () => ({}) },
   },
-  emits: ['update:buildImage', 'update:runImage', 'update:pm2Name', 'update:memoryMb',
-    'update:networkProfile', 'update:hostAccess', 'update:networks', 'update:publishDir', 'update:spaFallback', 'update:gateFiles', 'update:mounts'],
+  emits: ['update:runtime', 'update:startCommand', 'update:runImage', 'update:pm2Name', 'update:memoryMb',
+    'update:networkProfile', 'update:hostAccess', 'update:networks', 'update:mounts', 'update:publishDir',
+    'update:spaFallback', 'use-static'],
   computed: {
     // Where the panel allows host mounts from (MOUNT_ROOTS) — admins see the panel store.
     mountRoots() {
@@ -233,11 +189,6 @@ export default {
         const [host = '', target = '', mode = ''] = line.split(':')
         return { host, target, readOnly: mode === 'ro' }
       })
-    },
-    // Where builds usually put a site, as one-click values; the current one
-    // is left out.
-    otherDirs() {
-      return COMMON_PUBLISH_DIRS.filter(dir => dir !== this.publishDir.trim())
     },
   },
 }

@@ -354,6 +354,7 @@ input, textarea, select {
 }
 /* on the baseline a textarea keeps the line's descender under it: a gap the next label does not expect */
 textarea { vertical-align: top; }
+.narrow-input { max-width: 220px; }
 .mount-list { margin: 4px 0 0; padding-left: 18px; font-size: 13px; }
 textarea.code, input.code, select.code { font-family: var(--mono); font-size: 13px; }
 input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); }

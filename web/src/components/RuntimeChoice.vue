@@ -6,21 +6,16 @@
     <button v-if="showHost" type="button" :class="{ active: runtime === 'pm2' }" @click="pick('pm2')">Host process (pm2)</button>
   </div>
   <p class="hint" v-if="runtime === 'container'">
-    The start command runs in a disposable rootless-podman container: source read-only at
-    <span class="mono">/app</span>, <span class="mono">shared/</span> writable at
-    <span class="mono">/data</span>, the app port published on localhost.<template v-if="existing">
-    Takes effect on the next deploy or restart.</template>
+    The start command runs in a disposable rootless-podman container, its port published on localhost.<template v-if="existing">
+    Applies on the next deploy or restart.</template>
   </p>
   <p class="hint" v-else-if="runtime === 'static'">
-    Nothing runs: after the deploy script, the publish directory is copied into a snapshot
-    that the harbor gate serves under the project's subdomain. Visitors keep the previous
-    version until a build has finished, and a failed build changes nothing.<template v-if="existing">
-    Takes effect on the next deploy — whatever serves the project now keeps serving it until then.</template>
+    Nothing runs: the harbor gate serves what the build produced, and a failed build changes nothing.<template v-if="existing">
+    Applies on the next deploy; what serves now keeps serving until then.</template>
   </p>
   <p class="hint" v-else-if="runtime === 'pm2'">
-    Runs straight on the host as the panel's own user, under pm2 — no container around it.
-    For the panel itself and tools you trust as much as the panel.<template v-if="existing">
-    Takes effect on the next deploy.</template>
+    Runs on the host as the panel's own user, no container around it — for the panel and tools you trust as much.<template v-if="existing">
+    Applies on the next deploy.</template>
   </p>
   <p class="error" v-if="runtime === 'container' && engineMissing">
     No container engine is configured on this server (<span class="mono">CONTAINER_SOCKET</span>) —

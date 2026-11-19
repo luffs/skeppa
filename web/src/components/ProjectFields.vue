@@ -37,29 +37,14 @@
       <FieldError :errors="shown" name="group_id" />
     </CollapseSection>
 
-    <CollapseSection title="Runtime" start-open :reveal="hasErrors(RUNTIME)">
+    <CollapseSection title="Runtime" start-open :reveal="hasErrors(runtimeKeys)">
       <template #meta><span class="mono">{{ RUNTIME_NAME[form.runtime] ?? form.runtime }}</span></template>
-      <RuntimeChoice :runtime="form.runtime" :tenant="tenant" :existing="existing" @update:runtime="pickRuntime" />
-      <FieldError :errors="shown" name="runtime" />
-      <!-- Read from the repository: no start script, a site builder — a static site. -->
-      <p v-if="suggestion?.runtime === 'static' && form.runtime !== 'static'" class="suggest">
-        <button type="button" class="secondary small" @click="useStatic">
-          Looks like a static site — use it, publishing <span class="mono">{{ suggestion.publish_dir }}</span>
-        </button>
-      </p>
-      <template v-if="form.runtime !== 'static'">
-        <label>Start command <span v-if="!existing" class="soft">(optional — empty for build-only)</span></label>
-        <input :value="form.start_command" @input="set('start_command', $event.target.value)" class="code" :placeholder="suggested?.start || ''" />
-        <p v-if="suggested?.start && !form.start_command.trim()" class="suggest">
-          <button type="button" class="secondary small" @click="set('start_command', suggested.start)">
-            Use <span class="mono">{{ suggested.start }}</span>
-          </button>
-        </p>
-        <FieldError :errors="shown" name="start_command" />
-      </template>
       <RuntimeFields
-        :runtime="form.runtime"
-        :build-image="form.build_image" @update:build-image="set('build_image', $event)"
+        :runtime="form.runtime" @update:runtime="pickRuntime"
+        :start-command="form.start_command ?? ''" @update:start-command="set('start_command', $event)"
+        :suggested-start="suggested?.start || ''"
+        :static-suggestion="suggestion?.runtime === 'static' ? suggestion : null" @use-static="useStatic"
+        :build-image="form.build_image"
         :run-image="form.run_image" @update:run-image="set('run_image', $event)"
         :pm2-name="form.pm2_name" @update:pm2-name="set('pm2_name', $event)"
         :memory-mb="form.memory_mb" @update:memory-mb="set('memory_mb', $event)"
@@ -69,7 +54,7 @@
         :mounts="form.mounts ?? ''" @update:mounts="set('mounts', $event)"
         :publish-dir="form.publish_dir" @update:publish-dir="set('publish_dir', $event)"
         :spa-fallback="form.spa_fallback" @update:spa-fallback="set('spa_fallback', $event)"
-        :gate-files="form.gate_files" @update:gate-files="set('gate_files', $event)"
+        :slug="existing ? (form.slug ?? '') : ''"
         :tenant="tenant"
         :existing="existing"
         :errors="shown"
@@ -81,6 +66,10 @@
       <p v-if="suggestion?.notes?.length" class="hint repo-read">
         Read from the repository: {{ suggestion.notes.join(' · ') }}
       </p>
+      <label>Build image</label>
+      <ImagePicker :model-value="form.build_image" @update:model-value="set('build_image', $event)" />
+      <FieldError :errors="shown" name="build_image" />
+      <p class="hint">What the deploy script runs in with the podman build sandbox (<span class="mono">SKEPPA_SANDBOX=podman</span>); ignored on the host. Also the app's image unless Runtime names another.</p>
       <label>Deploy script</label>
       <textarea :value="form.deploy_script" @input="set('deploy_script', $event.target.value)" class="code" rows="4" :placeholder="suggested?.deploy || ''"></textarea>
       <!-- The placeholder is a suggestion, not a default: nothing runs that was
@@ -117,7 +106,7 @@
       </p>
     </CollapseSection>
 
-    <CollapseSection title="Routing" start-open :reveal="hasErrors(ROUTING)">
+    <CollapseSection title="Routing" start-open :reveal="hasErrors(routingKeys)">
       <template #meta><span class="mono">{{ routeLabel || 'not routed' }}</span></template>
       <RoutingFields
         :subdomain="form.subdomain" @update:subdomain="set('subdomain', $event)"
@@ -129,6 +118,20 @@
         :existing="existing"
         :errors="shown"
       />
+      <!-- An app's built files, answered by the gate before the app: how
+           requests reach it, so here rather than under Runtime. -->
+      <template v-if="form.runtime !== 'static'">
+        <label class="check-label">
+          <input type="checkbox" :checked="form.gate_files" @change="set('gate_files', $event.target.checked)" />
+          Let the harbor gate serve the build's files
+        </label>
+        <p class="hint">
+          A <span class="mono">GET</span> for a file in the publish directory is answered by the gate, compressed and
+          cached; everything else goes to the app. ⚠ The app's own login does not guard those files.<template v-if="existing">
+          On from the next deploy; off at once.</template>
+        </p>
+        <PublishDirField v-if="form.gate_files" :model-value="form.publish_dir" :errors="shown" @update:model-value="set('publish_dir', $event)" />
+      </template>
     </CollapseSection>
 
     <!-- Anything the server said about a field no section shows. -->
@@ -141,16 +144,18 @@ import BranchSelect from './BranchSelect.vue'
 import CollapseSection from './CollapseSection.vue'
 import FieldError from './FieldError.vue'
 import PierPicker from './PierPicker.vue'
-import RuntimeChoice from './RuntimeChoice.vue'
+import ImagePicker from './ImagePicker.vue'
+import PublishDirField from './PublishDirField.vue'
 import RuntimeFields from './RuntimeFields.vue'
 import RoutingFields from './RoutingFields.vue'
 
 // Which section shows which field's error — and opens for it.
 const SOURCE = ['repo_full_name', 'git_url', 'branch', 'name', 'slug', 'group_id']
-const RUNTIME = ['runtime', 'start_command', 'build_image', 'run_image', 'pm2_name', 'memory_mb', 'network_profile', 'networks', 'host_access', 'mounts', 'publish_dir']
-const BUILD = ['deploy_script', 'cwd']
+const RUNTIME = ['runtime', 'start_command', 'run_image', 'pm2_name', 'memory_mb', 'network_profile', 'networks', 'host_access', 'mounts']
+const BUILD = ['build_image', 'deploy_script', 'cwd']
 const ROUTING = ['subdomain', 'port']
-const KNOWN = new Set([...SOURCE, ...RUNTIME, ...BUILD, ...ROUTING])
+// The publish directory is a static site's (Runtime) or an app's gate files' (Routing).
+const KNOWN = new Set([...SOURCE, ...RUNTIME, ...BUILD, ...ROUTING, 'publish_dir'])
 const RUNTIME_NAME = { pm2: 'pm2 process', container: 'container', static: 'static site' }
 
 // One project's settings, as the mooring form and Rigging both show them.
@@ -158,7 +163,7 @@ const RUNTIME_NAME = { pm2: 'pm2 process', container: 'container', static: 'stat
 // that field is edited, and a folded section holding one opens.
 export default {
   name: 'ProjectFields',
-  components: { BranchSelect, CollapseSection, FieldError, PierPicker, RuntimeChoice, RuntimeFields, RoutingFields },
+  components: { BranchSelect, CollapseSection, FieldError, ImagePicker, PierPicker, PublishDirField, RuntimeFields, RoutingFields },
   props: {
     form: { type: Object, required: true },
     // Rigging (an existing project) rather than the mooring form.
@@ -191,6 +196,12 @@ export default {
         if (!(key in this.errorValues) || String(this.form[key] ?? '') === this.errorValues[key]) out[key] = message
       }
       return out
+    },
+    runtimeKeys() {
+      return this.form.runtime === 'static' ? [...RUNTIME, 'publish_dir'] : RUNTIME
+    },
+    routingKeys() {
+      return this.form.runtime === 'static' ? ROUTING : [...ROUTING, 'publish_dir']
     },
     otherErrors() {
       return Object.fromEntries(Object.entries(this.shown).filter(([key]) => !KNOWN.has(key)))
