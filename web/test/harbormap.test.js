@@ -1,5 +1,5 @@
 import { test, expect } from 'vitest'
-import { layoutHarbor, dropTarget, nextBerth, shipName, cargoStacks, isWorn, SHIP_L, SHIP_B, ROW } from '../src/lib/harborMap.js'
+import { layoutHarbor, dropTarget, nextBerth, nearestShip, shipName, cargoStacks, isWorn, SHIP_L, SHIP_B, ROW } from '../src/lib/harborMap.js'
 
 // The harbor map's layout: every project gets exactly one place, nothing
 // overlaps, nothing runs past the width, and the same harbor always comes
@@ -214,4 +214,38 @@ test('names are cut to what fits', () => {
   expect(shipName('blog')).toBe('blog')
   expect(shipName('skeppa-panel-api-production')).toBe('skeppa-panel-api-p…')
   expect(shipName('skeppa-panel-api', 9)).toBe('skeppa-p…')
+})
+
+test('a folded fleet is its quay alone, and the fleets under it move up', () => {
+  const open = layoutHarbor(harbor, 760)
+  const folded = layoutHarbor([{ ...harbor[0], folded: true }, harbor[1]], 760)
+  const [mine, bob] = folded.fleets
+  expect(mine).toEqual(expect.objectContaining({ folded: true, jetties: [], ships: [], anchorage: null }))
+  expect(mine.quays).toEqual([expect.objectContaining({ shore: true, y: 0 })])
+  expect(bob.top).toBe(mine.bottom)
+  expect(mine.bottom).toBeLessThan(80)
+  expect(folded.height).toBeLessThan(open.height)
+  expect(folded.light).toEqual(open.light === null ? null : expect.objectContaining({ x: 760 - 24 }))
+  expect(open.fleets[0].folded).toBe(false)
+  // bob's ship still has its place
+  expect(bob.ships.map(s => s.id)).toEqual([50])
+})
+
+test('the arrow keys go to the nearest ship that way', () => {
+  // pier 1 with four ships: 100 left, 101 right, 102 left under 100, 103 right under 101; 7 at anchor beside
+  const map = layoutHarbor([fleet('f', [[1, 4]], [7])], 1200)
+  const all = map.fleets.flatMap(f => f.ships)
+  const go = (from, key) => nearestShip(all, from, key)?.id ?? null
+  expect(go(100, 'ArrowRight')).toBe(101) // across the jetty
+  expect(go(100, 'ArrowDown')).toBe(102) // down its side
+  expect(go(102, 'ArrowUp')).toBe(100)
+  expect(go(103, 'ArrowLeft')).toBe(102)
+  expect(go(101, 'ArrowRight')).toBe(7) // out to the anchorage
+  expect(go(100, 'ArrowLeft')).toBe(null) // nothing further that way
+  expect(go(100, 'ArrowUp')).toBe(null)
+  expect(go(103, 'Home')).toBe(100)
+  expect(go(100, 'End')).toBe(7)
+  expect(go(999, 'ArrowDown')).toBe(100) // from nowhere: the first
+  expect(go(100, 'Enter')).toBe(null)
+  expect(nearestShip([], 1, 'Home')).toBe(null)
 })

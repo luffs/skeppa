@@ -28,6 +28,7 @@ const COL_GAP = 28
 const LABEL_H = 26 // the fleet's name, on its first quay
 const QUAY_H = 38 // the pier sheds stand here
 const BARE_QUAY = 10 // a quay with no piers under it
+const FOLDED_GAP = 14 // under a folded fleet's quay
 const MOLE_INSET = 8
 const FIRST = 18 // from the quay's edge to the first berth
 const STUB = 44 // an empty pier's jetty
@@ -65,8 +66,9 @@ function anchor(loose, x, top, w) {
   return { ships, anchorage: { x, y: top, w, h, labelY: top + 19 } }
 }
 
-// fleets: [{ key, label, detail, piers: [{ pier, projects }], loose: [project infos] }]
-// → { width, height, light, rose, fleets: [{ key, label, detail, labelX, labelY, top, bottom, water, quays, jetties, anchorage, ships }] }
+// fleets: [{ key, label, detail, folded, piers: [{ pier, projects }], loose: [project infos] }]
+//   folded: only the fleet's quay, its name on it — nothing at its piers or at anchor is laid out
+// → { width, height, light, rose, fleets: [{ key, label, detail, folded, labelX, labelY, top, bottom, water, quays, jetties, anchorage, ships }] }
 //   top, bottom: the fleet's stretch of the map, quay to the next fleet's quay; water: where what it holds ends
 //   quays:   [{ x, y, w, h, shore }]            shore: the land itself (the map's top edge), not a mole
 //   jetties: [{ pierId, name, empty, cx, x, y, w, h, berths, firstY }]
@@ -91,6 +93,16 @@ export function layoutHarbor(fleets, width = 900) {
     const top = y
     const labelX = (n === 0 ? 0 : MOLE_INSET) + 14
     const labelY = y + 18
+
+    if (fleet.folded) {
+      const shore = n === 0
+      const h = LABEL_H + BARE_QUAY
+      quays.push({ x: shore ? 0 : MOLE_INSET, y, w: shore ? W : W - 2 * MOLE_INSET, h, shore })
+      if (shore) light = { x: W - 24, y: y + h }
+      y += h + FOLDED_GAP
+      out.push({ key: fleet.key, label: fleet.label, detail: fleet.detail ?? '', folded: true, labelX, labelY, top, bottom: y, water: y - FOLDED_GAP, quays, jetties, anchorage, ships })
+      return
+    }
 
     // as many piers side by side as the width holds; a fleet with none
     // still has its quay, for its name
@@ -178,12 +190,43 @@ export function layoutHarbor(fleets, width = 900) {
     }
 
     const water = y - (fleet.piers.length || anchorage ? BASIN_GAP : 14)
-    out.push({ key: fleet.key, label: fleet.label, detail: fleet.detail ?? '', labelX, labelY, top, bottom: y, water, quays, jetties, anchorage, ships })
+    out.push({ key: fleet.key, label: fleet.label, detail: fleet.detail ?? '', folded: false, labelX, labelY, top, bottom: y, water, quays, jetties, anchorage, ships })
   })
 
   const height = Math.max(y - BASIN_GAP + PAD + 6, 120)
   if (out.length) out.at(-1).bottom = height
   return { width: W, height, light, rose, fleets: out }
+}
+
+// The ship to go to from `fromId` with an arrow key ('ArrowLeft', …), among
+// `ships` (a layout's, every fleet's): the nearest whose middle lies that
+// way, a step straight on counting for less than one aside — so ArrowDown
+// walks down a jetty's side, and ArrowRight crosses to the other side of it.
+// Home and End go to the first and the last. null where there is none.
+export function nearestShip(ships, fromId, key) {
+  if (!ships.length) return null
+  if (key === 'Home') return ships[0]
+  if (key === 'End') return ships.at(-1)
+  const from = ships.find(s => s.id === fromId)
+  if (!from) return ships[0]
+  const axis = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[key]
+  if (!axis) return null
+  const mid = s => [s.x + SHIP_L / 2, s.y + SHIP_B / 2]
+  const [fx, fy] = mid(from)
+  let best = null
+  let bestScore = Infinity
+  for (const s of ships) {
+    if (s === from) continue
+    const [x, y] = mid(s)
+    const dx = x - fx
+    const dy = y - fy
+    const ahead = dx * axis[0] + dy * axis[1]
+    const aside = Math.abs(dx * axis[1] + dy * axis[0])
+    if (ahead < 4) continue
+    const score = ahead + 3 * aside
+    if (score < bestScore) { best = s; bestScore = score }
+  }
+  return best
 }
 
 // The free berth at the end of a jetty: { x, y, dir }. It shows that there

@@ -675,6 +675,122 @@ describe('the harbor map', () => {
     })
     expect(res.problems.join(' | ')).toBe('')
   })
+
+  test('the ships are one tab stop: the arrow keys go between them, Escape puts the card away', async () => {
+    seedStore('admin')
+    const res = await expectCleanRender(DashboardView, {
+      route: { query: { view: 'map' } },
+      steps: async wrapper => {
+        const ship = name => wrapper.findAll('.hm-ship').find(s => s.attributes('aria-label').startsWith(name))
+        expect(ship('adm').attributes('tabindex')).toBe('0')
+        expect(ship('bobapp').attributes('tabindex')).toBe('-1')
+        await ship('adm').trigger('focus')
+        await ship('adm').trigger('keydown', { key: 'ArrowDown' }) // bob's fleet lies below
+        await settle()
+        expect(ship('bobapp').attributes('tabindex')).toBe('0')
+        expect(ship('adm').attributes('tabindex')).toBe('-1')
+        await ship('bobapp').trigger('focus')
+        await settle()
+        expect(wrapper.find('.harbor-card .vessel-name').text()).toBe('bobapp')
+        await wrapper.find('.harbor-card').trigger('keydown', { key: 'Escape' })
+        await settle()
+        expect(ship('bobapp').attributes('tabindex')).toBe('0')
+        await ship('bobapp').trigger('keydown', { key: 'Escape' })
+        await settle()
+        expect(wrapper.find('.harbor-card').exists()).toBe(false)
+        await ship('bobapp').trigger('keydown', { key: 'Home' })
+        await settle()
+        expect(ship('adm').attributes('tabindex')).toBe('0')
+      },
+    })
+    expect(res.problems.join(' | ')).toBe('')
+  })
+
+  test('a finger: the first tap brings up the card, the second opens the project', async () => {
+    seedStore('admin')
+    const pushed = []
+    const res = await expectCleanRender(DashboardView, {
+      route: { query: { view: 'map' } },
+      router: { push: to => pushed.push(to) },
+      steps: async wrapper => {
+        const adm = wrapper.findAll('.hm-ship').find(s => s.attributes('aria-label').startsWith('adm'))
+        const tap = async () => {
+          await adm.trigger('pointerdown', { pointerType: 'touch', button: 0 })
+          window.dispatchEvent(new Event('pointerup'))
+          await adm.trigger('click')
+          await settle()
+        }
+        await tap()
+        expect(pushed).toEqual([])
+        expect(wrapper.find('.harbor-card .vessel-name').text()).toBe('adm')
+        await tap()
+        expect(pushed).toEqual(['/projects/1'])
+        // a mouse opens at once
+        await wrapper.findAll('.hm-ship').find(s => s.attributes('aria-label').startsWith('bobapp')).trigger('click')
+        expect(pushed).toEqual(['/projects/1', '/projects/2'])
+      },
+    })
+    expect(res.problems.join(' | ')).toBe('')
+  })
+
+  test('an admin folds a fleet to its quay, remembered; a search opens it again', async () => {
+    seedStore('admin')
+    try { localStorage.removeItem('skeppa.foldedFleets') } catch { /* nothing folded */ }
+    const res = await expectCleanRender(DashboardView, {
+      route: { query: { view: 'map' } },
+      steps: async wrapper => {
+        const folds = wrapper.findAll('.hm-fold')
+        expect(folds.map(b => b.attributes('aria-label'))).toEqual(['Fold Your fleet', 'Fold bob'])
+        await folds[1].trigger('click')
+        await settle()
+        expect(wrapper.findAll('.hm-ship').map(s => s.attributes('aria-label'))).toEqual(['adm, online'])
+        expect(wrapper.findAll('.hm-fold')[1].attributes('aria-expanded')).toBe('false')
+        expect(wrapper.findAll('.hm-fleet-summary').map(t => t.text())).toEqual(['1 ship', '· 1 need attention']) // bobapp has new commits
+        expect(JSON.parse(localStorage.getItem('skeppa.foldedFleets'))).toEqual(['2'])
+      },
+    })
+    expect(res.problems.join(' | ')).toBe('')
+
+    // still folded next time; a search that finds bob's ship opens the fleet
+    seedStore('admin')
+    const again = await expectCleanRender(DashboardView, {
+      route: { query: { view: 'map', q: 'bobapp' } },
+      steps: async wrapper => {
+        expect(wrapper.findAll('.hm-ship').map(s => s.attributes('aria-label'))).toContain('bobapp, online')
+        expect(wrapper.findAll('.hm-fold')[1].attributes('title')).toMatch(/Opened for the search/)
+      },
+    })
+    expect(again.problems.join(' | ')).toBe('')
+    try { localStorage.removeItem('skeppa.foldedFleets') } catch { /* clean */ }
+  })
+
+  test('a tenant has one fleet: nothing to fold', async () => {
+    seedStore('tenant')
+    const res = await expectCleanRender(DashboardView, {
+      route: { query: { view: 'map' } },
+      steps: async wrapper => { expect(wrapper.find('.hm-fold').exists()).toBe(false) },
+    })
+    expect(res.problems.join(' | ')).toBe('')
+  })
+
+  test('out of sight, the map stands still', async () => {
+    seedStore('admin')
+    const res = await expectCleanRender(DashboardView, {
+      route: { query: { view: 'map' } },
+      steps: async wrapper => {
+        expect(wrapper.find('.harbor-map').classes()).not.toContain('asleep')
+        Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true })
+        document.dispatchEvent(new Event('visibilitychange'))
+        await settle()
+        expect(wrapper.find('.harbor-map').classes()).toContain('asleep')
+        Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
+        document.dispatchEvent(new Event('visibilitychange'))
+        await settle()
+        expect(wrapper.find('.harbor-map').classes()).not.toContain('asleep')
+      },
+    })
+    expect(res.problems.join(' | ')).toBe('')
+  })
 })
 
 describe('filtering the harbor', () => {

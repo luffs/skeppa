@@ -1,6 +1,23 @@
 <template>
-  <div ref="wrap" class="harbor-map">
+  <div ref="wrap" class="harbor-map" :class="{ asleep }">
     <div class="hm-stage">
+      <!-- Each fleet folds to its quay (only where there is more than one).
+           Buttons over the map rather than in it: before the ships in the
+           tab order, so that Tab from a ship goes on to its card. -->
+      <button
+        v-for="f in foldable"
+        :key="`fold-${f.key}`"
+        type="button"
+        class="hm-fold"
+        :class="{ folded: f.folded }"
+        :style="foldStyle(f)"
+        :aria-expanded="f.folded ? 'false' : 'true'"
+        :aria-label="`${f.folded ? 'Unfold' : 'Fold'} ${f.label}`"
+        :title="foldTitle(f)"
+        @click="toggleFleet(f.key)"
+      >
+        <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M2 3.5 L5 6.5 L8 3.5" /></svg>
+      </button>
       <svg
         ref="svg"
         class="hm-svg"
@@ -9,7 +26,7 @@
         :width="layout.width"
         :height="layout.height"
         role="group"
-        aria-label="The harbor as a map — each ship a project"
+        aria-label="The harbor as a map — each ship a project; the arrow keys go from ship to ship"
       >
         <defs>
           <linearGradient id="hm-depth" x1="0" y1="0" x2="0" y2="1">
@@ -49,7 +66,7 @@
             <line class="hm-quay-edge" :x1="q.x + (q.shore ? 0 : 8)" :x2="q.x + q.w - (q.shore ? 0 : 8)" :y1="q.y + q.h - 1.5" :y2="q.y + q.h - 1.5" />
             <line class="hm-bollards" :x1="q.x + 22" :x2="q.x + q.w - 22" :y1="q.y + q.h - 7" :y2="q.y + q.h - 7" />
           </g>
-          <text class="hm-fleet-label" :x="f.labelX" :y="f.labelY">{{ f.label }}<tspan v-if="f.detail" class="hm-fleet-detail" dx="10">{{ f.detail }}</tspan></text>
+          <text class="hm-fleet-label" :x="f.labelX + (foldable.length ? 16 : 0)" :y="f.labelY">{{ f.label }}<tspan v-if="f.detail" class="hm-fleet-detail" dx="10">{{ f.detail }}</tspan><template v-if="f.folded"><tspan class="hm-fleet-summary" dx="12">{{ summaryOf(f).ships }}</tspan><tspan v-if="summaryOf(f).attention" class="hm-fleet-summary attention"> · {{ summaryOf(f).attention }}</tspan><tspan v-if="summaryOf(f).underway" class="hm-fleet-summary underway"> · {{ summaryOf(f).underway }}</tspan></template></text>
 
           <!-- while a ship is dragged, the piers it may moor at say so -->
           <g
@@ -94,18 +111,20 @@
             v-for="(s, i) in f.ships"
             :key="s.id"
             :href="`/projects/${s.id}`"
-            tabindex="0"
+            :tabindex="s.id === tabStop ? 0 : -1"
+            :data-ship="s.id"
             class="hm-ship"
             :class="shipClasses(s)"
             :style="{ '--i': i % 7, transform: shipTransform(s) }"
             :aria-label="`${s.project.name}, ${statusOf(s)}`"
-            @click.prevent="openProject(s)"
+            @click.prevent="onShipClick(s)"
+            @keydown="onShipKey($event, s)"
             @pointerdown="onPress($event, s, f)"
             @dragstart.prevent
             @contextmenu="onContextMenu"
             @mouseenter="showCard(s)"
             @mouseleave="hideSoon"
-            @focus="showCard(s)"
+            @focus="onShipFocus(s)"
             @blur="hideSoon"
           >
             <title>{{ titleOf(s) }}</title>
@@ -201,6 +220,7 @@
         @mouseleave="hideSoon"
         @focusin="keepCard"
         @focusout="hideSoon"
+        @keydown="onCardKey"
       >
         <div class="vessel-rows"><ProjectRow :project="card.project" /></div>
       </div>
@@ -243,7 +263,7 @@ import { vesselState, statusWord } from '../lib/vessels.js'
 import { STATE_FILTERS, LEGEND_FILTERS } from '../lib/harborFilter.js'
 import { bytes } from '../lib/format.js'
 import { performAction } from '../lib/vesselActions.js'
-import { layoutHarbor, dropTarget, shipName, shipKind, cargoStacks, isWorn, SHIP_KINDS, SHIP_L, SHIP_B, NAME_H, BERTH, ROW, CHAIN } from '../lib/harborMap.js'
+import { layoutHarbor, dropTarget, nearestShip, shipName, shipKind, cargoStacks, isWorn, SHIP_KINDS, SHIP_L, SHIP_B, NAME_H, BERTH, ROW, CHAIN } from '../lib/harborMap.js'
 
 const CARD_W = 440
 const CAST_OFF = 7 // how far a ship under way has left its berth
@@ -254,6 +274,24 @@ const DRAG_START = 6 // how far a pressed ship is moved before that is a drag an
 const HOLD_MS = 320 // how long a finger rests on a ship before it is picked up — sooner, it is a scroll
 const HOLD_SLACK = 10 // how far that finger may wander meanwhile
 const SETTLE_MS = 900 // how long ships glide to their new berths after a move
+const FOLD_H = 26 // the strip of a quay its fleet's name is on, and its fold button
+const FOLDED_KEY = 'skeppa.foldedFleets'
+const ATTENTION = new Set(STATE_FILTERS.attention.states)
+
+// The fleets folded to their quays, by key, kept in the browser.
+function loadFolded() {
+  try {
+    const keys = JSON.parse(localStorage.getItem(FOLDED_KEY) ?? '[]')
+    return Object.fromEntries((Array.isArray(keys) ? keys : []).map(k => [String(k), true]))
+  } catch {
+    return {}
+  }
+}
+function saveFolded(folded) {
+  try {
+    localStorage.setItem(FOLDED_KEY, JSON.stringify(Object.keys(folded)))
+  } catch { /* storage refused: folded for this visit only */ }
+}
 
 // A four-pointed star about the origin, turned `turn` degrees: its outline,
 // and the half of every point that a compass rose fills in.
@@ -283,7 +321,14 @@ function star(tip, waist, turn) {
 // and a pennant goes up on one with new commits. A ship can be dragged to
 // another pier of its own fleet, or out into its open water to leave it at
 // anchor — the move the ⋮ menu offers too, which is what the keyboard has
-// (a pier is its owner's, so another fleet's refuses it). Under it a legend: what the colours
+// (a pier is its owner's, so another fleet's refuses it). The ships are one
+// stop in the tab order: the arrow keys go from ship to ship, Tab on into
+// the card of the one focused and Escape back out of it. A finger has no
+// hover: its first tap on a ship brings up the card, a second opens the
+// project. Where there is more than one fleet, each folds to its quay,
+// saying how many ships it holds and how many need attention; a search
+// opens the folded ones with a ship it finds. Nothing moves while the map
+// is out of sight. Under it a legend: what the colours
 // mean — each one a state filter, asked for with `toggle-state` — and what
 // the kinds of ship mean.
 export default {
@@ -316,11 +361,34 @@ export default {
       // to their berths rather than jump: on while a move settles.
       moving: null,
       settling: false,
+      // the ship the tab order stops at (roving tabindex), and the one a
+      // finger has tapped once — its card is up, a second tap opens it
+      focusId: null,
+      tapped: null,
+      // fleets folded to their quays: { <key>: true }
+      folded: loadFolded(),
+      // the animations pause while the map is scrolled away or the tab hidden
+      inView: true,
+      pageHidden: false,
     }
   },
   computed: {
     layout() {
-      return layoutHarbor(this.fleets, this.width)
+      return layoutHarbor(this.fleets.map(f => (this.isFolded(f) ? { ...f, folded: true } : f)), this.width)
+    },
+    ships() {
+      return this.layout.fleets.flatMap(f => f.ships)
+    },
+    // The one ship in the tab order: the last one focused while it is still
+    // on the map, the first one otherwise.
+    tabStop() {
+      return this.ships.some(s => s.id === this.focusId) ? this.focusId : (this.ships[0]?.id ?? null)
+    },
+    foldable() {
+      return this.layout.fleets.length > 1 ? this.layout.fleets : []
+    },
+    asleep() {
+      return !this.inView || this.pageHidden
     },
     // The rose's stars: a large one to the cardinal points, a small one between.
     rose() {
@@ -379,6 +447,10 @@ export default {
     },
   },
   watch: {
+    // a card that went away, or moved to another ship, takes the first tap with it
+    card(now) {
+      if (now?.id !== this.tapped) this.tapped = null
+    },
     // A change of state since the last look is an event. The first look
     // (created) is only the baseline: a harbor opened on a failed project
     // fires no flare.
@@ -409,6 +481,13 @@ export default {
     this.measure()
     // not passive: a finger dragging a ship must not scroll the page under it
     this.$refs.svg.addEventListener('touchmove', this.onTouchMove, { passive: false })
+    document.addEventListener('pointerdown', this.onPointerAnywhere, true)
+    document.addEventListener('visibilitychange', this.onVisibility)
+    this.onVisibility()
+    if (typeof IntersectionObserver !== 'undefined') {
+      this.sight = new IntersectionObserver(entries => { this.inView = entries.at(-1).isIntersecting })
+      this.sight.observe(this.$refs.wrap)
+    }
     if (typeof ResizeObserver !== 'undefined') {
       this.observer = new ResizeObserver(() => this.measure())
       this.observer.observe(this.$refs.wrap)
@@ -416,6 +495,9 @@ export default {
   },
   unmounted() {
     this.observer?.disconnect()
+    this.sight?.disconnect()
+    document.removeEventListener('pointerdown', this.onPointerAnywhere, true)
+    document.removeEventListener('visibilitychange', this.onVisibility)
     clearTimeout(this.hideTimer)
     clearTimeout(this.settleTimer)
     for (const t of this.eventTimers) clearTimeout(t)
@@ -509,8 +591,94 @@ export default {
       return Math.max(58, Math.round(this.pierLabel(j).length * 7.6 + 24))
     },
     openProject(s) {
-      if (this.swallowClick) return // the click that ends a drag is not a visit
       this.$router.push(`/projects/${s.id}`)
+    },
+    // A click opens the project — except the one that ends a drag, and a
+    // finger's first tap, which brings up the card instead.
+    onShipClick(s) {
+      if (this.swallowClick) return
+      const touch = this.lastPointer === 'touch'
+      this.lastPointer = ''
+      if (touch && this.tapped !== s.id) {
+        this.showCard(s)
+        this.tapped = s.id
+        return
+      }
+      this.openProject(s)
+    },
+    // A finger on anything but a ship or its card puts the card away.
+    onPointerAnywhere(event) {
+      if (event.pointerType !== 'touch' || !this.card) return
+      if (!event.target?.closest?.('.harbor-card, .hm-ship')) this.card = null
+    },
+    onShipFocus(s) {
+      this.focusId = s.id
+      this.showCard(s)
+    },
+    onShipKey(event, s) {
+      if (event.altKey || event.ctrlKey || event.metaKey) return
+      if (event.key === 'Escape') {
+        this.card = null
+        return
+      }
+      if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return
+      event.preventDefault()
+      const next = nearestShip(this.ships, s.id, event.key)
+      if (next) this.focusShip(next.id)
+    },
+    // Escape in the card (unless its menu took it) goes back to the ship.
+    onCardKey(event) {
+      if (event.key !== 'Escape' || event.defaultPrevented || !this.card) return
+      event.preventDefault()
+      this.focusShip(this.card.id)
+    },
+    focusShip(id) {
+      this.focusId = id
+      this.$nextTick(() => this.$refs.svg?.querySelector(`[data-ship="${id}"]`)?.focus())
+    },
+    onVisibility() {
+      this.pageHidden = typeof document !== 'undefined' && document.visibilityState === 'hidden'
+    },
+
+    // --- folding a fleet to its quay ---
+    // Folded, unless a search finds something in it.
+    isFolded(f) {
+      if (!this.folded[String(f.key)] || this.fleets.length < 2) return false
+      return !(this.matches && this.projectsOf(f).some(p => this.matches.has(p.id)))
+    },
+    projectsOf(f) {
+      return [...f.piers.flatMap(p => p.projects), ...f.loose]
+    },
+    // Folds or unfolds a fleet; one a search has opened is unfolded for good.
+    toggleFleet(key) {
+      const k = String(key)
+      if (this.folded[k]) delete this.folded[k]
+      else this.folded[k] = true
+      saveFolded(this.folded)
+      if (this.card && !this.ships.some(s => s.id === this.card.id)) this.card = null
+    },
+    foldStyle(f) {
+      const q = f.quays[0]
+      return { left: `${q.x}px`, top: `${q.y}px`, width: `${q.w}px`, height: `${FOLD_H}px` }
+    },
+    foldTitle(f) {
+      if (f.folded) return `Show ${f.label}'s piers and ships`
+      if (this.folded[String(f.key)]) return 'Opened for the search — click to keep it open'
+      return `Fold ${f.label} to its quay`
+    },
+    // What a folded quay says: how many ships, and how many of them need
+    // attention or are under way.
+    summaryOf(f) {
+      const fleet = this.fleets.find(x => x.key === f.key)
+      const states = (fleet ? this.projectsOf(fleet) : []).map(p => vesselState(liveProject(p.id)))
+      const n = states.length
+      const attention = states.filter(st => ATTENTION.has(st)).length
+      const underway = states.filter(st => st === 'underway').length
+      return {
+        ships: n === 1 ? '1 ship' : `${n} ships`,
+        attention: attention ? `${attention} ${STATE_FILTERS.attention.that}` : '',
+        underway: underway ? `${underway} under way` : '',
+      }
     },
     showCard(s) {
       if (this.drag) return
@@ -536,6 +704,7 @@ export default {
     // moved a little, with a finger once it has rested there (a finger that
     // moves at once is scrolling the page).
     onPress(event, ship, fleet) {
+      this.lastPointer = event.pointerType
       if ((event.button ?? 0) !== 0 || this.press || this.moving != null) return
       const at = this.mapPoint(event)
       const touch = event.pointerType === 'touch'
