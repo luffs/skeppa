@@ -70,7 +70,8 @@ export default {
       if (!REPO_RE.test(repo ?? '')) return
       if (lists.has(repo)) return this.use(lists.get(repo))
       // a repository picked (or opened) is asked about at once; one being typed when the typing stops
-      this.timer = setTimeout(() => this.load(repo), before === undefined || !before ? 0 : WAIT_MS)
+      if (!before) this.load(repo)
+      else this.timer = setTimeout(() => this.load(repo), WAIT_MS)
     },
     async load(repo) {
       this.loading = true

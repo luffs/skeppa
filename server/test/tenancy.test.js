@@ -206,6 +206,24 @@ test('the repo picker is scoped to the linked GitHub account', async () => {
   expect((await asUser(routes, bob).request('/setup')).status).toBe(403)
 })
 
+test('each repo says whether it is the asker\'s: their GitHub login, or for an admin without one the App\'s owner', async () => {
+  const { db, config, admin, bob } = setup()
+  const repos = [{ full_name: 'BobGH/site', owner: 'BobGH' }, { full_name: 'pilot/panel', owner: 'pilot' }]
+  let ownerAsked = 0
+  const github = { listRepos: async () => repos, appOwnerLogin: async () => (ownerAsked++, 'Pilot') }
+  const routes = githubRoutes({ db, config, github })
+  const mine = async user => (await (await asUser(routes, user).request('/repos')).json()).filter(r => r.mine).map(r => r.full_name)
+
+  expect(await mine({ ...admin, github_login: '' })).toEqual(['pilot/panel']) // the App's owner, any case
+  expect(await mine({ ...admin, github_login: 'bobgh' })).toEqual(['BobGH/site']) // a login of their own wins
+  expect(await mine(bob)).toEqual(['BobGH/site'])
+  expect(ownerAsked).toBe(1) // only asked for the admin without a login
+  // GitHub cannot say: nothing is anyone's, and the listing still comes
+  const blind = githubRoutes({ db, config, github: { listRepos: async () => repos, appOwnerLogin: async () => '' } })
+  const got = await (await asUser(blind, { ...admin, github_login: '' }).request('/repos')).json()
+  expect(got.map(r => r.mine)).toEqual([false, false])
+})
+
 test('requireAdmin turns tenants away from panel configuration', async () => {
   const app = new Hono()
   app.use('*', (c, next) => { c.set('user', { id: 2, role: 'tenant' }); return next() })

@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest'
-import { searchWords, matchesRepo, sortRepos, groupRepos, highlight } from '../src/lib/repos.js'
+import { searchWords, matchesRepo, sortRepos, groupRepos, inScope, highlight } from '../src/lib/repos.js'
 
 // The repository picker's logic: search in any word order, three sorts that
 // never shuffle ties, groups only when there is more than one account, and
@@ -50,6 +50,15 @@ describe('groups', () => {
   test('several accounts are groups, A–Z, each in the order it was given', () => {
     const groups = groupRepos([repo('zed/b'), repo('Amy/c'), repo('zed/a')])
     expect(groups.map(g => [g.owner, names(g.repos)])).toEqual([['Amy', ['Amy/c']], ['zed', ['zed/b', 'zed/a']]])
+  })
+  test('yours first, the others A–Z after; Mine shows only yours', () => {
+    const list = [repo('Amy/c'), repo('zed/b', { mine: true }), repo('bob/x'), repo('zed/a', { mine: true })]
+    const groups = groupRepos(list)
+    expect(groups.map(g => [g.owner, g.mine])).toEqual([['zed', true], ['Amy', false], ['bob', false]])
+    expect(names(groups[0].repos)).toEqual(['zed/b', 'zed/a'])
+    expect(names(list.filter(r => inScope(r, 'mine')))).toEqual(['zed/b', 'zed/a'])
+    expect(list.filter(r => inScope(r, 'all')).length).toBe(4)
+    expect(groupRepos([repo('zed/a', { mine: true })])).toEqual([{ owner: null, mine: true, repos: [repo('zed/a', { mine: true })] }])
   })
 })
 

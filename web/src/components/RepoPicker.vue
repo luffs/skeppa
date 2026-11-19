@@ -35,6 +35,18 @@
             @keydown.enter.prevent="pickHighlighted"
             @keydown.esc="cancelChange"
           />
+          <!-- yours alone, or everyone's with yours first — where there are both -->
+          <div v-if="canScope" class="repo-sort repo-scope" role="group" aria-label="Show the repositories of">
+            <button
+              v-for="s in scopes"
+              :key="s.key"
+              type="button"
+              class="small"
+              :class="scope === s.key ? '' : 'secondary'"
+              :aria-pressed="scope === s.key ? 'true' : 'false'"
+              @click="setScope(s.key)"
+            >{{ s.label }}</button>
+          </div>
           <div class="repo-sort" role="group" aria-label="Sort repositories by">
             <button
               v-for="s in sorts"
@@ -52,7 +64,7 @@
           <p v-if="loading" class="hint repo-empty">Loading repositories…</p>
           <template v-for="g in groups" :key="g.owner ?? '-'">
             <div v-if="g.owner" class="repo-group" role="presentation">
-              {{ g.owner }} <span class="repo-group-count">{{ g.repos.length }}</span>
+              {{ g.owner }} <span v-if="g.mine" class="repo-group-mine">yours</span> <span class="repo-group-count">{{ g.repos.length }}</span>
             </div>
             <div
               v-for="r in g.repos"
@@ -78,6 +90,7 @@
           </template>
           <p v-if="!loading && !shown.length" class="hint repo-empty">
             <template v-if="query">No repository matches “{{ query }}”.</template>
+            <template v-else-if="scope === 'mine' && canScope">None of yours.</template>
             <template v-else>No repositories yet.</template>
           </p>
           <!-- What is left out of the list is a question about the list: asked at its end. -->
@@ -110,9 +123,21 @@
 import StableLabel from './StableLabel.vue'
 import { store } from '../store.js'
 import { timeAgo } from '../lib/format.js'
-import { REPO_SORTS, searchWords, matchesRepo, sortRepos, groupRepos, highlight } from '../lib/repos.js'
+import { REPO_SORTS, searchWords, matchesRepo, sortRepos, groupRepos, inScope, highlight } from '../lib/repos.js'
 
 const SORT_KEY = 'skeppa.repoSort'
+const SCOPE_KEY = 'skeppa.repoScope'
+const SCOPES = [
+  { key: 'all', label: 'All' },
+  { key: 'mine', label: 'Mine' },
+]
+const loadScope = () => {
+  try {
+    return localStorage.getItem(SCOPE_KEY) === 'mine' ? 'mine' : 'all'
+  } catch {
+    return 'all'
+  }
+}
 const loadSort = () => {
   try {
     const s = localStorage.getItem(SORT_KEY)
@@ -127,7 +152,8 @@ let uid = 0
 // Picking the repository to moor: a search box and a list in the page, not
 // a dropdown — on the mooring form this is the first and biggest choice.
 // Sorted by name, last push or creation (remembered per browser), grouped by
-// account when there is more than one, each row with what tells repos apart
+// account when there is more than one — yours first (what the server marks
+// `mine`), or yours alone (All | Mine, remembered too) — each row with what tells repos apart
 // (language, last push, description) and whether a project already uses it.
 // v-model is the full name; `picked` hands the whole repo over, `refresh`
 // asks the parent for the list again, past the server's cache. Once picked,
@@ -152,6 +178,8 @@ export default {
       showArchived: false,
       highlightedName: '',
       sorts: REPO_SORTS,
+      scope: loadScope(),
+      scopes: SCOPES,
       // The list is open while nothing is picked, or after Change.
       choosing: !this.modelValue,
     }
@@ -163,13 +191,21 @@ export default {
     owners() {
       return new Set(this.repos.map(r => r.owner))
     },
+    // Yours and others' both: only then is there a choice to make.
+    canScope() {
+      return this.repos.some(r => r.mine) && this.repos.some(r => !r.mine)
+    },
+    // The scope in force: Mine only where it means something.
+    scoped() {
+      return this.canScope ? this.repos.filter(r => inScope(r, this.scope)) : this.repos
+    },
     archivedCount() {
-      return this.repos.filter(r => r.archived).length
+      return this.scoped.filter(r => r.archived).length
     },
     // What the list shows: matching, archived ones only on request (the
     // picked one always), in the chosen order.
     shown() {
-      const list = this.repos.filter(r =>
+      const list = this.scoped.filter(r =>
         (this.showArchived || !r.archived || r.full_name === this.modelValue) && matchesRepo(r, this.words))
       return sortRepos(list, this.sort)
     },
@@ -201,7 +237,8 @@ export default {
       const n = this.repos.length
       const accounts = this.owners.size
       if (!n) return ''
-      return `${n} repo${n === 1 ? '' : 's'}${accounts > 1 ? ` across ${accounts} accounts` : ''}`
+      const all = `${n} repo${n === 1 ? '' : 's'}${accounts > 1 ? ` across ${accounts} accounts` : ''}`
+      return this.canScope && this.scope === 'mine' ? `${this.scoped.length} of yours — ${all}` : all
     },
   },
   watch: {
@@ -225,6 +262,15 @@ export default {
         ? (r.created_at ? `created ${timeAgo(r.created_at)}` : '')
         : (r.pushed_at ? `pushed ${timeAgo(r.pushed_at)}` : 'never pushed')
       return [r.language, when, r.description].filter(Boolean).join(' · ')
+    },
+    setScope(key) {
+      this.scope = key
+      this.highlightedName = this.flat[0]?.full_name ?? ''
+      try {
+        localStorage.setItem(SCOPE_KEY, key)
+      } catch {
+        // not remembered — fine
+      }
     },
     setSort(key) {
       this.sort = key

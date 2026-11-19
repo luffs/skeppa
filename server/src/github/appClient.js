@@ -53,6 +53,7 @@ export class GitHubApp {
     this._installationId = null
     this._repos.clear()
     this._installations = null
+    this._appOwner = null
   }
 
   // Exchange a one-time code from GitHub's app-manifest creation flow for the
@@ -161,6 +162,19 @@ export class GitHubApp {
   // App metadata (name, slug, html_url) — the slug builds the install link.
   async getApp() {
     return this._fetch('/app', { jwt: await this._appJwt() })
+  }
+
+  // The account the App belongs to — the panel owner's, as a rule: whose
+  // repos an admin with no GitHub login of their own counts as theirs in the
+  // repo picker. Asked once per credentials; '' when GitHub cannot say.
+  async appOwnerLogin() {
+    if (this._appOwner == null) {
+      this._appOwner = this.getApp().then(app => app?.owner?.login ?? '', () => {
+        this._appOwner = null // asked again next time
+        return ''
+      })
+    }
+    return this._appOwner
   }
 
   // Unlike getInstallationId this never throws on "none yet" — the first-run

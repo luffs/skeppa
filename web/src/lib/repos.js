@@ -31,19 +31,24 @@ export function sortRepos(repos, sort = 'name') {
   return list.sort(byName)
 }
 
-// One group per account, accounts A–Z — but only when there is more than
-// one: a single account is just a list, with owner null.
+// One group per account — yours first (the repos the server marks `mine`),
+// then the others A–Z — but only when there is more than one: a single
+// account is just a list, with owner null. `mine` on a group: it is yours.
 export function groupRepos(sorted) {
   const owners = new Map()
   for (const r of sorted) {
-    if (!owners.has(r.owner)) owners.set(r.owner, [])
-    owners.get(r.owner).push(r)
+    if (!owners.has(r.owner)) owners.set(r.owner, { owner: r.owner, mine: false, repos: [] })
+    const g = owners.get(r.owner)
+    g.repos.push(r)
+    if (r.mine) g.mine = true
   }
-  if (owners.size <= 1) return sorted.length ? [{ owner: null, repos: sorted }] : []
-  return [...owners.entries()]
-    .sort(([a], [b]) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
-    .map(([owner, repos]) => ({ owner, repos }))
+  if (owners.size <= 1) return sorted.length ? [{ owner: null, mine: Boolean(sorted[0].mine), repos: sorted }] : []
+  return [...owners.values()]
+    .sort((a, b) => (b.mine - a.mine) || a.owner.localeCompare(b.owner, undefined, { sensitivity: 'base' }))
 }
+
+// Which repos a scope shows: 'mine' only yours, anything else all of them.
+export const inScope = (repo, scope) => scope !== 'mine' || Boolean(repo.mine)
 
 // The text cut into [{ text, hit }] pieces where the words occur, for a
 // template to wrap the hits in <mark> — plain text pieces, never HTML.

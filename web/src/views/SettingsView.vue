@@ -68,9 +68,9 @@
               style="flex: 1 1 160px; width: auto"
             />
             <input
-              v-if="editUser.role === 'tenant'"
               v-model="editUser.github_login"
               placeholder="GitHub login (optional)"
+              :title="editUser.role === 'tenant' ? 'The repositories they may moor: their installations\' only' : 'Whose repositories are listed first when mooring — the GitHub App\'s owner when empty'"
               class="code"
               style="flex: 1 1 140px; width: auto"
             />
@@ -160,9 +160,9 @@
             style="flex: 1 1 160px; width: auto"
           />
           <input
-            v-if="newUser.role === 'tenant'"
             v-model="newUser.github_login"
             placeholder="GitHub login (optional)"
+            :title="newUser.role === 'tenant' ? 'The repositories they may moor: their installations\' only' : 'Whose repositories are listed first when mooring — the GitHub App\'s owner when empty'"
             class="code"
             style="flex: 1 1 140px; width: auto"
           />

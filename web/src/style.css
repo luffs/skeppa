@@ -901,14 +901,28 @@ a.feed-project:hover { color: var(--accent); }
 .repo-picker-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 10px; border-bottom: 1px solid var(--line-soft); }
 .repo-picker-bar .repo-search { flex: 1 1 220px; min-width: 0; margin: 0; }
 .repo-sort { display: flex; gap: 4px; }
-.repo-list { max-height: 360px; overflow-y: auto; overscroll-behavior: contain; }
+/* The list is a well of its own, a shade off the frame around it, with a
+   shadow at whichever edge has more to scroll to (the covers scroll with
+   the rows, the shadows stay with the box). */
+.repo-list {
+  --well: color-mix(in srgb, var(--paper) 65%, var(--panel));
+  max-height: 360px; overflow-y: auto; overscroll-behavior: contain;
+  border-radius: 0 0 9px 9px;
+  background:
+    linear-gradient(var(--well) 30%, transparent) top / 100% 24px no-repeat local,
+    linear-gradient(transparent, var(--well) 70%) bottom / 100% 24px no-repeat local,
+    radial-gradient(farthest-side at 50% 0, var(--line-strong), transparent) top / 100% 8px no-repeat scroll,
+    radial-gradient(farthest-side at 50% 100%, var(--line-strong), transparent) bottom / 100% 8px no-repeat scroll,
+    var(--well);
+}
 .repo-group {
   position: sticky; top: 0; z-index: 1;
-  padding: 7px 12px 5px; background: var(--panel);
+  padding: 7px 12px 5px; background: var(--well);
   font-size: 10.5px; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; color: var(--dim);
   border-bottom: 1px solid var(--line-soft);
 }
 .repo-group-count { font-family: var(--mono); letter-spacing: 0; margin-left: 4px; }
+.repo-group-mine { margin-left: 4px; padding: 1px 6px; border-radius: 99px; background: var(--blue-tint); color: var(--accent); letter-spacing: 0.08em; }
 .repo-option { padding: 9px 12px; cursor: pointer; border-bottom: 1px solid var(--line-soft); }
 .repo-option:last-child { border-bottom: none; }
 .repo-option.highlighted { background: var(--hover-tint); }

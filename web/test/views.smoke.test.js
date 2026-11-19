@@ -1282,6 +1282,44 @@ describe('the project page', () => {
   })
 })
 
+// An admin's own repos come first, under a "yours" mark, or alone with
+// Mine — remembered; with only one kind there is nothing to choose.
+test('the repository picker lists yours first, or only yours', async () => {
+  seedStore('admin')
+  const repo = (owner, name, mine) => ({ full_name: `${owner}/${name}`, owner, name, private: false, default_branch: 'main', pushed_at: ISO, created_at: ISO, description: '', language: '', archived: false, fork: false, mine })
+  const repos = [repo('amy', 'a1', false), repo('cap', 'c1', true), repo('zed', 'z1', false), repo('cap', 'c2', true)]
+  const get = vi.spyOn(api, 'get').mockImplementation(async url => (url.startsWith('/api/github/repos') ? repos : {}))
+  try { localStorage.clear() } catch { /* all, by name */ }
+  const page = await expectCleanRender(ProjectNewView, {
+    steps: async wrapper => {
+      const rows = () => wrapper.findAll('.repo-option').map(r => r.find('.repo-name').text())
+      const groups = () => wrapper.findAll('.repo-group').map(g => g.text().replace(/\s+/g, ' '))
+      expect(groups()).toEqual(['cap yours 2', 'amy 1', 'zed 1'])
+      expect(rows()).toEqual(['c1', 'c2', 'a1', 'z1'])
+      const scope = label => wrapper.findAll('.repo-scope button').find(b => b.text() === label)
+      expect(scope('All').attributes('aria-pressed')).toBe('true')
+      await scope('Mine').trigger('click')
+      await settle()
+      expect(rows()).toEqual(['c1', 'c2'])
+      expect(wrapper.find('.repo-meta').text()).toContain('2 of yours — 4 repos across 3 accounts')
+      expect(localStorage.getItem('skeppa.repoScope')).toBe('mine')
+    },
+  })
+  expect(page.problems.join(' | ')).toBe('')
+
+  // nothing of yours (or nothing but): no choice offered, everything listed
+  get.mockImplementation(async url => (url.startsWith('/api/github/repos') ? repos.map(r => ({ ...r, mine: false })) : {}))
+  const none = await expectCleanRender(ProjectNewView, {
+    steps: async wrapper => {
+      expect(wrapper.find('.repo-scope').exists()).toBe(false)
+      expect(wrapper.findAll('.repo-option').length).toBe(4) // Mine remembered, but it means nothing here
+    },
+  })
+  expect(none.problems.join(' | ')).toBe('')
+  get.mockRestore()
+  try { localStorage.clear() } catch { /* clean */ }
+})
+
 // Mooring: the repository is picked from a searchable, sortable list, with
 // repos a project already uses marked, archived ones tucked away, and the
 // pick filling in the branch and the name — then the list folds into the

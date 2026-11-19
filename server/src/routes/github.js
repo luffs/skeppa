@@ -23,14 +23,19 @@ export function githubRoutes({ db, config, github }) {
 
   // Tenant-reachable: the moor form needs a repo list. A tenant sees only
   // repos from installations owned by their linked GitHub account; without
-  // a link they see none (and moor via git URL instead).
+  // a link they see none (and moor via git URL instead). Each repo says
+  // whether it is `mine`: owned by the asker's GitHub account — their
+  // linked login, or for an admin without one the account the App belongs
+  // to — which the picker lists first, or alone.
   app.get('/repos', async c => {
     const user = c.get('user')
     if (user && user.role !== 'admin' && !user.github_login) return c.json([])
     try {
       // ?fresh=1 is the picker's Refresh: past the cache, straight to GitHub.
       const fresh = c.req.query('fresh') === '1'
-      return c.json(await github.listRepos(user && user.role !== 'admin' ? user.github_login : null, { fresh }))
+      const repos = await github.listRepos(user && user.role !== 'admin' ? user.github_login : null, { fresh })
+      const me = (user?.github_login || (user?.role === 'admin' ? await github.appOwnerLogin?.() : '') || '').toLowerCase()
+      return c.json(repos.map(r => ({ ...r, mine: Boolean(me) && String(r.owner ?? '').toLowerCase() === me })))
     } catch (err) {
       return c.json({ error: err.message }, 502)
     }
