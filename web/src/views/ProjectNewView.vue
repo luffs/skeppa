@@ -183,14 +183,18 @@ export default {
     },
     // What the repository's package.json suggests for its commands — read
     // by the server, offered as one-click values, never filled in by itself.
-    // A late answer for a repository no longer picked is dropped.
+    // A late answer for a repository or branch no longer picked is dropped,
+    // and the one already read is not read again.
     async loadSuggestion(repo, branch) {
+      const key = `${repo}@${branch}`
+      if (key === this.suggestionFor) return
+      this.suggestionFor = key
       this.suggestion = null
       this.suggested = { ...GENERIC_SUGGESTED }
       try {
         const q = new URLSearchParams({ repo, branch })
         const found = await api.get(`/api/github/repos/suggest?${q}`)
-        if (this.form.repo_full_name !== repo || !found) return
+        if (this.suggestionFor !== key || !found) return
         this.suggestion = found
         if (found.found) this.suggested = { deploy: found.deploy, start: found.start }
       } catch {
@@ -239,6 +243,11 @@ export default {
       handler(none) {
         if (!this.runtimeTouched) this.form.runtime = none ? 'pm2' : 'container'
       },
+    },
+    // Another branch may build differently: read its package.json too.
+    'form.branch'(branch) {
+      const repo = this.form.repo_full_name
+      if (!this.externalRepo && branch && this.repos.some(r => r.full_name === repo)) this.loadSuggestion(repo, branch)
     },
     'form.pm2_name'(val) {
       // Consider the field "touched" once it diverges from the auto-generated value.

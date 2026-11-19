@@ -1337,6 +1337,12 @@ a.repo-link:hover { color: var(--accent); }
 .text-link:hover { text-decoration: underline; }
 .row > * { margin: 0; }
 
+/* The branch: its select (or the typed name) takes the row, the switch beside it. */
+.branch-select .row { flex-wrap: nowrap; }
+.branch-select .row > select, .branch-select .row > input { flex: 1; min-width: 0; width: auto; }
+.branch-select .row > button { flex: none; white-space: nowrap; }
+.branch-select .hint { margin-top: 6px; }
+
 /* ---- narrow screens ---- */
 
 /* Below this the masthead no longer fits on one line: give the section links

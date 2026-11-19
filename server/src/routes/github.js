@@ -36,22 +36,36 @@ export function githubRoutes({ db, config, github }) {
     }
   })
 
+  // A tenant asks only about repos of their own installation — anything
+  // else is a 404, as everywhere. Admins ask about any.
+  async function mayAsk(user, repo) {
+    if (!user || user.role === 'admin') return true
+    const inst = await github.getRepoInstallation(repo).catch(() => null)
+    return Boolean(inst && user.github_login && inst.account.toLowerCase() === user.github_login.toLowerCase())
+  }
+
   // What the repository's root suggests for its deploy script, start
-  // command and runtime (lib/suggest.js). A tenant asks only about repos of
-  // their own installation — anything else is a 404, as everywhere.
+  // command and runtime (lib/suggest.js).
   app.get('/repos/suggest', async c => {
     const repo = c.req.query('repo') ?? ''
     const branch = c.req.query('branch') || 'main'
     if (!REPO_RE.test(repo) || !isValidBranch(branch)) return c.json({ error: 'validation failed' }, 400)
-    const user = c.get('user')
     try {
-      if (user && user.role !== 'admin') {
-        const inst = await github.getRepoInstallation(repo).catch(() => null)
-        if (!inst || !user.github_login || inst.account.toLowerCase() !== user.github_login.toLowerCase()) {
-          return c.json({ error: 'not found' }, 404)
-        }
-      }
+      if (!(await mayAsk(c.get('user'), repo))) return c.json({ error: 'not found' }, 404)
       return c.json(suggestSetup(await github.readRepoRoot(repo, branch)))
+    } catch (err) {
+      return c.json({ error: err.message }, 502)
+    }
+  })
+
+  // The repository's branches, for the branch select: { default_branch,
+  // branches, more } (github/appClient.js listBranches).
+  app.get('/repos/branches', async c => {
+    const repo = c.req.query('repo') ?? ''
+    if (!REPO_RE.test(repo)) return c.json({ error: 'validation failed' }, 400)
+    try {
+      if (!(await mayAsk(c.get('user'), repo))) return c.json({ error: 'not found' }, 404)
+      return c.json(await github.listBranches(repo))
     } catch (err) {
       return c.json({ error: err.message }, 502)
     }

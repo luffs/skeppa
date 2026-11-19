@@ -20,8 +20,7 @@
           <FieldError :errors="shown" name="repo_full_name" />
         </template>
       </slot>
-      <label>Branch</label>
-      <input :value="form.branch" @input="set('branch', $event.target.value)" class="code" placeholder="main" />
+      <BranchSelect :model-value="form.branch" :repo="external ? '' : form.repo_full_name" @update:model-value="set('branch', $event)" />
       <FieldError :errors="shown" name="branch" />
       <template v-if="!external">
         <label class="check-label">
@@ -137,6 +136,7 @@
 </template>
 
 <script>
+import BranchSelect from './BranchSelect.vue'
 import CollapseSection from './CollapseSection.vue'
 import FieldError from './FieldError.vue'
 import PierPicker from './PierPicker.vue'
@@ -157,7 +157,7 @@ const RUNTIME_NAME = { pm2: 'pm2 process', container: 'container', static: 'stat
 // that field is edited, and a folded section holding one opens.
 export default {
   name: 'ProjectFields',
-  components: { CollapseSection, FieldError, PierPicker, RuntimeChoice, RuntimeFields, RoutingFields },
+  components: { BranchSelect, CollapseSection, FieldError, PierPicker, RuntimeChoice, RuntimeFields, RoutingFields },
   props: {
     form: { type: Object, required: true },
     // Rigging (an existing project) rather than the mooring form.

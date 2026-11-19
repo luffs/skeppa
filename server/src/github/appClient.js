@@ -212,6 +212,24 @@ export class GitHubApp {
     }
   }
 
+  // A repository's branches, by name, and which one is its default — what
+  // the branch select in the mooring form and Rigging offers. Up to
+  // MAX_BRANCH_PAGES pages of 100 (GitHub's branch listing has no total to
+  // fetch them all at once); `more` says the list was cut there.
+  async listBranches(repoFullName) {
+    const token = await this.getInstallationToken(repoFullName)
+    const page = n => this._fetch(`/repos/${repoFullName}/branches?per_page=100&page=${n}`, { token })
+    const [repo, first] = await Promise.all([this._fetch(`/repos/${repoFullName}`, { token }), page(1)])
+    const pages = [first ?? []]
+    while (pages.at(-1).length === 100 && pages.length < MAX_BRANCH_PAGES) pages.push((await page(pages.length + 1)) ?? [])
+    const names = pages.flat().map(b => b.name).filter(n => typeof n === 'string')
+    return {
+      default_branch: repo?.default_branch ?? '',
+      branches: [...new Set(names)].sort((a, b) => a.localeCompare(b)),
+      more: pages.at(-1).length === 100,
+    }
+  }
+
   // A repository's root: its file names, and package.json if there is one —
   // what the mooring form's suggestions are read from (lib/suggest.js).
   async readRepoRoot(repoFullName, branch) {
@@ -335,6 +353,7 @@ export class GitHubApp {
 // How long a listing is answered without asking GitHub again. Older ones are
 // still answered at once, and refreshed behind the answer.
 export const REPOS_FRESH_MS = 10 * 60_000
+export const MAX_BRANCH_PAGES = 10
 const INSTALLATIONS_FRESH_MS = 10 * 60_000
 
 // What the repo picker sorts, groups and describes by — all already in the
