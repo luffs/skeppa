@@ -98,7 +98,11 @@
         <div v-for="p in containerPaths" :key="p.path">
           <dt class="mono">{{ p.path }}</dt>
           <dd>{{ p.what }}<template v-if="p.env">, holds <span class="mono">.env</span></template></dd>
-          <dd v-if="p.host" class="mono container-path-host" :title="p.title || p.host">{{ p.host }}</dd>
+          <!-- cut short where it is long, so it is copied whole with the button -->
+          <dd v-if="p.host" class="container-path-host" :title="p.title || p.host">
+            <span class="mono container-path-text">{{ p.host }}</span>
+            <CopyButton :text="p.title || p.host" :label="`Copy ${p.title || p.host}`" />
+          </dd>
         </div>
       </dl>
       <!-- Server directories in the container: an admin's to set (the server enforces it). -->
@@ -134,6 +138,7 @@ import ImagePicker from './ImagePicker.vue'
 import FieldError from './FieldError.vue'
 import RuntimeChoice from './RuntimeChoice.vue'
 import PublishDirField from './PublishDirField.vue'
+import CopyButton from './CopyButton.vue'
 import { store } from '../store.js'
 
 // The Runtime section's body: the runtime (RuntimeChoice) and what runs —
@@ -144,7 +149,7 @@ import { store } from '../store.js'
 // rhythm and the rule between parts.
 export default {
   name: 'RuntimeFields',
-  components: { ImagePicker, FieldError, RuntimeChoice, PublishDirField },
+  components: { ImagePicker, FieldError, RuntimeChoice, PublishDirField, CopyButton },
   props: {
     runtime: { type: String, default: 'container' },
     startCommand: { type: String, default: '' },

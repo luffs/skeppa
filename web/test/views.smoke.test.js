@@ -1488,7 +1488,7 @@ test("Rigging offers only the owner's piers, and New pier… asks for a name", a
 // Host mounts: an admin writes them where MOUNT_ROOTS allows any, is told
 // how to allow them where it does not; a tenant reads what they were given.
 test('Rigging lets an admin write host mounts, and shows a tenant the ones they have', async () => {
-  const paths = wrapper => wrapper.findAll('.container-paths > div').map(row => row.findAll('dt, dd').map(c => c.text().replace(/\s+/g, ' ')))
+  const paths = wrapper => wrapper.findAll('.container-paths > div').map(row => row.findAll('dt, dd').map(c => (c.find('.container-path-text').exists() ? c.find('.container-path-text') : c).text().replace(/\s+/g, ' ')))
   seedStore('admin')
   store.live.system.mountRoots = ['/mnt/nas']
   const admin = await expectCleanRender(ProjectView, {
@@ -1511,6 +1511,13 @@ test('Rigging lets an admin write host mounts, and shows a tenant the ones they 
       ])
       // from the apps directory's name down; the whole path on hover
       expect(wrapper.find('.container-path-host').attributes('title')).toBe('/home/skeppa/apps/adm/source')
+      // and copied whole, however much of it shows
+      const writeText = vi.fn(async () => {})
+      Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+      await wrapper.find('.container-path-host .copy-button').trigger('click')
+      await settle()
+      expect(writeText).toHaveBeenCalledWith('/home/skeppa/apps/adm/source')
+      expect(wrapper.find('.copy-button').classes()).toContain('copied')
       wrapper.vm.edit.write_env_file = true
       await settle()
       expect(paths(wrapper)[1][1]).toBe('writable, kept between deploys, holds .env')

@@ -364,7 +364,15 @@ textarea { vertical-align: top; }
 .container-paths > div:first-child { border-top: 0; }
 .container-paths dt { color: var(--ink); overflow-wrap: anywhere; }
 .container-paths dd { margin: 0; min-width: 0; }
-.container-path-host { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.container-path-host { display: flex; align-items: baseline; gap: 4px; }
+.container-path-text { font-size: 12px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* A quiet icon button: a value cut short is copied whole. */
+.copy-button {
+  flex: none; padding: 0 4px; border: 0; border-radius: 4px; background: none; box-shadow: none;
+  color: var(--dim); font-size: 13px; line-height: 1.4; cursor: pointer;
+}
+.copy-button:hover, .copy-button:focus-visible { color: var(--accent); background: var(--gray-tint); }
+.copy-button.copied { color: var(--green); }
 @media (max-width: 560px) {
   .container-paths > div { grid-template-columns: 4.5rem minmax(0, 1fr); }
   .container-path-host { grid-column: 2; }
