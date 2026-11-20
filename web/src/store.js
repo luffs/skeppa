@@ -16,13 +16,40 @@ export const store = reactive({
   // only patches when the rendered string actually changes, so "14s ago"
   // moves every second while "2m ago" costs nothing for a minute. Data
   // diffs cannot do this job — quantization suppresses them on purpose
-  // when nothing meaningful changed.
+  // when nothing meaningful changed. It is the server's clock, as near as
+  // this browser can tell (serverNow): every time it is compared with is
+  // the server's — a deploy's startedAt, a commit's pushedAt — so a
+  // browser whose clock is off must not put a voyage a minute over.
   now: Date.now(),
+  // How far the server's clock is ahead of this browser's, in ms; 0 until
+  // an answer has said otherwise (noteServerDate).
+  clockSkew: 0,
 })
+
+// The server's time now, by this browser's clock and the skew measured.
+export function serverNow() {
+  return Date.now() + store.clockSkew
+}
 
 // Recomputed from Date.now() each tick, so browser throttling of hidden
 // tabs self-corrects the moment the tab is visible again.
-setInterval(() => { store.now = Date.now() }, 1000)
+setInterval(() => { store.now = serverNow() }, 1000)
+
+// Measures the skew from an answer's Date header (api.js, every request):
+// the header is the server's whole second, cut down, so its middle is set
+// against the middle of the round trip. Under a second and a half of skew is
+// within what the header can tell, and is left at 0; a slow answer (over 2 s
+// there and back) is not used; and the skew only moves when it is off by a
+// second or more, so the labels do not twitch with every request.
+export function noteServerDate(header, sentAt, receivedAt = Date.now()) {
+  const server = Date.parse(header ?? '')
+  if (!Number.isFinite(server) || receivedAt - sentAt > 2000) return
+  const skew = server + 500 - (sentAt + receivedAt) / 2
+  const next = Math.abs(skew) < 1500 ? 0 : Math.round(skew)
+  if (Math.abs(next - store.clockSkew) < 1000) return
+  store.clockSkew = next
+  store.now = serverNow()
+}
 
 // The app's public address, or '' when the project is not routed. The base
 // domain rides along in LiveState, so links appear (and follow edits) without

@@ -1,7 +1,7 @@
 import { reactive, computed } from 'vue'
 import { LazyWatch } from 'lazy-watch'
 import { createClient, createConnection, webSocketTransport } from 'lazy-storage'
-import { store } from './store.js'
+import { store, serverNow } from './store.js'
 import { api } from './api.js'
 
 // Live state, mirrored from the server's lazy-storage stores over one socket
@@ -73,7 +73,7 @@ function open(id, shape, mirror, onBatch = () => {}) {
   clients.set(id, db)
   db.watch(diff => {
     LazyWatch.patch(mirror, diff)
-    store.liveUpdatedAt = Date.now()
+    store.liveUpdatedAt = serverNow() // on the server's clock, like store.now it is set against
     onBatch(db)
   })
   db.on('status', status => {
@@ -82,7 +82,7 @@ function open(id, shape, mirror, onBatch = () => {}) {
     // produces none, and either way the store is current from here.
     if (status !== 'online') return
     online.add(id)
-    store.liveUpdatedAt = Date.now()
+    store.liveUpdatedAt = serverNow() // on the server's clock, like store.now it is set against
     onBatch(db)
     refreshReady()
   })
