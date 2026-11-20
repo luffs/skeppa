@@ -121,6 +121,7 @@
             :class="shipClasses(s)"
             :style="{ '--i': i % 7, '--dir': s.dir, transform: shipTransform(s) }"
             :aria-label="`${s.project.name}, ${statusOf(s)}`"
+            :aria-description="gaugeWords(s) || null"
             @click.prevent="onShipClick(s)"
             @keydown="onShipKey($event, s)"
             @pointerdown="onPress($event, s, f)"
@@ -131,7 +132,6 @@
             @focus="onShipFocus(s)"
             @blur="hideSoon"
           >
-            <title>{{ titleOf(s) }}</title>
             <!-- at anchor the whole ship swings about its buoy -->
             <g class="hm-sway">
               <animateTransform
@@ -298,6 +298,15 @@
         @keydown="onCardKey"
       >
         <div class="vessel-rows"><ProjectRow :project="card.project" /></div>
+        <!-- the ship's instruments: what its drawing stands for, that the row does not say -->
+        <div v-if="cardGauges.length" class="hm-gauges" aria-hidden="true">
+          <div v-for="g in cardGauges" :key="g.key" class="hm-gauge" :class="[`g-${g.key}`, g.tone && `tone-${g.tone}`]">
+            <span class="hm-gauge-label">{{ g.label }}</span>
+            <span class="hm-gauge-value">{{ g.value }}</span>
+            <span v-if="g.fill != null" class="hm-gauge-bar"><span :style="{ width: `${Math.round(g.fill * 100)}%` }"></span></span>
+            <span v-if="g.sub" class="hm-gauge-sub">{{ g.sub }}</span>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -334,7 +343,7 @@
 import ProjectRow from './ProjectRow.vue'
 import HarborShip from './HarborShip.vue'
 import { store, liveProject } from '../store.js'
-import { vesselState, statusWord, voyage } from '../lib/vessels.js'
+import { vesselState, statusWord, voyage, usualVoyage } from '../lib/vessels.js'
 import { STATE_FILTERS, LEGEND_FILTERS } from '../lib/harborFilter.js'
 import { bytes } from '../lib/format.js'
 import { performAction } from '../lib/vesselActions.js'
@@ -362,11 +371,14 @@ const FOLD_H = 26 // the strip of a quay its fleet's name is on, and its fold bu
 const FOLDED_KEY = 'skeppa.foldedFleets'
 const ATTENTION = new Set(STATE_FILTERS.attention.states)
 
-// A rough span of time, for a ship's title: "40 s", "3 min".
+// A span of time to the second, the way the ship's log has it: "54s", "1m 30s".
 function roughly(ms) {
   const s = Math.max(1, Math.round(ms / 1000))
-  return s < 90 ? `${s} s` : `${Math.round(s / 60)} min`
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m${s % 60 ? ` ${s % 60}s` : ''}`
 }
+
+// How full a gauge may get before it is a worry, and before it is trouble.
+const toneOf = (fill, warn = 2 / 3, bad = 0.9) => (fill >= bad ? 'bad' : fill >= warn ? 'warn' : '')
 
 // The fleets folded to their quays, by key, kept in the browser.
 function loadFolded() {
@@ -495,6 +507,9 @@ export default {
     roseTicks() {
       const step = (2 * Math.PI * (this.layout.rose?.r ?? 0) * 0.87) / 72
       return `0.9 ${(step - 0.9).toFixed(3)}`
+    },
+    cardGauges() {
+      return this.card ? this.gaugesOf(this.card) : []
     },
     wreckList() {
       return Object.values(this.wrecks)
@@ -783,18 +798,53 @@ export default {
     wornOf(s) {
       return isWorn(this.live(s))
     },
-    // The tooltip: the status, and what the ship's cargo and scrapes stand for.
-    titleOf(s) {
+    // The ship's instruments: what its drawing stands for and the row in its
+    // card does not say — the voyage under way (or how long one usually
+    // takes), its cargo (memory against its limit), its engine (CPU), its
+    // hull (a container's restarts since its deploy). Each { key, label,
+    // value, sub, fill (0..1, a bar; null for none), tone ('' | 'warn' |
+    // 'bad' | 'blind') }. Under the row in the card, and in words as the
+    // ship's aria-description — never a native tooltip, which would come up
+    // over the card.
+    gaugesOf(s) {
       const live = this.live(s)
-      const parts = [`${s.project.name} — ${this.statusOf(s)}`]
-      if (shipKind(this.runtimeOf(s)) === 'container' && this.stacksOf(s)) {
-        parts.push(`${bytes(live.pm2.memory)}${live.info?.memory_mb ? ` of ${live.info.memory_mb} MB` : ''} memory`)
-      }
-      if (this.wornOf(s)) parts.push(`restarted ${live.pm2.restarts} times since its last deploy`)
+      if (!live) return []
+      const out = []
+      const cur = live.currentDeployment
       const v = this.voyageOf(s)
-      if (v?.overdue) parts.push(`taking longer than usual (usually ${roughly(v.expected)})`)
-      else if (v?.expected) parts.push(`about ${roughly(v.expected - v.elapsed)} to go`)
-      return parts.join(' · ')
+      if (cur && cur.status === 'queued') {
+        out.push({ key: 'voyage', label: 'Voyage', value: 'in the queue', sub: '', fill: null, tone: '' })
+      } else if (v && v.expected == null) {
+        out.push({ key: 'voyage', label: 'Voyage', value: `${roughly(v.elapsed)} out`, sub: 'none to go by', fill: v.p, tone: 'blind' })
+      } else if (v?.overdue) {
+        out.push({ key: 'voyage', label: 'Voyage', value: `${roughly(v.elapsed - v.expected)} over`, sub: `usually ${roughly(v.expected)}`, fill: 1, tone: 'warn' })
+      } else if (v) {
+        out.push({ key: 'voyage', label: 'Voyage', value: `${roughly(v.expected - v.elapsed)} to go`, sub: `of ${roughly(v.expected)}`, fill: v.p, tone: '' })
+      }
+      const online = live.pm2?.status === 'online'
+      const used = live.pm2?.memory
+      if (online && used > 0) {
+        const limit = live.info?.memory_mb ? live.info.memory_mb * 1024 * 1024 : null
+        const fill = limit ? Math.min(1, used / limit) : null
+        out.push({ key: 'cargo', label: 'Cargo', value: bytes(used), sub: limit ? `of ${live.info.memory_mb} MB` : 'no limit', fill, tone: fill == null ? '' : toneOf(fill) })
+      }
+      if (online && typeof live.pm2?.cpu === 'number') {
+        const fill = Math.min(1, live.pm2.cpu / 100)
+        out.push({ key: 'engine', label: 'Engine', value: `${Math.round(live.pm2.cpu)}%`, sub: 'CPU', fill, tone: toneOf(fill, 0.75, 0.95) })
+      }
+      if (shipKind(this.runtimeOf(s)) === 'container' && typeof live.pm2?.restarts === 'number') {
+        const n = live.pm2.restarts
+        out.push({ key: 'hull', label: 'Hull', value: n ? `${n} restart${n === 1 ? '' : 's'}` : 'sound', sub: n ? 'since its deploy' : 'no restarts', fill: null, tone: this.wornOf(s) ? 'warn' : '' })
+      }
+      if (!cur) {
+        const usual = usualVoyage(live)
+        if (usual != null) out.push({ key: 'usual', label: 'Voyages', value: roughly(usual), sub: 'usually', fill: null, tone: '' })
+      }
+      return out
+    },
+    // The gauges in words, for the ship's aria-description.
+    gaugeWords(s) {
+      return this.gaugesOf(s).map(g => `${g.label}: ${g.value}${g.sub ? ` ${g.sub}` : ''}`).join(' · ')
     },
     // What fits under the ship, along its berth.
     shortName(s) {

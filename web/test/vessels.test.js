@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest'
-import { vesselState, summarizeVessels, statusWord, voyage } from '../src/lib/vessels.js'
+import { vesselState, summarizeVessels, statusWord, voyage, usualVoyage } from '../src/lib/vessels.js'
 
 // A folded pier sums its vessels up with one state each — the most pressing
 // — so the counts always add up to the number of vessels.
@@ -67,4 +67,14 @@ test('voyage: how far along a deploy is, against how long the last good ones too
   const blind = voyage(live(at(-60), [done(4, 500, 'failed')]), T)
   expect(blind.p).toBe(0.5)
   expect(voyage(live(at(-3600), []), T).overdue).toBe(false)
+})
+
+test('usualVoyage: the median of the last good deploys, none to go by → null', () => {
+  const d = (id, start, end, status = 'success') => ({ id, status, startedAt: new Date(start * 1000).toISOString(), finishedAt: new Date(end * 1000).toISOString() })
+  expect(usualVoyage({ recentDeployments: [d(1, 0, 40), d(2, 100, 160), d(3, 200, 250), d(4, 300, 900, 'failed')] })).toBe(50_000)
+  expect(usualVoyage({ recentDeployments: [d(1, 0, 40), d(2, 100, 160)] })).toBe(50_000) // even: halfway between
+  // the one under way is not its own yardstick
+  expect(usualVoyage({ currentDeployment: { id: 2 }, recentDeployments: [d(1, 0, 40), d(2, 100, 160)] })).toBe(40_000)
+  expect(usualVoyage({ recentDeployments: [] })).toBe(null)
+  expect(usualVoyage(null)).toBe(null)
 })

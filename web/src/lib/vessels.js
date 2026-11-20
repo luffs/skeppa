@@ -67,14 +67,23 @@ export function voyage(live, now = Date.now()) {
   const start = Date.parse(cur.startedAt ?? '')
   if (!Number.isFinite(start)) return { p: 0, overdue: false, expected: null, elapsed: 0 }
   const elapsed = Math.max(0, now - start)
-  const took = (live.recentDeployments ?? [])
-    .filter(d => d.status === 'success' && d.id !== cur.id)
+  const expected = usualVoyage(live)
+  if (expected == null) return { p: elapsed / (elapsed + VOYAGE_UNKNOWN_MS), overdue: false, expected: null, elapsed }
+  return { p: Math.min(1, elapsed / expected), overdue: elapsed > expected * 1.5 + OVERDUE_SLACK_MS, expected, elapsed }
+}
+
+// How long this project's voyages usually take, in ms: the median of up to
+// VOYAGE_SAMPLE successful deploys (the one under way, if any, not among
+// them). null with none to go by.
+export function usualVoyage(live) {
+  const current = live?.currentDeployment?.id
+  const took = (live?.recentDeployments ?? [])
+    .filter(d => d.status === 'success' && d.id !== current)
     .map(d => Date.parse(d.finishedAt ?? '') - Date.parse(d.startedAt ?? ''))
     .filter(ms => ms > 0)
     .slice(0, VOYAGE_SAMPLE)
     .sort((a, b) => a - b)
-  if (!took.length) return { p: elapsed / (elapsed + VOYAGE_UNKNOWN_MS), overdue: false, expected: null, elapsed }
+  if (!took.length) return null
   const mid = took.length >> 1
-  const expected = took.length % 2 ? took[mid] : (took[mid - 1] + took[mid]) / 2
-  return { p: Math.min(1, elapsed / expected), overdue: elapsed > expected * 1.5 + OVERDUE_SLACK_MS, expected, elapsed }
+  return took.length % 2 ? took[mid] : (took[mid - 1] + took[mid]) / 2
 }

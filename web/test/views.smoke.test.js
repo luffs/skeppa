@@ -353,10 +353,14 @@ describe('the harbor map', () => {
         expect(adm.findAll('.hm-cargo rect').length).toBe(3) // three places on deck…
         expect(adm.findAll('.hm-cargo rect.laden').length).toBe(1) // …one stack on them: 40 MB of 512
         expect(adm.find('.hm-pennant').exists()).toBe(true) // new commits waiting
-        expect(adm.find('title').text()).toBe('adm — online · 40.0 MB of 512 MB memory')
+        expect(adm.attributes('aria-description')).toBe('Cargo: 40.0 MB of 512 MB · Engine: 2% CPU · Hull: sound no restarts')
+        expect(adm.find('title').exists()).toBe(false) // no native tooltip over the card
         await adm.trigger('mouseenter')
         await settle()
         expect(wrapper.find('.harbor-card .vessel-name').text()).toBe('adm')
+        // under the row, the ship's instruments: what its cargo and hull stand for, and its engine
+        expect(wrapper.findAll('.harbor-card .hm-gauge').map(g => [g.find('.hm-gauge-label').text(), g.find('.hm-gauge-value').text()])).toEqual([['Cargo', '40.0 MB'], ['Engine', '2%'], ['Hull', 'sound']])
+        expect(wrapper.find('.harbor-card .g-cargo .hm-gauge-bar span').attributes('style')).toContain('width: 8%')
         expect(visibleText(wrapper.find('.harbor-card .vessel-actions > button'))).toBe('Deploy latest')
         await adm.trigger('click')
         expect(pushed).toEqual(['/projects/1'])
@@ -495,7 +499,8 @@ describe('the harbor map', () => {
         await settle()
         expect(adm().findAll('.hm-cargo rect.laden').length).toBe(3)
         expect(adm().find('.hm-scuffs').exists()).toBe(true)
-        expect(adm().find('title').text()).toBe('adm — online · 400.0 MB of 512 MB memory · restarted 4 times since its last deploy')
+        expect(adm().attributes('aria-description')).toContain('Cargo: 400.0 MB of 512 MB')
+        expect(adm().attributes('aria-description')).toContain('Hull: 4 restarts since its deploy')
         // stopped: nothing on deck
         store.live.projects[1].pm2.status = 'stopped'
         await settle()
@@ -736,7 +741,7 @@ describe('the harbor map', () => {
         // halfway through a usual minute: half a ring, half the headway (adm lies on its jetty's left)
         expect(ring().find('.hm-voyage-done').attributes('stroke-dasharray')).toBe('50 100')
         expect(adm().find('.hm-berth > g').attributes('transform')).toBe('translate(-3.50 0)')
-        expect(adm().find('title').text()).toContain('about 30 s to go')
+        expect(adm().attributes('aria-description')).toContain('Voyage: 30s to go of 1m')
         expect(adm().findAll('.hm-bob > animateTransform').map(a => a.attributes('dur'))).toEqual(['5.5s', '5.5s'])
 
         // long past it: full, amber, rolling uneasily
@@ -744,7 +749,7 @@ describe('the harbor map', () => {
         await settle()
         expect(ring().classes()).toContain('overdue')
         expect(ring().find('.hm-voyage-done').attributes('stroke-dasharray')).toBe('100 100')
-        expect(adm().find('title').text()).toContain('taking longer than usual (usually 60 s)')
+        expect(adm().attributes('aria-description')).toContain('Voyage: 1m over usually 1m')
         expect(adm().findAll('.hm-bob > animateTransform').map(a => a.attributes('dur'))).toEqual(['1.7s', '1.7s'])
 
         // home again: no ring, no headway
