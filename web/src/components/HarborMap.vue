@@ -304,7 +304,6 @@
             <span class="hm-gauge-label">{{ g.label }}</span>
             <span class="hm-gauge-value">{{ g.value }}</span>
             <span v-if="g.fill != null" class="hm-gauge-bar"><span :style="{ width: `${Math.round(g.fill * 100)}%` }"></span></span>
-            <span v-if="g.sub" class="hm-gauge-sub">{{ g.sub }}</span>
           </div>
         </div>
       </div>
@@ -802,49 +801,51 @@ export default {
     // card does not say — the voyage under way (or how long one usually
     // takes), its cargo (memory against its limit), its engine (CPU), its
     // hull (a container's restarts since its deploy). Each { key, label,
-    // value, sub, fill (0..1, a bar; null for none), tone ('' | 'warn' |
-    // 'bad' | 'blind') }. Under the row in the card, and in words as the
-    // ship's aria-description — never a native tooltip, which would come up
-    // over the card.
+    // value (short: a reading that fits its column), said (the reading in
+    // words, for the ship's aria-description), fill (0..1, a bar; null for
+    // none), tone ('' | 'warn' | 'bad' | 'blind') }. Under the row in the
+    // card — never a native tooltip, which would come up over the card.
     gaugesOf(s) {
       const live = this.live(s)
       if (!live) return []
       const out = []
+      const gauge = (key, label, value, said, fill = null, tone = '') => out.push({ key, label, value, said, fill, tone })
       const cur = live.currentDeployment
       const v = this.voyageOf(s)
       if (cur && cur.status === 'queued') {
-        out.push({ key: 'voyage', label: 'Voyage', value: 'in the queue', sub: '', fill: null, tone: '' })
+        gauge('voyage', 'Voyage', 'queued', 'in the queue')
       } else if (v && v.expected == null) {
-        out.push({ key: 'voyage', label: 'Voyage', value: `${roughly(v.elapsed)} out`, sub: 'none to go by', fill: v.p, tone: 'blind' })
+        gauge('voyage', 'Voyage', `${roughly(v.elapsed)} out`, `${roughly(v.elapsed)} out, none to go by`, v.p, 'blind')
       } else if (v?.overdue) {
-        out.push({ key: 'voyage', label: 'Voyage', value: `${roughly(v.elapsed - v.expected)} over`, sub: `usually ${roughly(v.expected)}`, fill: 1, tone: 'warn' })
+        gauge('voyage', 'Voyage', `+${roughly(v.elapsed - v.expected)}`, `${roughly(v.elapsed - v.expected)} over, usually ${roughly(v.expected)}`, 1, 'warn')
       } else if (v) {
-        out.push({ key: 'voyage', label: 'Voyage', value: `${roughly(v.expected - v.elapsed)} to go`, sub: `of ${roughly(v.expected)}`, fill: v.p, tone: '' })
+        gauge('voyage', 'Voyage', `${roughly(v.expected - v.elapsed)} left`, `${roughly(v.expected - v.elapsed)} to go of ${roughly(v.expected)}`, v.p)
       }
       const online = live.pm2?.status === 'online'
       const used = live.pm2?.memory
       if (online && used > 0) {
-        const limit = live.info?.memory_mb ? live.info.memory_mb * 1024 * 1024 : null
-        const fill = limit ? Math.min(1, used / limit) : null
-        out.push({ key: 'cargo', label: 'Cargo', value: bytes(used), sub: limit ? `of ${live.info.memory_mb} MB` : 'no limit', fill, tone: fill == null ? '' : toneOf(fill) })
+        const mb = live.info?.memory_mb || 0
+        const fill = mb ? Math.min(1, used / (mb * 1024 * 1024)) : null
+        const value = mb ? `${Math.round(used / (1024 * 1024))}/${mb} MB` : bytes(used)
+        gauge('cargo', 'Cargo', value, mb ? `${bytes(used)} of ${mb} MB` : `${bytes(used)}, no limit`, fill, fill == null ? '' : toneOf(fill))
       }
       if (online && typeof live.pm2?.cpu === 'number') {
         const fill = Math.min(1, live.pm2.cpu / 100)
-        out.push({ key: 'engine', label: 'Engine', value: `${Math.round(live.pm2.cpu)}%`, sub: 'CPU', fill, tone: toneOf(fill, 0.75, 0.95) })
+        gauge('engine', 'Engine', `${Math.round(live.pm2.cpu)}%`, `${Math.round(live.pm2.cpu)}% CPU`, fill, toneOf(fill, 0.75, 0.95))
       }
       if (shipKind(this.runtimeOf(s)) === 'container' && typeof live.pm2?.restarts === 'number') {
         const n = live.pm2.restarts
-        out.push({ key: 'hull', label: 'Hull', value: n ? `${n} restart${n === 1 ? '' : 's'}` : 'sound', sub: n ? 'since its deploy' : 'no restarts', fill: null, tone: this.wornOf(s) ? 'warn' : '' })
+        gauge('hull', 'Hull', n ? `${n} restart${n === 1 ? '' : 's'}` : 'sound', n ? `${n} restart${n === 1 ? '' : 's'} since its deploy` : 'sound, no restarts', null, this.wornOf(s) ? 'warn' : '')
       }
       if (!cur) {
         const usual = usualVoyage(live)
-        if (usual != null) out.push({ key: 'usual', label: 'Voyages', value: roughly(usual), sub: 'usually', fill: null, tone: '' })
+        if (usual != null) gauge('usual', 'Voyages', `~${roughly(usual)}`, `usually ${roughly(usual)}`)
       }
       return out
     },
     // The gauges in words, for the ship's aria-description.
     gaugeWords(s) {
-      return this.gaugesOf(s).map(g => `${g.label}: ${g.value}${g.sub ? ` ${g.sub}` : ''}`).join(' · ')
+      return this.gaugesOf(s).map(g => `${g.label}: ${g.said}`).join(' · ')
     },
     // What fits under the ship, along its berth.
     shortName(s) {
