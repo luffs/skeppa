@@ -198,6 +198,49 @@ export function layoutHarbor(fleets, width = 900) {
   return { width: W, height, light, rose, fleets: out }
 }
 
+// What moved between two layouts of the harbor (of the same width), for the
+// map to glide it there instead of jumping: each fleet by how far its top
+// moved, and inside a fleet each jetty, its anchorage and each ship by how
+// far it moved against that top — so a ship that only goes along with its
+// fleet does not move twice. The rose stands on its own. Only what moved,
+// and only what is in both: a ship new to a fleet (or come from another)
+// has nothing to glide from. In map units:
+// → { fleets: { <key>: dy }, jetties: { <pierId>: { dx, dy } },
+//     anchorages: { <fleet key>: { dx, dy } }, ships: { <id>: { dx, dy } }, rose: { dx, dy } | null }
+export function layoutShifts(before, now) {
+  const out = { fleets: {}, jetties: {}, anchorages: {}, ships: {}, rose: null }
+  const delta = (a, b, da = 0, db = 0) => {
+    const dx = b.x - a.x
+    const dy = (b.y - db) - (a.y - da)
+    return dx || dy ? { dx, dy } : null
+  }
+  const was = new Map(before.fleets.map(f => [f.key, f]))
+  for (const f of now.fleets) {
+    const old = was.get(f.key)
+    if (!old) continue
+    if (f.top !== old.top) out.fleets[f.key] = f.top - old.top
+    const jetties = new Map(old.jetties.map(j => [j.pierId, j]))
+    for (const j of f.jetties) {
+      const d = jetties.has(j.pierId) && delta(jetties.get(j.pierId), j, old.top, f.top)
+      if (d) out.jetties[j.pierId] = d
+    }
+    const d = old.anchorage && f.anchorage && delta(old.anchorage, f.anchorage, old.top, f.top)
+    if (d) out.anchorages[f.key] = d
+    const ships = new Map(old.ships.map(s => [s.id, s]))
+    for (const s of f.ships) {
+      const ds = ships.has(s.id) && delta(ships.get(s.id), s, old.top, f.top)
+      if (ds) out.ships[s.id] = ds
+    }
+  }
+  out.rose = (before.rose && now.rose && delta(before.rose, now.rose)) || null
+  return out
+}
+
+// Whether layoutShifts found anything to move.
+export function anyShift(shifts) {
+  return !!shifts.rose || ['fleets', 'jetties', 'anchorages', 'ships'].some(k => Object.keys(shifts[k]).length)
+}
+
 // The ship to go to from `fromId` with an arrow key ('ArrowLeft', …), among
 // `ships` (a layout's, every fleet's): the nearest whose middle lies that
 // way, a step straight on counting for less than one aside — so ArrowDown

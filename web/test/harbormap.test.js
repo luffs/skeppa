@@ -1,5 +1,5 @@
 import { test, expect } from 'vitest'
-import { layoutHarbor, dropTarget, nextBerth, nearestShip, shipName, cargoStacks, isWorn, SHIP_L, SHIP_B, ROW } from '../src/lib/harborMap.js'
+import { layoutHarbor, layoutShifts, anyShift, dropTarget, nextBerth, nearestShip, shipName, cargoStacks, isWorn, SHIP_L, SHIP_B, ROW } from '../src/lib/harborMap.js'
 
 // The harbor map's layout: every project gets exactly one place, nothing
 // overlaps, nothing runs past the width, and the same harbor always comes
@@ -248,4 +248,36 @@ test('the arrow keys go to the nearest ship that way', () => {
   expect(go(999, 'ArrowDown')).toBe(100) // from nowhere: the first
   expect(go(100, 'Enter')).toBe(null)
   expect(nearestShip([], 1, 'Home')).toBe(null)
+})
+
+// What a change of the harbor's shape moves, for the map to glide it there:
+// a fleet by its top, and inside it what moved against that top.
+test('layoutShifts: a jetty growing a berth moves the fleets under it, and nothing beside it', () => {
+  const before = layoutHarbor([fleet('mine', [[1, 2], [2, 1]]), fleet('bob', [[5, 1]], [50])], 760)
+  const now = layoutHarbor([fleet('mine', [[1, 3], [2, 1]]), fleet('bob', [[5, 1]], [50])], 760)
+  const shifts = layoutShifts(before, now)
+  expect(shifts.fleets).toEqual({ bob: ROW }) // one berth down
+  expect(shifts.ships).toEqual({}) // the new ship is no move, and bob's go with their fleet
+  expect(shifts.jetties).toEqual({})
+  expect(anyShift(shifts)).toBe(true)
+  expect(anyShift(layoutShifts(now, now))).toBe(false)
+})
+
+test('layoutShifts: inside a fleet, an anchorage under a grown jetty, and a ship to another pier', () => {
+  const before = layoutHarbor([fleet('bob', [[5, 2], [6, 0]], [50])], 760)
+  const grown = layoutHarbor([fleet('bob', [[5, 3], [6, 0]], [50])], 760)
+  const g = layoutShifts(before, grown)
+  expect(g.fleets).toEqual({})
+  expect(g.anchorages.bob.dx).toBe(0)
+  expect(g.anchorages.bob.dy).toBeGreaterThan(0) // down, under the longer jetty
+  expect(g.ships[50]).toEqual(g.anchorages.bob) // at anchor: with its anchorage, step for step
+
+  // ship 500 leaves pier 5 for pier 6: it glides across, 501 takes its berth
+  const moved = layoutHarbor([{ ...fleet('bob', [[5, 0], [6, 0]], [50]), piers: [
+    { pier: { id: 5, name: 'pier5' }, projects: [project(501)] },
+    { pier: { id: 6, name: 'pier6' }, projects: [project(500)] },
+  ] }], 760)
+  const m = layoutShifts(before, moved)
+  expect(m.ships[500].dx).not.toBe(0)
+  expect(m.ships[501]).toBeTruthy()
 })

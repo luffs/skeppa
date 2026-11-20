@@ -663,6 +663,48 @@ describe('the harbor map', () => {
     expect(res.problems.join(' | ')).toBe('')
   })
 
+  // Ships come and go: a new project backs in to its berth, one scuttled
+  // sinks where it lay, and what the new shape moves glides there (a FLIP
+  // with the `translate` property) — while what keeps its place stays put.
+  test('ships glide to a new berth, back in when new and sink when gone', async () => {
+    seedStore('admin')
+    const res = await expectCleanRender(DashboardView, {
+      route: { query: { view: 'map' } },
+      steps: async wrapper => {
+        const ship = name => wrapper.findAll('.hm-ship').find(s => s.attributes('aria-label')?.startsWith(`${name},`))
+        const gliding = el => (el.element.style.transition ?? '').includes('translate')
+        // how things already were is no arrival
+        expect(wrapper.find('.hm-ship.arriving').exists()).toBe(false)
+
+        // bob's project moors at his empty pier: it glides there from the anchorage
+        store.live.projects[2].info.group_id = 8
+        await settle()
+        expect(ship('bobapp').classes()).toContain('side-left') // first at a pier: its left side
+        expect(gliding(ship('bobapp'))).toBe(true)
+        expect(gliding(ship('adm'))).toBe(false)
+
+        // a new project at the admin's pier backs in; the one already there stays put
+        const fresh = project(3, 'fresh', ADMIN)
+        fresh.info.group_id = 7
+        store.live.projects[3] = fresh
+        await settle()
+        expect(ship('fresh').classes()).toContain('arriving')
+        expect(ship('fresh').attributes('style')).toContain('--dir: 1')
+        expect(ship('adm').classes()).not.toContain('arriving')
+
+        // scuttled: gone from the harbor, sinking where it lay
+        const lay = ship('fresh').attributes('style').match(/transform: ([^;]+)/)[1]
+        delete store.live.projects[3]
+        await settle()
+        expect(ship('fresh')).toBeUndefined()
+        expect(wrapper.findAll('.hm-wreck').length).toBe(1)
+        expect(wrapper.find('.hm-wreck').attributes('style')).toContain(lay)
+        expect(wrapper.find('.hm-wreck .hm-event').classes()).toContain('sunk')
+      },
+    })
+    expect(res.problems.join(' | ')).toBe('')
+  })
+
   test('a voyage under way casts off with a wake', async () => {
     seedStore('admin')
     store.live.projects[1].currentDeployment = { id: 9, status: 'running' }
@@ -672,6 +714,44 @@ describe('the harbor map', () => {
         const adm = wrapper.findAll('.hm-ship').find(s => s.attributes('aria-label').startsWith('adm'))
         expect(adm.classes()).toContain('state-underway')
         expect(adm.find('.hm-wake').exists()).toBe(true)
+        expect(adm.find('.hm-voyage-done').attributes('stroke-dasharray')).toBe('0 100') // queued: not under way yet
+      },
+    })
+    expect(res.problems.join(' | ')).toBe('')
+  })
+
+  // Out at its berth a ship makes headway as its voyage goes on, and a ring
+  // about its lamp fills, against how long its last good voyages took.
+  test('a voyage under way makes headway, and says how far along it is', async () => {
+    seedStore('admin')
+    const at = s => new Date(NOW + s * 1000).toISOString()
+    store.now = NOW
+    store.live.projects[1].recentDeployments = [{ id: 5, status: 'success', trigger: 'push', commitSha: 'a'.repeat(40), startedAt: at(-200), finishedAt: at(-140), createdAt: at(-200) }]
+    store.live.projects[1].currentDeployment = { id: 9, status: 'running', startedAt: at(-30) }
+    const res = await expectCleanRender(DashboardView, {
+      route: { query: { view: 'map' } },
+      steps: async wrapper => {
+        const adm = () => wrapper.findAll('.hm-ship').find(s => s.attributes('aria-label').startsWith('adm'))
+        const ring = () => adm().find('.hm-voyage')
+        // halfway through a usual minute: half a ring, half the headway (adm lies on its jetty's left)
+        expect(ring().find('.hm-voyage-done').attributes('stroke-dasharray')).toBe('50 100')
+        expect(adm().find('.hm-berth > g').attributes('transform')).toBe('translate(-3.50 0)')
+        expect(adm().find('title').text()).toContain('about 30 s to go')
+        expect(adm().findAll('.hm-bob > animateTransform').map(a => a.attributes('dur'))).toEqual(['5.5s', '5.5s'])
+
+        // long past it: full, amber, rolling uneasily
+        store.now = NOW + 90_000
+        await settle()
+        expect(ring().classes()).toContain('overdue')
+        expect(ring().find('.hm-voyage-done').attributes('stroke-dasharray')).toBe('100 100')
+        expect(adm().find('title').text()).toContain('taking longer than usual (usually 60 s)')
+        expect(adm().findAll('.hm-bob > animateTransform').map(a => a.attributes('dur'))).toEqual(['1.7s', '1.7s'])
+
+        // home again: no ring, no headway
+        store.live.projects[1].currentDeployment = null
+        await settle()
+        expect(ring().exists()).toBe(false)
+        expect(adm().find('.hm-berth > g').attributes('transform')).toBeUndefined()
       },
     })
     expect(res.problems.join(' | ')).toBe('')

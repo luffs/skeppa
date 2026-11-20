@@ -626,6 +626,14 @@ button.filter-chip-clear:hover { background: none; opacity: 0.7; }
 .hm-buoy { fill: var(--amber); stroke: var(--water); stroke-width: 1.5; }
 .hm-wake path { stroke: var(--accent); opacity: 0.75; stroke-width: 1.6; stroke-linecap: round; fill: none; stroke-dasharray: 4 4; animation: hm-wake 0.8s linear infinite; }
 @keyframes hm-wake { to { stroke-dashoffset: -8; } }
+/* How far along the voyage is: a ring about the lamp, filling clockwise from
+   the top a second at a time (a paint transition, nothing composited). With
+   no good voyage to go by it is fainter; overdue, full and amber. */
+.hm-voyage { pointer-events: none; }
+.hm-voyage-track { fill: none; stroke: color-mix(in srgb, var(--c) 45%, #000); stroke-width: 2; }
+.hm-voyage-done { fill: none; stroke: color-mix(in srgb, var(--c) 25%, #fff); stroke-width: 2; stroke-linecap: round; transition: stroke-dasharray 1s linear; }
+.hm-voyage.blind .hm-voyage-done { stroke-opacity: 0.6; }
+.hm-voyage.overdue .hm-voyage-done { stroke: var(--amber); }
 
 /* Casting off and coming back in is a glide, not a jump. */
 .hm-berth { transition: transform 1.6s cubic-bezier(0.4, 0, 0.2, 1); }
@@ -674,8 +682,19 @@ button.filter-chip-clear:hover { background: none; opacity: 0.7; }
 .hm-ghost.refused { opacity: 0.55; }
 .hm-drop-hint { font: 700 11px var(--sans); fill: var(--accent); paint-order: stroke; stroke: var(--panel); stroke-width: 4px; stroke-linejoin: round; }
 .hm-ghost.refused .hm-drop-hint { fill: var(--red); }
-/* After a move the ships glide to their new berths instead of jumping. */
-.hm-svg.settling .hm-ship { transition: opacity 0.25s, transform 0.7s cubic-bezier(0.3, 0, 0.2, 1); }
+/* Ships come and go (HarborMap.vue's layout watcher). A new one backs in,
+   stern first, from open water off its bow — `translate` composes with the
+   inline `transform` that places it, outside it, so the slide is along the map
+   whatever the ship's swing. One gone from the harbor sinks where it lay, in
+   rings. What a change of the harbor's shape moves glides there with inline
+   `translate` transitions (HarborMap.vue flip). All of them one-shot: soft
+   for that moment at most, never for good. */
+.hm-ship.arriving { animation: hm-arrive 1.6s cubic-bezier(0.2, 0.7, 0.3, 1) backwards; }
+@keyframes hm-arrive { from { translate: calc(var(--dir, 1) * 90px) 0; opacity: 0; } }
+.hm-wreck { pointer-events: none; }
+.hm-sink { transform-box: fill-box; transform-origin: center; animation: hm-sink 2.2s ease-in forwards; }
+@keyframes hm-sink { 25% { opacity: 1; transform: translateY(1px); } to { opacity: 0; transform: translateY(4px) scale(0.8); } }
+.hm-event.sunk { --e: var(--dim); }
 .hm-drag-tip { flex: 1 0 100%; margin: 0; font-size: 12px; color: var(--dim); }
 
 /* The lighthouse, its beam going round (SMIL, like everything endless on the map). */
@@ -686,7 +705,8 @@ button.filter-chip-clear:hover { background: none; opacity: 0.7; }
 
 @media (prefers-reduced-motion: reduce) {
   .hm-wake path, .hm-hoist, .hm-ship .hm-lamp-glow { animation: none !important; }
-  .hm-berth, .hm-svg.settling .hm-ship { transition: none; }
+  .hm-berth { transition: none; }
+  .hm-ship.arriving, .hm-sink { animation: none; }
   .hm-slot path { animation: none; }
   .hm-event { display: none; }
 }

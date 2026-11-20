@@ -50,3 +50,31 @@ export function summarizeVessels(lives) {
   }
   return VESSEL_STATES.filter(s => counts[s.key]).map(s => ({ key: s.key, dot: s.dot, text: s.label(counts[s.key]) }))
 }
+
+// How far along a voyage (a deploy) is, measured against how long this
+// project's last good ones took: the median of up to VOYAGE_SAMPLE
+// successful deploys, the one under way not among them. → null when no
+// deploy is under way, else { p: 0..1, overdue, expected (ms, or null),
+// elapsed (ms) }. Queued (not started): p 0. No history to go by: p creeps
+// towards 1 and is never overdue — the map cannot know better. Overdue: half
+// as long again as usual, and some, so a slow minute is not an alarm.
+export const VOYAGE_SAMPLE = 5
+const VOYAGE_UNKNOWN_MS = 60_000 // with nothing to go by, halfway after this
+const OVERDUE_SLACK_MS = 10_000
+export function voyage(live, now = Date.now()) {
+  const cur = live?.currentDeployment
+  if (!cur) return null
+  const start = Date.parse(cur.startedAt ?? '')
+  if (!Number.isFinite(start)) return { p: 0, overdue: false, expected: null, elapsed: 0 }
+  const elapsed = Math.max(0, now - start)
+  const took = (live.recentDeployments ?? [])
+    .filter(d => d.status === 'success' && d.id !== cur.id)
+    .map(d => Date.parse(d.finishedAt ?? '') - Date.parse(d.startedAt ?? ''))
+    .filter(ms => ms > 0)
+    .slice(0, VOYAGE_SAMPLE)
+    .sort((a, b) => a - b)
+  if (!took.length) return { p: elapsed / (elapsed + VOYAGE_UNKNOWN_MS), overdue: false, expected: null, elapsed }
+  const mid = took.length >> 1
+  const expected = took.length % 2 ? took[mid] : (took[mid - 1] + took[mid]) / 2
+  return { p: Math.min(1, elapsed / expected), overdue: elapsed > expected * 1.5 + OVERDUE_SLACK_MS, expected, elapsed }
+}

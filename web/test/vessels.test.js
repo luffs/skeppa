@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest'
-import { vesselState, summarizeVessels, statusWord } from '../src/lib/vessels.js'
+import { vesselState, summarizeVessels, statusWord, voyage } from '../src/lib/vessels.js'
 
 // A folded pier sums its vessels up with one state each — the most pressing
 // — so the counts always add up to the number of vessels.
@@ -46,4 +46,25 @@ test('statusWord says "never deployed" before the first voyage, the poller\'s wo
   expect(statusWord({ pm2: { status: 'not published' }, lastDeployment: { status: 'success' } })).toBe('not published')
   // a process running without any voyage (started by hand) is what it is
   expect(statusWord({ pm2: { status: 'online' } })).toBe('online')
+})
+
+// A voyage's progress, against the project's last good deploys.
+test('voyage: how far along a deploy is, against how long the last good ones took', () => {
+  const T = Date.parse('2026-11-20T12:00:00.000Z')
+  const at = s => new Date(T + s * 1000).toISOString()
+  const done = (id, secs, status = 'success') => ({ id, status, startedAt: at(-1000 - id * 100), finishedAt: at(-1000 - id * 100 + secs) })
+  const live = (startedAt, recent) => ({ currentDeployment: { id: 99, status: startedAt ? 'running' : 'queued', ...(startedAt ? { startedAt } : {}) }, recentDeployments: recent })
+  const history = [done(1, 40), done(2, 60), done(3, 50), done(4, 500, 'failed'), done(5, 0)]
+
+  expect(voyage({ currentDeployment: null }, T)).toBe(null)
+  expect(voyage(live(null, history), T)).toEqual({ p: 0, overdue: false, expected: null, elapsed: 0 }) // queued
+  // the median of 40, 50 and 60 s — the failed one and the instant one do not count
+  expect(voyage(live(at(-25), history), T)).toEqual({ p: 0.5, overdue: false, expected: 50_000, elapsed: 25_000 })
+  expect(voyage(live(at(-60), history), T).p).toBe(1) // past usual: full, not yet overdue
+  expect(voyage(live(at(-60), history), T).overdue).toBe(false)
+  expect(voyage(live(at(-86), history), T).overdue).toBe(true) // 1.5 × 50 s + 10 s
+  // nothing to go by: creeping, never overdue
+  const blind = voyage(live(at(-60), [done(4, 500, 'failed')]), T)
+  expect(blind.p).toBe(0.5)
+  expect(voyage(live(at(-3600), []), T).overdue).toBe(false)
 })

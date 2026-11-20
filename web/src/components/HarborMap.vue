@@ -9,6 +9,7 @@
         :key="`fold-${f.key}`"
         type="button"
         class="hm-fold"
+        :data-fold="f.key"
         :class="{ folded: f.folded }"
         :style="foldStyle(f)"
         :aria-expanded="f.folded ? 'false' : 'true'"
@@ -21,7 +22,7 @@
       <svg
         ref="svg"
         class="hm-svg"
-        :class="{ dragging: drag, settling }"
+        :class="{ dragging: drag }"
         :viewBox="`0 0 ${layout.width} ${layout.height}`"
         :width="layout.width"
         :height="layout.height"
@@ -59,7 +60,7 @@
           <text class="hm-rose-n" :y="-layout.rose.r - 5" text-anchor="middle">N</text>
         </g>
 
-        <g v-for="f in layout.fleets" :key="f.key" class="hm-fleet">
+        <g v-for="f in layout.fleets" :key="f.key" class="hm-fleet" :data-fleet="f.key">
           <!-- the quay: the shore along the top, a mole further out -->
           <g v-for="(q, i) in f.quays" :key="`q${i}`" class="hm-quay-g">
             <rect class="hm-cast" :x="q.x + (q.shore ? 0 : 2)" :y="q.y + 4" :width="q.w" :height="q.h" :rx="q.shore ? 0 : 9" />
@@ -75,6 +76,7 @@
             v-for="j in f.jetties"
             :key="`j${j.pierId}`"
             class="hm-jetty-g"
+            :data-pier="j.pierId"
             :class="{ 'can-drop': canMoor(f, j), 'drop-on': canMoor(f, j) && drag.target.pierId === j.pierId }"
           >
             <rect class="hm-drop-halo" :x="j.x - 5" :y="j.y - 36" :width="j.w + 10" :height="j.h + 41" rx="7" />
@@ -117,7 +119,7 @@
             :data-ship="s.id"
             class="hm-ship"
             :class="shipClasses(s)"
-            :style="{ '--i': i % 7, transform: shipTransform(s) }"
+            :style="{ '--i': i % 7, '--dir': s.dir, transform: shipTransform(s) }"
             :aria-label="`${s.project.name}, ${statusOf(s)}`"
             @click.prevent="onShipClick(s)"
             @keydown="onShipKey($event, s)"
@@ -143,59 +145,77 @@
                 <path :d="`M${shape(s).L - 1} ${SHIP_B / 2} H${ANCHOR_X}`" />
                 <circle class="hm-buoy" :cx="ANCHOR_X" :cy="SHIP_B / 2" r="3.6" />
               </g>
-              <!-- under way a ship has cast off: it glides out from its jetty, and back in -->
+              <!-- under way a ship has cast off: it glides out from its jetty, and back in
+                   (CSS, once each way); out there it makes headway as its voyage goes
+                   on — an attribute, a fraction of a unit a second, never composited -->
               <g class="hm-berth" :style="{ transform: `translateX(${castOff(s)}px)` }">
-                <!-- afloat: every ship rides the swell a little, each to its own beat -->
-                <g class="hm-bob">
-                  <template v-if="!still">
-                    <animateTransform
-                      attributeName="transform" type="translate" additive="sum" dur="5.5s" repeatCount="indefinite"
-                      values="0 0; 0 1; 0 0" :begin="`${-0.8 * (i % 7)}s`" calcMode="spline" keyTimes="0; 0.5; 1" :keySplines="SWELL"
-                    />
-                    <animateTransform
-                      attributeName="transform" type="rotate" additive="sum" dur="5.5s" repeatCount="indefinite"
-                      :values="`0 ${midship(s)} ${SHIP_B / 2}; 0.5 ${midship(s)} ${SHIP_B / 2}; 0 ${midship(s)} ${SHIP_B / 2}`"
-                      :begin="`${-0.8 * (i % 7)}s`" calcMode="spline" keyTimes="0; 0.5; 1" :keySplines="SWELL"
-                    />
-                  </template>
-                  <!-- drawn bow to the right; a ship on the jetty's left is mirrored -->
-                  <g :transform="s.dir < 0 ? `translate(${SHIP_L} 0) scale(-1 1)` : null">
-                    <!-- a wake behind the stern under way; otherwise made fast -->
-                    <g v-if="stateOf(s) === 'underway'" class="hm-wake">
-                      <path d="M-2 6 L-16 1" /><path d="M-3 13 H-18" /><path d="M-2 20 L-16 25" />
-                    </g>
-                    <path v-else-if="s.side !== 'anchor'" class="hm-lines" :d="`M2 6 L${-BERTH} ${SHIP_B / 2} L2 ${SHIP_B - 6}`" />
-                    <HarborShip :runtime="runtimeOf(s)" :stacks="stacksOf(s)" :worn="wornOf(s)" />
-                    <!-- new commits waiting: a pennant flying -->
-                    <g v-if="stateOf(s) === 'ahead'" class="hm-pennant" :transform="`translate(${Math.round(shape(s).L * 0.7)} 2)`">
-                      <path class="hm-staff" d="M0 0 V-8" />
-                      <!-- run up (CSS, once), then flying: skewed about the staff at x = 0 -->
-                      <g class="hm-hoist">
-                        <path class="hm-flag" d="M0 -8 L-11 -5.5 L0 -3 Z">
-                          <animateTransform
-                            v-if="!still"
-                            attributeName="transform" type="skewY" dur="2.6s" repeatCount="indefinite"
-                            values="-7; 7; -7" calcMode="spline" keyTimes="0; 0.5; 1" :keySplines="SWELL"
-                          />
-                        </path>
+                <g :transform="headway(s)">
+                  <!-- afloat: every ship rides the swell a little, each to its own beat -->
+                  <g class="hm-bob">
+                    <!-- a voyage taking much longer than usual rides it uneasily: quicker, and rolling more -->
+                    <template v-if="!still">
+                      <animateTransform
+                        :key="`heave-${uneasy(s)}`"
+                        attributeName="transform" type="translate" additive="sum" :dur="uneasy(s) ? '1.7s' : '5.5s'" repeatCount="indefinite"
+                        :values="uneasy(s) ? '0 0; 0 1.5; 0 0' : '0 0; 0 1; 0 0'" :begin="`${-0.8 * (i % 7)}s`" calcMode="spline" keyTimes="0; 0.5; 1" :keySplines="SWELL"
+                      />
+                      <animateTransform
+                        :key="`roll-${uneasy(s)}`"
+                        attributeName="transform" type="rotate" additive="sum" :dur="uneasy(s) ? '1.7s' : '5.5s'" repeatCount="indefinite"
+                        :values="uneasy(s) ? `-1.6 ${midship(s)} ${SHIP_B / 2}; 1.6 ${midship(s)} ${SHIP_B / 2}; -1.6 ${midship(s)} ${SHIP_B / 2}` : `0 ${midship(s)} ${SHIP_B / 2}; 0.5 ${midship(s)} ${SHIP_B / 2}; 0 ${midship(s)} ${SHIP_B / 2}`"
+                        :begin="`${-0.8 * (i % 7)}s`" calcMode="spline" keyTimes="0; 0.5; 1" :keySplines="SWELL"
+                      />
+                    </template>
+                    <!-- drawn bow to the right; a ship on the jetty's left is mirrored -->
+                    <g :transform="s.dir < 0 ? `translate(${SHIP_L} 0) scale(-1 1)` : null">
+                      <!-- a wake behind the stern under way; otherwise made fast -->
+                      <g v-if="stateOf(s) === 'underway'" class="hm-wake">
+                        <path d="M-2 6 L-16 1" /><path d="M-3 13 H-18" /><path d="M-2 20 L-16 25" />
+                      </g>
+                      <path v-else-if="s.side !== 'anchor'" class="hm-lines" :d="`M2 6 L${-BERTH} ${SHIP_B / 2} L2 ${SHIP_B - 6}`" />
+                      <HarborShip :runtime="runtimeOf(s)" :stacks="stacksOf(s)" :worn="wornOf(s)" />
+                      <!-- new commits waiting: a pennant flying -->
+                      <g v-if="stateOf(s) === 'ahead'" class="hm-pennant" :transform="`translate(${Math.round(shape(s).L * 0.7)} 2)`">
+                        <path class="hm-staff" d="M0 0 V-8" />
+                        <!-- run up (CSS, once), then flying: skewed about the staff at x = 0 -->
+                        <g class="hm-hoist">
+                          <path class="hm-flag" d="M0 -8 L-11 -5.5 L0 -3 Z">
+                            <animateTransform
+                              v-if="!still"
+                              attributeName="transform" type="skewY" dur="2.6s" repeatCount="indefinite"
+                              values="-7; 7; -7" calcMode="spline" keyTimes="0; 0.5; 1" :keySplines="SWELL"
+                            />
+                          </path>
+                        </g>
                       </g>
                     </g>
+                    <!-- under way, a ring about its lamp fills as the voyage goes on, against
+                         how long the last good ones took; overdue, it is full and it says so -->
+                    <g
+                      v-if="voyageOf(s)"
+                      class="hm-voyage"
+                      :class="{ overdue: voyageOf(s).overdue, blind: voyageOf(s).expected == null }"
+                      :transform="`translate(${lampX(s)} ${SHIP_B / 2})`"
+                    >
+                      <circle class="hm-voyage-track" r="6.5" />
+                      <circle class="hm-voyage-done" r="6.5" pathLength="100" :stroke-dasharray="`${Math.round(voyageOf(s).p * 100)} 100`" transform="rotate(-90)" />
+                    </g>
                   </g>
-                </g>
-                <text class="hm-name" :x="s.dir < 0 ? SHIP_L - 1 : 1" :y="SHIP_B + 11" :text-anchor="s.dir < 0 ? 'end' : 'start'">{{ shortName(s) }}</text>
-                <!-- what just happened to it, for a moment: rings on the water as it
-                     makes port or new commits come in, a red flare when a voyage fails -->
-                <g
-                  v-if="events[s.id]"
-                  :key="events[s.id].n"
-                  class="hm-event"
-                  :class="events[s.id].kind"
-                  :transform="`translate(${midship(s)} ${SHIP_B / 2})`"
-                >
-                  <circle class="hm-ripple" r="18" /><circle class="hm-ripple late" r="18" />
-                  <g v-if="events[s.id].kind === 'flare'" class="hm-flare">
-                    <path class="hm-flare-trail" d="M0 -4 V-30" />
-                    <path class="hm-flare-star" d="M0 -47 V-29 M-9 -38 H9 M-6.4 -44.4 L6.4 -31.6 M-6.4 -31.6 L6.4 -44.4" />
+                  <text class="hm-name" :x="s.dir < 0 ? SHIP_L - 1 : 1" :y="SHIP_B + 11" :text-anchor="s.dir < 0 ? 'end' : 'start'">{{ shortName(s) }}</text>
+                  <!-- what just happened to it, for a moment: rings on the water as it
+                       makes port or new commits come in, a red flare when a voyage fails -->
+                  <g
+                    v-if="events[s.id]"
+                    :key="events[s.id].n"
+                    class="hm-event"
+                    :class="events[s.id].kind"
+                    :transform="`translate(${midship(s)} ${SHIP_B / 2})`"
+                  >
+                    <circle class="hm-ripple" r="18" /><circle class="hm-ripple late" r="18" />
+                    <g v-if="events[s.id].kind === 'flare'" class="hm-flare">
+                      <path class="hm-flare-trail" d="M0 -4 V-30" />
+                      <path class="hm-flare-star" d="M0 -47 V-29 M-9 -38 H9 M-6.4 -44.4 L6.4 -31.6 M-6.4 -31.6 L6.4 -44.4" />
+                    </g>
                   </g>
                 </g>
               </g>
@@ -211,6 +231,25 @@
             :transform="`translate(${layout.width / 2} ${f.water + 12})`"
           >
             <rect x="-84" y="-10" width="168" height="20" rx="10" /><text y="3.5" text-anchor="middle">Open water — at anchor</text>
+          </g>
+        </g>
+
+        <!-- a ship gone from the harbor (its project scuttled) sinks where it lay -->
+        <g
+          v-for="w in wreckList"
+          :key="`wreck-${w.id}-${w.n}`"
+          class="hm-ship hm-wreck"
+          :class="`side-${w.side}`"
+          :style="{ transform: shipTransform(w) }"
+          aria-hidden="true"
+        >
+          <g class="hm-event sunk" :transform="`translate(${midship(w)} ${SHIP_B / 2})`">
+            <circle class="hm-ripple" r="18" /><circle class="hm-ripple late" r="18" />
+          </g>
+          <g class="hm-sink">
+            <g :transform="w.dir < 0 ? `translate(${SHIP_L} 0) scale(-1 1)` : null">
+              <HarborShip :runtime="runtimeOf(w)" :stacks="0" />
+            </g>
           </g>
         </g>
 
@@ -294,15 +333,19 @@
 <script>
 import ProjectRow from './ProjectRow.vue'
 import HarborShip from './HarborShip.vue'
-import { liveProject } from '../store.js'
-import { vesselState, statusWord } from '../lib/vessels.js'
+import { store, liveProject } from '../store.js'
+import { vesselState, statusWord, voyage } from '../lib/vessels.js'
 import { STATE_FILTERS, LEGEND_FILTERS } from '../lib/harborFilter.js'
 import { bytes } from '../lib/format.js'
 import { performAction } from '../lib/vesselActions.js'
-import { layoutHarbor, dropTarget, nearestShip, shipName, shipKind, cargoStacks, isWorn, SHIP_KINDS, SHIP_L, SHIP_B, NAME_H, BERTH, ROW, CHAIN } from '../lib/harborMap.js'
+import { layoutHarbor, layoutShifts, anyShift, dropTarget, nearestShip, shipName, shipKind, cargoStacks, isWorn, SHIP_KINDS, SHIP_L, SHIP_B, NAME_H, BERTH, ROW, CHAIN } from '../lib/harborMap.js'
 
 const CARD_W = 440
 const CAST_OFF = 7 // how far a ship under way has left its berth
+// and how much further it makes, out there, by the end of its voyage: with
+// CAST_OFF, half the open water between two columns' bows (COL_GAP), so
+// neighbours both under way still pass clear
+const HEADWAY = 7
 const ANCHOR_X = SHIP_L + CHAIN // an anchored ship's buoy, ahead of its berth
 const BEAM = 340 // how far the lighthouse reaches
 const EVENT_MS = 3400 // how long what just happened to a ship stays on the water
@@ -311,10 +354,19 @@ const HOLD_MS = 320 // how long a finger rests on a ship before it is picked up 
 // ease-in-out, for each half of a back-and-forth SMIL animation
 const SWELL = '0.42 0 0.58 1; 0.42 0 0.58 1'
 const HOLD_SLACK = 10 // how far that finger may wander meanwhile
-const SETTLE_MS = 900 // how long ships glide to their new berths after a move
+const FLIP_MS = 700 // how long what a change of the harbor's shape moved takes to glide there
+const FLIP_EASE = 'cubic-bezier(0.3, 0, 0.2, 1)'
+const ARRIVE_MS = 1800 // how long a new ship takes to back in to its berth
+const WRECK_MS = 2600 // how long a ship gone from the harbor takes to sink
 const FOLD_H = 26 // the strip of a quay its fleet's name is on, and its fold button
 const FOLDED_KEY = 'skeppa.foldedFleets'
 const ATTENTION = new Set(STATE_FILTERS.attention.states)
+
+// A rough span of time, for a ship's title: "40 s", "3 min".
+function roughly(ms) {
+  const s = Math.max(1, Math.round(ms / 1000))
+  return s < 90 ? `${s} s` : `${Math.round(s / 60)} min`
+}
 
 // The fleets folded to their quays, by key, kept in the browser.
 function loadFolded() {
@@ -395,10 +447,13 @@ export default {
       // pointer, in map units), gx, gy (where on its berth it was taken
       // hold of), target (lib/harborMap.js dropTarget) }.
       drag: null,
-      // The id of a ship whose move is being saved, and whether ships glide
-      // to their berths rather than jump: on while a move settles.
+      // The id of a ship whose move is being saved.
       moving: null,
-      settling: false,
+      // Ships on their way, for a moment (the layout watcher): backing in
+      // new { <id>: { n } }, and gone, sinking where they lay
+      // { <id>: { ...the ship as it was laid out, n } }.
+      arrivals: {},
+      wrecks: {},
       // the ship the tab order stops at (roving tabindex), and the one a
       // finger has tapped once — its card is up, a second tap opens it
       focusId: null,
@@ -440,6 +495,9 @@ export default {
     roseTicks() {
       const step = (2 * Math.PI * (this.layout.rose?.r ?? 0) * 0.87) / 72
       return `0.9 ${(step - 0.9).toFixed(3)}`
+    },
+    wreckList() {
+      return Object.values(this.wrecks)
     },
     beamPath() {
       return `M0 0 L${BEAM} -36 L${BEAM} 36 Z`
@@ -514,6 +572,30 @@ export default {
         for (const id of Object.keys(this.seen)) if (!(id in now)) delete this.seen[id]
       },
     },
+    // Ships come and go, and the harbor changes shape. A project new to the
+    // harbor (or new to this fleet) backs in to its berth from open water;
+    // one gone from every fleet sinks where it lay. Everything else the new
+    // shape moves glides there rather than jumps — a fleet under a jetty that
+    // grew, an anchorage under it, a ship to another berth, a jetty when a
+    // pier is added beside it (flip). Not when the window was resized: then
+    // everything is laid out anew at once. Folding and the filters say nothing
+    // about coming and going: `whereabouts` counts every project in every
+    // fleet, folded or not.
+    layout(now, before) {
+      const known = this.known
+      this.known = this.whereabouts()
+      if (!before || this.still) return
+      for (const f of now.fleets) {
+        for (const s of f.ships) if (known[s.id] !== f.key) this.mark('arrivals', s.id, ARRIVE_MS)
+      }
+      for (const f of before.fleets) {
+        for (const s of f.ships) if (!(s.id in this.known)) this.mark('wrecks', s.id, WRECK_MS, s)
+      }
+      for (const id of Object.keys(this.wrecks)) if (id in this.known) delete this.wrecks[id]
+      if (now.width !== before.width || this.drag) return
+      const shifts = layoutShifts(before, now)
+      if (anyShift(shifts)) this.$nextTick(() => this.flip(shifts))
+    },
   },
   created() {
     // not reactive: bookkeeping for the watcher above, which starts from how things are now
@@ -523,7 +605,9 @@ export default {
     // a press on a ship that may become a drag, and the click to ignore after one
     this.press = null
     this.swallowClick = false
-    this.settleTimer = null
+    // which fleet every project is in, for the layout watcher: the first look is the baseline
+    this.known = this.whereabouts()
+    this.flipTimers = new Set()
   },
   mounted() {
     this.measure()
@@ -554,7 +638,7 @@ export default {
     document.removeEventListener('visibilitychange', this.onVisibility)
     this.calm?.removeEventListener?.('change', this.onCalm)
     clearTimeout(this.hideTimer)
-    clearTimeout(this.settleTimer)
+    for (const t of this.flipTimers) clearTimeout(t)
     for (const t of this.eventTimers) clearTimeout(t)
     this.endPress()
     this.$refs.svg?.removeEventListener('touchmove', this.onTouchMove)
@@ -562,14 +646,66 @@ export default {
   methods: {
     // Shows `kind` at a ship for a moment; a newer event there replaces it.
     signal(id, kind) {
-      if (!kind) return
+      if (kind) this.mark('events', id, EVENT_MS, { kind })
+    },
+    // Puts `value` at `id` in this[map] (events, arrivals, wrecks) for `ms`,
+    // stamped `n`; a newer one at the same id replaces it, and outlives it.
+    mark(map, id, ms, value = {}) {
       const n = ++this.eventCount
-      this.events[id] = { kind, n }
+      this[map][id] = { ...value, n }
       const timer = setTimeout(() => {
         this.eventTimers.delete(timer)
-        if (this.events[id]?.n === n) delete this.events[id]
-      }, EVENT_MS)
+        if (this[map][id]?.n === n) delete this[map][id]
+      }, ms)
       this.eventTimers.add(timer)
+    },
+    // The other half of a FLIP: the DOM already shows the harbor's new
+    // shape; each thing that moved (layoutShifts, in map units) is put back
+    // where it was with the CSS `translate` property — which goes outside
+    // the `transform` that places a ship, so the two never fight — and then
+    // let go to glide home. A fleet's ships and jetties move against their
+    // fleet, which moves on its own; a fold button, over the map in CSS
+    // pixels, goes with its fleet. Wherever something was mid-glide, it
+    // starts from there.
+    flip(shifts) {
+      const svg = this.$refs.svg
+      if (!svg) return
+      const scale = (svg.getBoundingClientRect().width || this.layout.width) / this.layout.width
+      const moves = []
+      const put = (el, dx, dy, k = 1) => { if (el) moves.push({ el, dx: dx * k, dy: dy * k }) }
+      const fleet = key => svg.querySelector(`[data-fleet="${key}"]`)
+      for (const [key, dy] of Object.entries(shifts.fleets)) {
+        put(fleet(key), 0, dy)
+        put(this.$el.querySelector(`[data-fold="${key}"]`), 0, dy, scale)
+      }
+      for (const [id, d] of Object.entries(shifts.jetties)) put(svg.querySelector(`[data-pier="${id}"]`), d.dx, d.dy)
+      for (const [key, d] of Object.entries(shifts.anchorages)) put(fleet(key)?.querySelector('.hm-anchorage'), d.dx, d.dy)
+      for (const [id, d] of Object.entries(shifts.ships)) put(svg.querySelector(`[data-ship="${id}"]`), d.dx, d.dy)
+      if (shifts.rose) put(svg.querySelector('.hm-rose'), shifts.rose.dx, shifts.rose.dy)
+      if (!moves.length) return
+      for (const m of moves) {
+        const [x = 0, y = 0] = (String(getComputedStyle(m.el).translate ?? '').match(/-?[\d.]+/g) ?? []).map(Number)
+        m.el.style.transition = 'none'
+        m.el.style.translate = `${x - m.dx}px ${y - m.dy}px`
+      }
+      svg.getBoundingClientRect() // the start, laid down before the glide
+      for (const { el } of moves) {
+        el.style.transition = `${el.matches('.hm-ship') ? 'opacity 0.25s, ' : ''}translate ${FLIP_MS}ms ${FLIP_EASE}`
+        el.style.translate = '0px 0px'
+        const timer = setTimeout(() => {
+          this.flipTimers.delete(timer)
+          if (el.style.translate !== '0px 0px') return // a later glide has it now
+          el.style.translate = ''
+          el.style.transition = ''
+        }, FLIP_MS + 50)
+        this.flipTimers.add(timer)
+      }
+    },
+    // Which fleet each project is in: { <id>: <fleet key> }, folded or not.
+    whereabouts() {
+      const out = {}
+      for (const f of this.fleets) for (const p of this.projectsOf(f)) out[p.id] = f.key
+      return out
     },
     // Laid out for the width it has, at 1:1.
     measure() {
@@ -601,12 +737,13 @@ export default {
           pointed: this.card?.id === s.id,
           lifted: this.drag?.ship.id === s.id,
           pending: this.moving === s.id,
+          arriving: !!this.arrivals[s.id],
         },
       ]
     },
     // Where a ship lies, as a CSS transform rather than an attribute, so that
-    // it can glide to a new berth after a move (.settling); a ship at anchor
-    // is swung about its buoy.
+    // it can back in when new (.arriving, with the `translate` property, as
+    // flip glides it); a ship at anchor is swung about its buoy.
     shipTransform(s) {
       const swing = s.rot
         ? ` translate(${ANCHOR_X}px, ${SHIP_B / 2}px) rotate(${s.rot}deg) translate(${-ANCHOR_X}px, ${-SHIP_B / 2}px)`
@@ -616,6 +753,24 @@ export default {
     // The middle of a ship's hull along its berth, which way round it lies.
     midship(s) {
       return s.dir < 0 ? SHIP_L - this.shape(s).L / 2 : this.shape(s).L / 2
+    },
+    // How far along the voyage under way is (lib/vessels.js voyage), by the
+    // store's clock, which ticks every second; null when there is none.
+    voyageOf(s) {
+      return voyage(this.live(s), store.now)
+    },
+    uneasy(s) {
+      return !!this.voyageOf(s)?.overdue
+    },
+    // Out at its berth, how much further a ship under way has gone: up to
+    // HEADWAY as its voyage goes on (along the map, as an SVG attribute).
+    headway(s) {
+      const v = s.side === 'anchor' ? null : this.voyageOf(s)
+      return v ? `translate(${(s.dir * HEADWAY * v.p).toFixed(2)} 0)` : null
+    },
+    // Where its lamp is along the berth, which way round it lies.
+    lampX(s) {
+      return s.dir < 0 ? SHIP_L - this.shape(s).lamp : this.shape(s).lamp
     },
     // A ship under way has cast off: a little out from its jetty, bow first.
     castOff(s) {
@@ -636,6 +791,9 @@ export default {
         parts.push(`${bytes(live.pm2.memory)}${live.info?.memory_mb ? ` of ${live.info.memory_mb} MB` : ''} memory`)
       }
       if (this.wornOf(s)) parts.push(`restarted ${live.pm2.restarts} times since its last deploy`)
+      const v = this.voyageOf(s)
+      if (v?.overdue) parts.push(`taking longer than usual (usually ${roughly(v.expected)})`)
+      else if (v?.expected) parts.push(`about ${roughly(v.expected - v.elapsed)} to go`)
       return parts.join(' · ')
     },
     // What fits under the ship, along its berth.
@@ -846,16 +1004,13 @@ export default {
     },
     // Saves the move (null: to no pier) the way the ⋮ menu does — a refusal
     // is said in a dialog there. The harbor's new shape comes with the live
-    // state; ships glide to their berths while it settles.
+    // state, and the ships that change berth glide there (the layout watcher).
     async moveTo(ship, pierId) {
-      clearTimeout(this.settleTimer)
       this.moving = ship.id
-      this.settling = true
       try {
         await performAction(ship.project, `pier:${pierId ?? ''}`)
       } finally {
         this.moving = null
-        this.settleTimer = setTimeout(() => { this.settling = false }, SETTLE_MS)
       }
     },
     keepCard() {
