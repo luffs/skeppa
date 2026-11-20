@@ -30,6 +30,7 @@ Deploys private GitHub repos onto this server via webhooks, manages encrypted EN
 
 - `bun install` — install everything (workspaces)
 - `bun run dev:server` / `bun run dev:web` — dev servers (Vite proxies `/api` and `/live` to :3000)
+- `/harbor-lab.html?s=mixed|voyages|crowd|tenant` on the `dev:web` server — the harbor map on seeded scenarios, no backend or sign-in (`web/src/dev/harborLab.js`): a bar to moor, scuttle, set sail, land or fail, and a meter of fps and main-thread idle. Dev only; Vite builds just `index.html`. Whatever moves all the time on the map goes through the swell in `HarborMap.vue` (SVG attributes, 15/s) — never SMIL or an endless CSS animation inside the SVG, which have Chrome record the whole SVG again every frame; the lighthouse's beam is an HTML layer over the map, turned by the compositor (a click on the lighthouse puts it out)
 - `bun test` — server unit tests (in `server/test/`; bunfig.toml scopes the Bun runner there, so it never picks up the Vitest files)
 - `bun run test:web` — frontend smoke tests (Vitest + @vue/test-utils under happy-dom, in `web/test/`): every view mounted for both roles against a seeded store, failing on any Vue render warning — the bug class where a template references something the instance never exposed
 - `bun run build` — build the frontend to `web/dist` (served by Hono in prod)

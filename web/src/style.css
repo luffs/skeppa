@@ -539,10 +539,10 @@ button.filter-chip-clear:hover { background: none; opacity: 0.7; }
 .hm-svg { display: block; max-width: 100%; height: auto; border-radius: 14px; border: 1px solid var(--line-strong); box-shadow: 0 2px 0 var(--shadow), 0 14px 34px var(--shadow); }
 .hm-stop-shallow { stop-color: var(--water); }
 .hm-stop-deep { stop-color: var(--water-deep); }
-.hm-stop-beam, .hm-stop-glow { stop-color: var(--hm-lantern); }
+.hm-stop-glow { stop-color: var(--hm-lantern); }
 .hm-wave { fill: none; stroke: var(--water-wave); stroke-width: 1.4; stroke-linecap: round; }
-/* the drift is SMIL on the pattern (HarborMap.vue): a CSS transform here would
-   put a bitmap the size of the map on its own layer and slide that */
+/* the drift moves the pattern, with the swell (HarborMap.vue): a CSS transform
+   here would put a bitmap the size of the map on its own layer and slide that */
 .hm-waves { pointer-events: none; }
 /* what stands above the water casts onto it */
 .hm-cast { fill: var(--hm-cast); }
@@ -608,30 +608,31 @@ button.filter-chip-clear:hover { background: none; opacity: 0.7; }
 .hm-funnel-in { fill: #10161d; }
 .hm-lines { fill: none; stroke: var(--jetty-edge); stroke-width: 1; }
 .hm-lamp { fill: color-mix(in srgb, var(--c) 45%, #fff); stroke: color-mix(in srgb, var(--c) 70%, #000); stroke-width: 0.8; }
-.hm-lamp-glow { fill: var(--c); opacity: var(--hm-halo); pointer-events: none; }
+/* under way the glow breathes, down or failed it blinks: --pulse, set by the swell */
+.hm-lamp-glow { fill: var(--c); opacity: calc(var(--hm-halo) * var(--pulse, 1)); pointer-events: none; }
 .hm-ship.state-idle .hm-lamp-glow { display: none; }
-.hm-ship.state-underway .hm-lamp-glow { animation: hm-pulse 1.3s ease-in-out infinite; }
-.hm-ship.state-down .hm-lamp-glow, .hm-ship.state-failed .hm-lamp-glow { animation: hm-pulse 0.9s steps(2, jump-none) infinite; }
-@keyframes hm-pulse { 50% { opacity: 0.05; } }
 .hm-name { font: 700 10.5px var(--sans); fill: var(--ink); paint-order: stroke; stroke: var(--water); stroke-width: 3px; stroke-linejoin: round; }
 .hm-ship:hover .hm-hull, .hm-ship:focus-visible .hm-hull, .hm-ship.pointed .hm-hull { stroke-width: 2.6; }
 .hm-ship:hover .hm-name, .hm-ship:focus-visible .hm-name, .hm-ship.pointed .hm-name { fill: var(--accent); }
 .hm-ship:focus-visible .hm-hull { stroke: var(--accent); }
 .hm-ship.dim { opacity: 0.2; }
 
-/* Afloat, a ship rides the swell, and at anchor swings about its buoy: both
-   are SMIL in HarborMap.vue, never a CSS transform animation — Chrome would
-   composite it and turn a bitmap of the ship, soft at every edge. */
+/* Afloat, a ship rides the swell, and at anchor swings about its buoy; its
+   wake streams: all moved by the swell in HarborMap.vue, fifteen times a
+   second — never a CSS animation, which either changes the SVG every frame
+   (Chrome then records all of it again) or, for a transform, turns a
+   composited bitmap of the ship, soft at every edge. */
 .hm-chain path { fill: none; stroke: var(--dim); stroke-width: 1; stroke-dasharray: 2 2; }
 .hm-buoy { fill: var(--amber); stroke: var(--water); stroke-width: 1.5; }
-.hm-wake path { stroke: var(--accent); opacity: 0.75; stroke-width: 1.6; stroke-linecap: round; fill: none; stroke-dasharray: 4 4; animation: hm-wake 0.8s linear infinite; }
+.hm-wake path { stroke: var(--accent); opacity: 0.75; stroke-width: 1.6; stroke-linecap: round; fill: none; stroke-dasharray: 4 4; }
 @keyframes hm-wake { to { stroke-dashoffset: -8; } }
 /* How far along the voyage is: a ring about the lamp, filling clockwise from
-   the top a second at a time (a paint transition, nothing composited). With
-   no good voyage to go by it is fainter; overdue, full and amber. */
+   the top a second at a time — a step, not a transition, which would keep
+   the SVG changing every frame of the voyage. With no good voyage to go by
+   it is fainter; overdue, full and amber. */
 .hm-voyage { pointer-events: none; }
 .hm-voyage-track { fill: none; stroke: color-mix(in srgb, var(--c) 45%, #000); stroke-width: 2; }
-.hm-voyage-done { fill: none; stroke: color-mix(in srgb, var(--c) 25%, #fff); stroke-width: 2; stroke-linecap: round; transition: stroke-dasharray 1s linear; }
+.hm-voyage-done { fill: none; stroke: color-mix(in srgb, var(--c) 25%, #fff); stroke-width: 2; stroke-linecap: round; }
 .hm-voyage.blind .hm-voyage-done { stroke-opacity: 0.6; }
 .hm-voyage.overdue .hm-voyage-done { stroke: var(--amber); }
 
@@ -640,7 +641,7 @@ button.filter-chip-clear:hover { background: none; opacity: 0.7; }
 /* New commits waiting: a pennant, run up and then flying. */
 .hm-staff { fill: none; stroke: var(--ink); stroke-width: 1; stroke-linecap: round; }
 .hm-flag { fill: var(--amber); stroke: color-mix(in srgb, var(--amber) 60%, #000); stroke-width: 0.7; stroke-linejoin: round; }
-/* run up once in CSS (soft only for that moment); its flying is SMIL */
+/* run up once in CSS (soft only for that moment); its flying is the swell's */
 .hm-hoist { transform-box: fill-box; transform-origin: right center; animation: hm-hoist 0.7s ease-out backwards; }
 @keyframes hm-hoist { from { transform: scaleX(0); } }
 /* What just happened to a ship, for a moment: rings spreading on the water
@@ -697,14 +698,31 @@ button.filter-chip-clear:hover { background: none; opacity: 0.7; }
 .hm-event.sunk { --e: var(--dim); }
 .hm-drag-tip { flex: 1 0 100%; margin: 0; font-size: 12px; color: var(--dim); }
 
-/* The lighthouse, its beam going round (SMIL, like everything endless on the map). */
-.hm-beam { opacity: var(--hm-beam); pointer-events: none; }
+/* The lighthouse's beam going round: the one endless CSS animation on the
+   map, on an HTML layer over it (HarborMap.vue), so the compositor turns it —
+   smoothly at the screen's rate, nothing for the main thread — and the bitmap
+   it turns is a soft gradient, which nothing can blur. Two wedges from the
+   tower, BEAM long and 72 wide at their ends, fading outward as they go,
+   with a hole where the tower stands (the beam used to be drawn under it).
+   Everything else that moves all the time is the swell's. */
+.hm-beam-clip { position: absolute; inset: 0; overflow: hidden; border-radius: 14px; pointer-events: none; }
+.hm-beam {
+  position: absolute; opacity: var(--hm-beam);
+  background: linear-gradient(to right, transparent, var(--hm-lantern) 48.82%, transparent 48.82% 51.18%, var(--hm-lantern) 51.18%, transparent);
+  clip-path: polygon(50% 50%, 100% 44.7%, 100% 55.3%, 50% 50%, 0% 55.3%, 0% 44.7%);
+  will-change: transform; animation: hm-sweep 22s linear infinite;
+}
+@keyframes hm-sweep { to { transform: rotate(360deg); } }
+/* a click on the lighthouse puts it out (its lamp dark, no beam), and lights it again */
+.hm-light { cursor: pointer; outline: none; }
+.hm-light:focus-visible .hm-tower { stroke: var(--accent); stroke-width: 2; }
 .hm-tower { fill: #fff; stroke: var(--quay-edge); stroke-width: 1; }
 .hm-tower-band { fill: var(--red); }
-.hm-tower-lamp { fill: var(--hm-lantern); stroke: #fff; stroke-width: 1; }
+.hm-tower-lamp { fill: var(--hm-lantern); stroke: #fff; stroke-width: 1; transition: fill 0.3s; }
+.hm-light.dark .hm-tower-lamp { fill: #3a4048; }
 
 @media (prefers-reduced-motion: reduce) {
-  .hm-wake path, .hm-hoist, .hm-ship .hm-lamp-glow { animation: none !important; }
+  .hm-hoist, .hm-beam { animation: none !important; }
   .hm-berth { transition: none; }
   .hm-ship.arriving, .hm-sink { animation: none; }
   .hm-slot path { animation: none; }

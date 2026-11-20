@@ -33,17 +33,13 @@
           <linearGradient id="hm-depth" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0" class="hm-stop-shallow" /><stop offset="1" class="hm-stop-deep" />
           </linearGradient>
+          <!-- the waves drift by a tile at a time: the pattern moves, not the water (the swell) -->
           <pattern id="hm-waves" width="56" height="28" patternUnits="userSpaceOnUse">
             <path class="hm-wave" d="M3 8 q5 -4 10 0 t10 0" /><path class="hm-wave" d="M31 22 q5 -4 10 0 t10 0" />
-            <!-- the waves drift by a tile at a time: the pattern moves, not the water -->
-            <animateTransform v-if="!still" attributeName="patternTransform" type="translate" values="0 0; 56 0" dur="14s" repeatCount="indefinite" />
           </pattern>
           <pattern id="hm-stone" width="18" height="12" patternUnits="userSpaceOnUse">
             <path class="hm-stone-line" d="M0 0.5 H18 M0 6.5 H18 M5 0.5 V6.5 M14 6.5 V12" />
           </pattern>
-          <linearGradient id="hm-beam" gradientUnits="userSpaceOnUse" x1="0" y1="0" :x2="BEAM" y2="0">
-            <stop offset="0" class="hm-stop-beam" stop-opacity="1" /><stop offset="1" class="hm-stop-beam" stop-opacity="0" />
-          </linearGradient>
           <radialGradient id="hm-glow">
             <stop offset="0" class="hm-stop-glow" stop-opacity="0.85" /><stop offset="1" class="hm-stop-glow" stop-opacity="0" />
           </radialGradient>
@@ -132,14 +128,8 @@
             @focus="onShipFocus(s)"
             @blur="hideSoon"
           >
-            <!-- at anchor the whole ship swings about its buoy -->
-            <g class="hm-sway">
-              <animateTransform
-                v-if="!still && s.side === 'anchor'"
-                attributeName="transform" type="rotate" dur="9s" repeatCount="indefinite"
-                :values="`-1.2 ${ANCHOR_X} ${SHIP_B / 2}; 1.2 ${ANCHOR_X} ${SHIP_B / 2}; -1.2 ${ANCHOR_X} ${SHIP_B / 2}`"
-                :begin="`${-1.3 * (i % 7)}s`" calcMode="spline" keyTimes="0; 0.5; 1" :keySplines="SWELL"
-              />
+            <!-- at anchor the whole ship swings about its buoy (the swell, below) -->
+            <g class="hm-sway" :data-phase="i % 7">
               <rect class="hm-hit" x="0" y="-2" :width="SHIP_L" :height="SHIP_B + NAME_H + 2" />
               <g v-if="s.side === 'anchor'" class="hm-chain">
                 <path :d="`M${shape(s).L - 1} ${SHIP_B / 2} H${ANCHOR_X}`" />
@@ -150,22 +140,9 @@
                    on — an attribute, a fraction of a unit a second, never composited -->
               <g class="hm-berth" :style="{ transform: `translateX(${castOff(s)}px)` }">
                 <g :transform="headway(s)">
-                  <!-- afloat: every ship rides the swell a little, each to its own beat -->
-                  <g class="hm-bob">
-                    <!-- a voyage taking much longer than usual rides it uneasily: quicker, and rolling more -->
-                    <template v-if="!still">
-                      <animateTransform
-                        :key="`heave-${uneasy(s)}`"
-                        attributeName="transform" type="translate" additive="sum" :dur="uneasy(s) ? '1.7s' : '5.5s'" repeatCount="indefinite"
-                        :values="uneasy(s) ? '0 0; 0 1.5; 0 0' : '0 0; 0 1; 0 0'" :begin="`${-0.8 * (i % 7)}s`" calcMode="spline" keyTimes="0; 0.5; 1" :keySplines="SWELL"
-                      />
-                      <animateTransform
-                        :key="`roll-${uneasy(s)}`"
-                        attributeName="transform" type="rotate" additive="sum" :dur="uneasy(s) ? '1.7s' : '5.5s'" repeatCount="indefinite"
-                        :values="uneasy(s) ? `-1.6 ${midship(s)} ${SHIP_B / 2}; 1.6 ${midship(s)} ${SHIP_B / 2}; -1.6 ${midship(s)} ${SHIP_B / 2}` : `0 ${midship(s)} ${SHIP_B / 2}; 0.5 ${midship(s)} ${SHIP_B / 2}; 0 ${midship(s)} ${SHIP_B / 2}`"
-                        :begin="`${-0.8 * (i % 7)}s`" calcMode="spline" keyTimes="0; 0.5; 1" :keySplines="SWELL"
-                      />
-                    </template>
+                  <!-- afloat: every ship rides the swell a little, each to its own beat;
+                       a voyage taking much longer than usual rides it uneasily (the swell, below) -->
+                  <g class="hm-bob" :data-phase="i % 7" :data-cx="midship(s)" :data-uneasy="uneasy(s) ? 1 : 0">
                     <!-- drawn bow to the right; a ship on the jetty's left is mirrored -->
                     <g :transform="s.dir < 0 ? `translate(${SHIP_L} 0) scale(-1 1)` : null">
                       <!-- a wake behind the stern under way; otherwise made fast -->
@@ -177,15 +154,9 @@
                       <!-- new commits waiting: a pennant flying -->
                       <g v-if="stateOf(s) === 'ahead'" class="hm-pennant" :transform="`translate(${Math.round(shape(s).L * 0.7)} 2)`">
                         <path class="hm-staff" d="M0 0 V-8" />
-                        <!-- run up (CSS, once), then flying: skewed about the staff at x = 0 -->
+                        <!-- run up (CSS, once), then flying: skewed about the staff at x = 0 (the swell) -->
                         <g class="hm-hoist">
-                          <path class="hm-flag" d="M0 -8 L-11 -5.5 L0 -3 Z">
-                            <animateTransform
-                              v-if="!still"
-                              attributeName="transform" type="skewY" dur="2.6s" repeatCount="indefinite"
-                              values="-7; 7; -7" calcMode="spline" keyTimes="0; 0.5; 1" :keySplines="SWELL"
-                            />
-                          </path>
+                          <path class="hm-flag" d="M0 -8 L-11 -5.5 L0 -3 Z" />
                         </g>
                       </g>
                     </g>
@@ -253,14 +224,23 @@
           </g>
         </g>
 
-        <!-- the lighthouse at the end of the shore, its beam sweeping the harbor -->
-        <g v-if="layout.light" class="hm-light" :transform="`translate(${layout.light.x} ${layout.light.y})`">
+        <!-- the lighthouse at the end of the shore (its beam sweeps the harbor
+             from a layer of its own, over the map); a click puts it out, and
+             lights it again -->
+        <g
+          v-if="layout.light"
+          class="hm-light"
+          :class="{ dark: !lit }"
+          :transform="`translate(${layout.light.x} ${layout.light.y})`"
+          role="button"
+          tabindex="0"
+          :aria-pressed="lit ? 'true' : 'false'"
+          aria-label="Lighthouse"
+          @click="toggleLight"
+          @keydown="onLightKey"
+        >
           <circle class="hm-cast" cx="2" cy="4" r="15" />
           <circle class="hm-quay" r="15" /><circle r="15" fill="url(#hm-stone)" />
-          <g class="hm-beam">
-            <animateTransform v-if="!still" attributeName="transform" type="rotate" values="0; 360" dur="22s" repeatCount="indefinite" />
-            <path :d="beamPath" fill="url(#hm-beam)" /><path :d="beamPath" fill="url(#hm-beam)" transform="rotate(180)" />
-          </g>
           <circle class="hm-tower" r="8" /><circle class="hm-tower-band" r="5.2" /><circle class="hm-tower-lamp" r="2.6" />
         </g>
 
@@ -284,6 +264,15 @@
           </g>
         </template>
       </svg>
+
+      <!-- The lighthouse's beam: HTML over the map, not SVG in it, so that its
+           endless turn is the compositor's — smooth at the screen's rate and
+           nothing for the main thread. Turned inside the SVG it would have
+           Chrome record the whole harbor again every frame (or, done by the
+           swell, judder). Clipped to the map's corners. -->
+      <div v-if="layout.light && lit" class="hm-beam-clip" aria-hidden="true">
+        <div class="hm-beam" :style="beamStyle"></div>
+      </div>
 
       <!-- The row the list would show, over the ship pointed at or focused:
            its status, what happened, its one button and its ⋮ menu. -->
@@ -359,8 +348,10 @@ const BEAM = 340 // how far the lighthouse reaches
 const EVENT_MS = 3400 // how long what just happened to a ship stays on the water
 const DRAG_START = 6 // how far a pressed ship is moved before that is a drag and not a click
 const HOLD_MS = 320 // how long a finger rests on a ship before it is picked up — sooner, it is a scroll
-// ease-in-out, for each half of a back-and-forth SMIL animation
-const SWELL = '0.42 0 0.58 1; 0.42 0 0.58 1'
+// How often the swell moves the harbor (the ships' bob and swing, the
+// pennants, the wakes, the lamps, the waves): 15 times a second, which the
+// eye cannot tell from more at a pixel's motion.
+const SWELL_MS = 1000 / 15
 const HOLD_SLACK = 10 // how far that finger may wander meanwhile
 const FLIP_MS = 700 // how long what a change of the harbor's shape moved takes to glide there
 const FLIP_EASE = 'cubic-bezier(0.3, 0, 0.2, 1)'
@@ -392,6 +383,23 @@ function saveFolded(folded) {
   try {
     localStorage.setItem(FOLDED_KEY, JSON.stringify(Object.keys(folded)))
   } catch { /* storage refused: folded for this visit only */ }
+}
+
+// Whether the lighthouse is lit (a click on it puts it out, and lights it
+// again), kept in the browser; lit unless put out.
+const LIGHT_KEY = 'skeppa.lighthouseOff'
+function loadLit() {
+  try {
+    return localStorage.getItem(LIGHT_KEY) !== '1'
+  } catch {
+    return true
+  }
+}
+function saveLit(lit) {
+  try {
+    if (lit) localStorage.removeItem(LIGHT_KEY)
+    else localStorage.setItem(LIGHT_KEY, '1')
+  } catch { /* storage refused: for this visit only */ }
 }
 
 // A four-pointed star about the origin, turned `turn` degrees: its outline,
@@ -448,7 +456,7 @@ export default {
   emits: ['toggle-state'],
   data() {
     return {
-      SHIP_L, SHIP_B, NAME_H, BERTH, ROW, ANCHOR_X, BEAM, SWELL,
+      SHIP_L, SHIP_B, NAME_H, BERTH, ROW, ANCHOR_X, BEAM,
       width: 900,
       card: null,
       hideTimer: null,
@@ -471,10 +479,12 @@ export default {
       tapped: null,
       // fleets folded to their quays: { <key>: true }
       folded: loadFolded(),
+      // the lighthouse lit, its beam sweeping (a click on it toggles)
+      lit: loadLit(),
       // the animations pause while the map is scrolled away or the tab hidden
       inView: true,
       pageHidden: false,
-      // prefers-reduced-motion: the ships lie still (SMIL does not hear the CSS media query)
+      // prefers-reduced-motion: the ships lie still (the swell is script: it does not hear the CSS media query)
       still: false,
     }
   },
@@ -513,8 +523,13 @@ export default {
     wreckList() {
       return Object.values(this.wrecks)
     },
-    beamPath() {
-      return `M0 0 L${BEAM} -36 L${BEAM} 36 Z`
+    // Where the beam's layer lies over the map, in fractions of it — so it
+    // follows the map when it is drawn smaller than 1:1 — centred on the
+    // lighthouse, BEAM every way.
+    beamStyle() {
+      const { width, height, light } = this.layout
+      const pct = (n, of) => `${(n / of) * 100}%`
+      return { left: pct(light.x - BEAM, width), top: pct(light.y - BEAM, height), width: pct(2 * BEAM, width), height: pct(2 * BEAM, height) }
     },
     // What the events are read from: every ship's state, and how its last
     // voyage ended.
@@ -559,13 +574,12 @@ export default {
     },
   },
   watch: {
-    // The swell, the swinging at anchor and the pennant are SMIL, not CSS
-    // animations: Chrome hands an endless CSS transform animation to the
-    // compositor, which rasterizes the ship once and then moves and turns
-    // that bitmap — soft edges for good. SMIL redraws the vectors each frame.
-    // It stops with the document's own clock, not animation-play-state.
+    // The swell stops out of sight, and for good with reduced motion.
     asleep() {
-      this.applySleep()
+      this.tendSwell()
+    },
+    still() {
+      this.tendSwell()
     },
     // a card that went away, or moved to another ship, takes the first tap with it
     card(now) {
@@ -622,6 +636,7 @@ export default {
     // which fleet every project is in, for the layout watcher: the first look is the baseline
     this.known = this.whereabouts()
     this.flipTimers = new Set()
+    this.swellTimer = null
   },
   mounted() {
     this.measure()
@@ -635,7 +650,7 @@ export default {
       this.onCalm()
       this.calm.addEventListener?.('change', this.onCalm)
     }
-    this.applySleep()
+    this.tendSwell()
     if (typeof IntersectionObserver !== 'undefined') {
       this.sight = new IntersectionObserver(entries => { this.inView = entries.at(-1).isIntersecting })
       this.sight.observe(this.$refs.wrap)
@@ -652,6 +667,7 @@ export default {
     document.removeEventListener('visibilitychange', this.onVisibility)
     this.calm?.removeEventListener?.('change', this.onCalm)
     clearTimeout(this.hideTimer)
+    clearInterval(this.swellTimer)
     for (const t of this.flipTimers) clearTimeout(t)
     for (const t of this.eventTimers) clearTimeout(t)
     this.endPress()
@@ -907,10 +923,66 @@ export default {
     onCalm() {
       this.still = !!this.calm?.matches
     },
-    applySleep() {
+    // The swell: everything on the map that moves all the time — the ships
+    // riding it (uneasily on an overdue voyage), swinging at anchor, the
+    // pennants, the wakes, the lamps pulsing, the waves drifting — moved
+    // together, SWELL_MS apart, by writing SVG attributes. Not SMIL and not
+    // CSS animations: either of those changes the SVG every frame, and Chrome
+    // then records all of it again every frame (with a full harbor, nearly
+    // the whole main thread); a CSS transform animation is composited
+    // instead, but turns a bitmap of the ship, soft at every edge. Fifteen
+    // redraws a second keep it sharp and cheap. Runs while the map is in
+    // sight and motion is welcome. The one exception is the lighthouse's
+    // beam: a soft gradient, which a composited bitmap cannot blur, turned
+    // by CSS at the screen's own rate — fifteen steps a second of a sweep
+    // that wide show as judder.
+    tendSwell() {
+      const run = !this.still && !this.asleep
+      if (run && !this.swellTimer) {
+        this.swellTimer = setInterval(() => this.swellTick(), SWELL_MS)
+        this.swellTick()
+      } else if (!run && this.swellTimer) {
+        clearInterval(this.swellTimer)
+        this.swellTimer = null
+      }
+      if (this.still) this.calmSwell()
+    },
+    // One beat of the swell, at `ms` (performance.now()).
+    swellTick(ms = performance.now()) {
       const svg = this.$refs.svg
-      if (this.asleep) svg?.pauseAnimations?.()
-      else svg?.unpauseAnimations?.()
+      if (!svg) return
+      const t = ms / 1000
+      // 0 → 1 → 0 over `period` seconds, eased at either end; `lead` puts a
+      // ship ahead of the others in it
+      const wave = (period, lead = 0) => (1 - Math.cos((2 * Math.PI * (t + lead)) / period)) / 2
+      const f = (n, d = 2) => n.toFixed(d)
+      for (const g of svg.querySelectorAll('.hm-bob')) {
+        const uneasy = g.dataset.uneasy === '1'
+        const v = wave(uneasy ? 1.7 : 5.5, Number(g.dataset.phase) * 0.8)
+        const roll = uneasy ? -1.6 + 3.2 * v : 0.5 * v
+        g.setAttribute('transform', `translate(0 ${f((uneasy ? 1.5 : 1) * v)}) rotate(${f(roll)} ${g.dataset.cx} ${SHIP_B / 2})`)
+      }
+      for (const g of svg.querySelectorAll('.side-anchor > .hm-sway')) {
+        g.setAttribute('transform', `rotate(${f(-1.2 + 2.4 * wave(9, Number(g.dataset.phase) * 1.3))} ${ANCHOR_X} ${SHIP_B / 2})`)
+      }
+      for (const flag of svg.querySelectorAll('.hm-flag')) flag.setAttribute('transform', `skewY(${f(-7 + 14 * wave(2.6), 1)})`)
+      const dash = f(-((t % 0.8) / 0.8) * 8, 1)
+      for (const p of svg.querySelectorAll('.hm-wake path')) p.setAttribute('stroke-dashoffset', dash)
+      // under way a lamp breathes; down or failed it blinks
+      const breathe = f(1 - 0.8 * wave(1.3))
+      const blink = Math.floor(t / 0.45) % 2 ? '0.2' : '1'
+      for (const glow of svg.querySelectorAll('.state-underway .hm-lamp-glow')) glow.style.setProperty('--pulse', breathe)
+      for (const glow of svg.querySelectorAll('.state-down .hm-lamp-glow, .state-failed .hm-lamp-glow')) glow.style.setProperty('--pulse', blink)
+      svg.querySelector('#hm-waves')?.setAttribute('patternTransform', `translate(${f((t * 4) % 56, 1)} 0)`)
+    },
+    // Reduced motion: everything the swell moved, back at rest.
+    calmSwell() {
+      const svg = this.$refs.svg
+      if (!svg) return
+      for (const el of svg.querySelectorAll('.hm-bob, .hm-sway, .hm-flag')) el.removeAttribute('transform')
+      for (const p of svg.querySelectorAll('.hm-wake path')) p.removeAttribute('stroke-dashoffset')
+      for (const glow of svg.querySelectorAll('.hm-lamp-glow')) glow.style.removeProperty('--pulse')
+      svg.querySelector('#hm-waves')?.removeAttribute('patternTransform')
     },
     onVisibility() {
       this.pageHidden = typeof document !== 'undefined' && document.visibilityState === 'hidden'
@@ -926,6 +998,16 @@ export default {
       return [...f.piers.flatMap(p => p.projects), ...f.loose]
     },
     // Folds or unfolds a fleet; one a search has opened is unfolded for good.
+    // A click on the lighthouse puts it out, and lights it again.
+    toggleLight() {
+      this.lit = !this.lit
+      saveLit(this.lit)
+    },
+    onLightKey(event) {
+      if (event.key !== 'Enter' && event.key !== ' ') return
+      event.preventDefault()
+      this.toggleLight()
+    },
     toggleFleet(key) {
       const k = String(key)
       if (this.folded[k]) delete this.folded[k]

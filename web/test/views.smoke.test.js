@@ -742,7 +742,7 @@ describe('the harbor map', () => {
         expect(ring().find('.hm-voyage-done').attributes('stroke-dasharray')).toBe('50 100')
         expect(adm().find('.hm-berth > g').attributes('transform')).toBe('translate(-3.50 0)')
         expect(adm().attributes('aria-description')).toContain('Voyage: 30s to go of 1m')
-        expect(adm().findAll('.hm-bob > animateTransform').map(a => a.attributes('dur'))).toEqual(['5.5s', '5.5s'])
+        expect(adm().find('.hm-bob').attributes('data-uneasy')).toBe('0')
 
         // long past it: full, amber, rolling uneasily
         store.now = NOW + 90_000
@@ -750,7 +750,7 @@ describe('the harbor map', () => {
         expect(ring().classes()).toContain('overdue')
         expect(ring().find('.hm-voyage-done').attributes('stroke-dasharray')).toBe('100 100')
         expect(adm().attributes('aria-description')).toContain('Voyage: 1m over, usually 1m')
-        expect(adm().findAll('.hm-bob > animateTransform').map(a => a.attributes('dur'))).toEqual(['1.7s', '1.7s'])
+        expect(adm().find('.hm-bob').attributes('data-uneasy')).toBe('1') // the swell rides it quicker, rolling more
 
         // home again: no ring, no headway
         store.live.projects[1].currentDeployment = null
@@ -878,55 +878,88 @@ describe('the harbor map', () => {
     expect(res.problems.join(' | ')).toBe('')
   })
 
-  // The swell, the swing at anchor and the pennant are SMIL (a composited CSS
-  // transform animation leaves the ships soft): out of sight the SVG's own
-  // clock stops, and asked for less motion there is none to stop.
-  test('the ships ride the swell in SMIL, its clock stopped out of sight and gone with reduced motion', async () => {
+  // Everything that moves all the time — the ships riding the swell, swinging
+  // at anchor, the pennants, the waves, the lighthouse — is moved by one
+  // clock writing SVG attributes fifteen times a second (SMIL or CSS
+  // animations would have Chrome record the whole SVG again every frame). It
+  // beats once as it starts, stops out of sight, and with reduced motion never
+  // runs and leaves everything at rest.
+  test('the swell moves the harbor, stops out of sight and never runs with reduced motion', async () => {
     seedStore('admin')
-    const proto = window.SVGSVGElement.prototype
-    const calls = []
-    const saved = { pause: proto.pauseAnimations, unpause: proto.unpauseAnimations }
-    proto.pauseAnimations = () => calls.push('pause')
-    proto.unpauseAnimations = () => calls.push('unpause')
-    try {
-      const res = await expectCleanRender(DashboardView, {
-        route: { query: { view: 'map' } },
-        steps: async wrapper => {
-          const ship = name => wrapper.findAll('.hm-ship').find(s => s.attributes('aria-label').startsWith(`${name},`))
-          expect(ship('adm').findAll('.hm-bob > animateTransform').map(a => a.attributes('type'))).toEqual(['translate', 'rotate'])
-          expect(ship('adm').find('.hm-flag animateTransform').attributes('type')).toBe('skewY')
-          expect(ship('bobapp').find('.hm-sway > animateTransform').attributes('type')).toBe('rotate') // at anchor
-          expect(ship('adm').find('.hm-sway > animateTransform').exists()).toBe(false) // moored
-          // the waves drift as their pattern moves; the lighthouse's beam goes round
-          expect(wrapper.find('#hm-waves > animateTransform').attributes('attributeName')).toBe('patternTransform')
-          expect(wrapper.find('.hm-beam > animateTransform').attributes('type')).toBe('rotate')
-          expect(calls.at(-1)).toBe('unpause')
-          Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true })
-          document.dispatchEvent(new Event('visibilitychange'))
-          await settle()
-          expect(calls.at(-1)).toBe('pause')
-          Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
-          document.dispatchEvent(new Event('visibilitychange'))
-          await settle()
-          expect(calls.at(-1)).toBe('unpause')
-        },
-      })
-      expect(res.problems.join(' | ')).toBe('')
+    const res = await expectCleanRender(DashboardView, {
+      route: { query: { view: 'map' } },
+      steps: async wrapper => {
+        const ship = name => wrapper.findAll('.hm-ship').find(s => s.attributes('aria-label').startsWith(`${name},`))
+        expect(wrapper.find('.hm-svg animateTransform').exists()).toBe(false) // no SMIL
+        expect(ship('adm').find('.hm-bob').attributes('transform')).toMatch(/^translate\(0 [\d.]+\) rotate\([\d.-]+ [\d.]+ 13\)$/)
+        expect(ship('adm').find('.hm-flag').attributes('transform')).toMatch(/^skewY\(/) // new commits: its pennant flies
+        expect(ship('bobapp').find('.hm-sway').attributes('transform')).toMatch(/^rotate\([\d.-]+ 140 13\)$/) // at anchor, about its buoy
+        expect(ship('adm').find('.hm-sway').attributes('transform')).toBeUndefined() // moored
+        expect(wrapper.find('#hm-waves').attributes('patternTransform')).toMatch(/^translate\(/)
+        expect(wrapper.find('.hm-beam').attributes('transform')).toBeUndefined() // the beam turns in CSS, composited: the swell leaves it be
 
-      const media = vi.spyOn(window, 'matchMedia').mockImplementation(query => ({ matches: query.includes('reduced-motion'), media: query, addEventListener() {}, removeEventListener() {} }))
-      const calm = await expectCleanRender(DashboardView, {
-        route: { query: { view: 'map' } },
-        steps: async wrapper => {
-          expect(wrapper.find('.hm-ship').exists()).toBe(true)
-          expect(wrapper.find('.hm-svg animateTransform').exists()).toBe(false)
-        },
-      })
-      media.mockRestore()
-      expect(calm.problems.join(' | ')).toBe('')
-    } finally {
-      proto.pauseAnimations = saved.pause
-      proto.unpauseAnimations = saved.unpause
-    }
+        // out of sight it stops; back in sight it beats again at once
+        const stopped = vi.spyOn(window, 'clearInterval')
+        Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true })
+        document.dispatchEvent(new Event('visibilitychange'))
+        await settle()
+        expect(stopped).toHaveBeenCalled()
+        stopped.mockRestore()
+        wrapper.find('#hm-waves').element.removeAttribute('patternTransform')
+        Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
+        document.dispatchEvent(new Event('visibilitychange'))
+        await settle()
+        expect(wrapper.find('#hm-waves').attributes('patternTransform')).toMatch(/^translate\(/)
+      },
+    })
+    expect(res.problems.join(' | ')).toBe('')
+
+    const media = vi.spyOn(window, 'matchMedia').mockImplementation(query => ({ matches: query.includes('reduced-motion'), media: query, addEventListener() {}, removeEventListener() {} }))
+    const calm = await expectCleanRender(DashboardView, {
+      route: { query: { view: 'map' } },
+      steps: async wrapper => {
+        expect(wrapper.find('.hm-ship').exists()).toBe(true)
+        expect(wrapper.find('.hm-bob').attributes('transform')).toBeUndefined()
+        expect(wrapper.find('#hm-waves').attributes('patternTransform')).toBeUndefined()
+      },
+    })
+    media.mockRestore()
+    expect(calm.problems.join(' | ')).toBe('')
+  })
+
+  // The lighthouse's beam sweeps from a layer of its own over the map; a
+  // click on the lighthouse (or Enter on it) puts it out, and lights it
+  // again, remembered in the browser.
+  test('a click on the lighthouse puts it out and lights it again, remembered', async () => {
+    seedStore('admin')
+    try { localStorage.removeItem('skeppa.lighthouseOff') } catch { /* lit by default */ }
+    const res = await expectCleanRender(DashboardView, {
+      route: { query: { view: 'map' } },
+      steps: async wrapper => {
+        const light = () => wrapper.find('.hm-light')
+        expect(light().attributes('aria-pressed')).toBe('true')
+        expect(wrapper.find('.hm-beam-clip .hm-beam').attributes('style')).toMatch(/left: .*%; top: .*%; width: .*%; height: .*%/)
+        await light().trigger('click')
+        expect(light().classes()).toContain('dark')
+        expect(light().attributes('aria-pressed')).toBe('false')
+        expect(wrapper.find('.hm-beam').exists()).toBe(false)
+        expect(localStorage.getItem('skeppa.lighthouseOff')).toBe('1')
+        await light().trigger('keydown', { key: 'Enter' })
+        expect(wrapper.find('.hm-beam').exists()).toBe(true)
+        expect(localStorage.getItem('skeppa.lighthouseOff')).toBe(null)
+        await light().trigger('click') // out again: the next visit finds it so
+      },
+    })
+    expect(res.problems.join(' | ')).toBe('')
+    const again = await expectCleanRender(DashboardView, {
+      route: { query: { view: 'map' } },
+      steps: async wrapper => {
+        expect(wrapper.find('.hm-light').classes()).toContain('dark')
+        expect(wrapper.find('.hm-beam').exists()).toBe(false)
+      },
+    })
+    expect(again.problems.join(' | ')).toBe('')
+    try { localStorage.removeItem('skeppa.lighthouseOff') } catch { /* nothing kept */ }
   })
 })
 
