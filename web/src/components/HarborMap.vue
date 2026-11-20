@@ -34,6 +34,8 @@
           </linearGradient>
           <pattern id="hm-waves" width="56" height="28" patternUnits="userSpaceOnUse">
             <path class="hm-wave" d="M3 8 q5 -4 10 0 t10 0" /><path class="hm-wave" d="M31 22 q5 -4 10 0 t10 0" />
+            <!-- the waves drift by a tile at a time: the pattern moves, not the water -->
+            <animateTransform v-if="!still" attributeName="patternTransform" type="translate" values="0 0; 56 0" dur="14s" repeatCount="indefinite" />
           </pattern>
           <pattern id="hm-stone" width="18" height="12" patternUnits="userSpaceOnUse">
             <path class="hm-stone-line" d="M0 0.5 H18 M0 6.5 H18 M5 0.5 V6.5 M14 6.5 V12" />
@@ -48,7 +50,7 @@
 
         <!-- the water: deeper further out, small waves drifting across -->
         <rect x="0" y="0" :width="layout.width" :height="layout.height" fill="url(#hm-depth)" />
-        <rect class="hm-waves" x="-56" y="0" :width="layout.width + 112" :height="layout.height" fill="url(#hm-waves)" />
+        <rect class="hm-waves" x="0" y="0" :width="layout.width" :height="layout.height" fill="url(#hm-waves)" />
 
         <g v-if="layout.rose" class="hm-rose" :transform="`translate(${layout.rose.x} ${layout.rose.y})`">
           <circle :r="layout.rose.r" /><circle :r="layout.rose.r * 0.74" />
@@ -130,6 +132,12 @@
             <title>{{ titleOf(s) }}</title>
             <!-- at anchor the whole ship swings about its buoy -->
             <g class="hm-sway">
+              <animateTransform
+                v-if="!still && s.side === 'anchor'"
+                attributeName="transform" type="rotate" dur="9s" repeatCount="indefinite"
+                :values="`-1.2 ${ANCHOR_X} ${SHIP_B / 2}; 1.2 ${ANCHOR_X} ${SHIP_B / 2}; -1.2 ${ANCHOR_X} ${SHIP_B / 2}`"
+                :begin="`${-1.3 * (i % 7)}s`" calcMode="spline" keyTimes="0; 0.5; 1" :keySplines="SWELL"
+              />
               <rect class="hm-hit" x="0" y="-2" :width="SHIP_L" :height="SHIP_B + NAME_H + 2" />
               <g v-if="s.side === 'anchor'" class="hm-chain">
                 <path :d="`M${shape(s).L - 1} ${SHIP_B / 2} H${ANCHOR_X}`" />
@@ -137,7 +145,19 @@
               </g>
               <!-- under way a ship has cast off: it glides out from its jetty, and back in -->
               <g class="hm-berth" :style="{ transform: `translateX(${castOff(s)}px)` }">
+                <!-- afloat: every ship rides the swell a little, each to its own beat -->
                 <g class="hm-bob">
+                  <template v-if="!still">
+                    <animateTransform
+                      attributeName="transform" type="translate" additive="sum" dur="5.5s" repeatCount="indefinite"
+                      values="0 0; 0 1; 0 0" :begin="`${-0.8 * (i % 7)}s`" calcMode="spline" keyTimes="0; 0.5; 1" :keySplines="SWELL"
+                    />
+                    <animateTransform
+                      attributeName="transform" type="rotate" additive="sum" dur="5.5s" repeatCount="indefinite"
+                      :values="`0 ${midship(s)} ${SHIP_B / 2}; 0.5 ${midship(s)} ${SHIP_B / 2}; 0 ${midship(s)} ${SHIP_B / 2}`"
+                      :begin="`${-0.8 * (i % 7)}s`" calcMode="spline" keyTimes="0; 0.5; 1" :keySplines="SWELL"
+                    />
+                  </template>
                   <!-- drawn bow to the right; a ship on the jetty's left is mirrored -->
                   <g :transform="s.dir < 0 ? `translate(${SHIP_L} 0) scale(-1 1)` : null">
                     <!-- a wake behind the stern under way; otherwise made fast -->
@@ -148,7 +168,17 @@
                     <HarborShip :runtime="runtimeOf(s)" :stacks="stacksOf(s)" :worn="wornOf(s)" />
                     <!-- new commits waiting: a pennant flying -->
                     <g v-if="stateOf(s) === 'ahead'" class="hm-pennant" :transform="`translate(${Math.round(shape(s).L * 0.7)} 2)`">
-                      <path class="hm-staff" d="M0 0 V-8" /><path class="hm-flag" d="M0 -8 L-11 -5.5 L0 -3 Z" />
+                      <path class="hm-staff" d="M0 0 V-8" />
+                      <!-- run up (CSS, once), then flying: skewed about the staff at x = 0 -->
+                      <g class="hm-hoist">
+                        <path class="hm-flag" d="M0 -8 L-11 -5.5 L0 -3 Z">
+                          <animateTransform
+                            v-if="!still"
+                            attributeName="transform" type="skewY" dur="2.6s" repeatCount="indefinite"
+                            values="-7; 7; -7" calcMode="spline" keyTimes="0; 0.5; 1" :keySplines="SWELL"
+                          />
+                        </path>
+                      </g>
                     </g>
                   </g>
                 </g>
@@ -160,7 +190,7 @@
                   :key="events[s.id].n"
                   class="hm-event"
                   :class="events[s.id].kind"
-                  :transform="`translate(${s.dir < 0 ? SHIP_L - shape(s).L / 2 : shape(s).L / 2} ${SHIP_B / 2})`"
+                  :transform="`translate(${midship(s)} ${SHIP_B / 2})`"
                 >
                   <circle class="hm-ripple" r="18" /><circle class="hm-ripple late" r="18" />
                   <g v-if="events[s.id].kind === 'flare'" class="hm-flare">
@@ -189,6 +219,7 @@
           <circle class="hm-cast" cx="2" cy="4" r="15" />
           <circle class="hm-quay" r="15" /><circle r="15" fill="url(#hm-stone)" />
           <g class="hm-beam">
+            <animateTransform v-if="!still" attributeName="transform" type="rotate" values="0; 360" dur="22s" repeatCount="indefinite" />
             <path :d="beamPath" fill="url(#hm-beam)" /><path :d="beamPath" fill="url(#hm-beam)" transform="rotate(180)" />
           </g>
           <circle class="hm-tower" r="8" /><circle class="hm-tower-band" r="5.2" /><circle class="hm-tower-lamp" r="2.6" />
@@ -201,6 +232,11 @@
             <path :d="shape(drag.ship).hull" :transform="drag.target.slot.dir < 0 ? `translate(${SHIP_L} 0) scale(-1 1)` : null" />
           </g>
           <g class="hm-ship hm-ghost" :class="[`state-${stateOf(drag.ship)}`, { refused: drag.target.kind === 'foreign' || drag.target.kind === 'none' }]" :transform="`translate(${drag.x - drag.gx} ${drag.y - drag.gy})`">
+            <!-- lifted off the water: its shadow drawn below it, as the map
+                 draws shadows (a filter would be recomputed on every move) -->
+            <g transform="translate(0 8)">
+              <path class="hm-lift" :d="shape(drag.ship).hull" :transform="drag.ship.dir < 0 ? `translate(${SHIP_L} 0) scale(-1 1)` : null" />
+            </g>
             <g :transform="drag.ship.dir < 0 ? `translate(${SHIP_L} 0) scale(-1 1)` : null">
               <HarborShip :runtime="runtimeOf(drag.ship)" :stacks="stacksOf(drag.ship)" :worn="wornOf(drag.ship)" />
             </g>
@@ -272,6 +308,8 @@ const BEAM = 340 // how far the lighthouse reaches
 const EVENT_MS = 3400 // how long what just happened to a ship stays on the water
 const DRAG_START = 6 // how far a pressed ship is moved before that is a drag and not a click
 const HOLD_MS = 320 // how long a finger rests on a ship before it is picked up — sooner, it is a scroll
+// ease-in-out, for each half of a back-and-forth SMIL animation
+const SWELL = '0.42 0 0.58 1; 0.42 0 0.58 1'
 const HOLD_SLACK = 10 // how far that finger may wander meanwhile
 const SETTLE_MS = 900 // how long ships glide to their new berths after a move
 const FOLD_H = 26 // the strip of a quay its fleet's name is on, and its fold button
@@ -347,7 +385,7 @@ export default {
   emits: ['toggle-state'],
   data() {
     return {
-      SHIP_L, SHIP_B, NAME_H, BERTH, ROW, ANCHOR_X, BEAM,
+      SHIP_L, SHIP_B, NAME_H, BERTH, ROW, ANCHOR_X, BEAM, SWELL,
       width: 900,
       card: null,
       hideTimer: null,
@@ -370,6 +408,8 @@ export default {
       // the animations pause while the map is scrolled away or the tab hidden
       inView: true,
       pageHidden: false,
+      // prefers-reduced-motion: the ships lie still (SMIL does not hear the CSS media query)
+      still: false,
     }
   },
   computed: {
@@ -447,6 +487,14 @@ export default {
     },
   },
   watch: {
+    // The swell, the swinging at anchor and the pennant are SMIL, not CSS
+    // animations: Chrome hands an endless CSS transform animation to the
+    // compositor, which rasterizes the ship once and then moves and turns
+    // that bitmap — soft edges for good. SMIL redraws the vectors each frame.
+    // It stops with the document's own clock, not animation-play-state.
+    asleep() {
+      this.applySleep()
+    },
     // a card that went away, or moved to another ship, takes the first tap with it
     card(now) {
       if (now?.id !== this.tapped) this.tapped = null
@@ -484,6 +532,12 @@ export default {
     document.addEventListener('pointerdown', this.onPointerAnywhere, true)
     document.addEventListener('visibilitychange', this.onVisibility)
     this.onVisibility()
+    this.calm = typeof window !== 'undefined' ? window.matchMedia?.('(prefers-reduced-motion: reduce)') : null
+    if (this.calm) {
+      this.onCalm()
+      this.calm.addEventListener?.('change', this.onCalm)
+    }
+    this.applySleep()
     if (typeof IntersectionObserver !== 'undefined') {
       this.sight = new IntersectionObserver(entries => { this.inView = entries.at(-1).isIntersecting })
       this.sight.observe(this.$refs.wrap)
@@ -498,6 +552,7 @@ export default {
     this.sight?.disconnect()
     document.removeEventListener('pointerdown', this.onPointerAnywhere, true)
     document.removeEventListener('visibilitychange', this.onVisibility)
+    this.calm?.removeEventListener?.('change', this.onCalm)
     clearTimeout(this.hideTimer)
     clearTimeout(this.settleTimer)
     for (const t of this.eventTimers) clearTimeout(t)
@@ -557,6 +612,10 @@ export default {
         ? ` translate(${ANCHOR_X}px, ${SHIP_B / 2}px) rotate(${s.rot}deg) translate(${-ANCHOR_X}px, ${-SHIP_B / 2}px)`
         : ''
       return `translate(${s.x}px, ${s.y}px)${swing}`
+    },
+    // The middle of a ship's hull along its berth, which way round it lies.
+    midship(s) {
+      return s.dir < 0 ? SHIP_L - this.shape(s).L / 2 : this.shape(s).L / 2
     },
     // A ship under way has cast off: a little out from its jetty, bow first.
     castOff(s) {
@@ -635,6 +694,14 @@ export default {
     focusShip(id) {
       this.focusId = id
       this.$nextTick(() => this.$refs.svg?.querySelector(`[data-ship="${id}"]`)?.focus())
+    },
+    onCalm() {
+      this.still = !!this.calm?.matches
+    },
+    applySleep() {
+      const svg = this.$refs.svg
+      if (this.asleep) svg?.pauseAnimations?.()
+      else svg?.unpauseAnimations?.()
     },
     onVisibility() {
       this.pageHidden = typeof document !== 'undefined' && document.visibilityState === 'hidden'

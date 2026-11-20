@@ -547,6 +547,7 @@ describe('the harbor map', () => {
 
         await move(pier('Tomt').x - 30, pier('Tomt').y + 20) // over bob's own pier
         expect(wrapper.find('.hm-ghost .hm-name').text()).toBe('bobapp')
+        expect(wrapper.find('.hm-ghost .hm-lift').exists()).toBe(true) // its shadow drawn below it, no filter
         expect(wrapper.find('.hm-drop-hint').text()).toBe('Moor at Tomt')
         expect(pier('Tomt').g.classes()).toEqual(expect.arrayContaining(['can-drop', 'drop-on']))
         expect(pier('Kunder').g.classes()).not.toContain('can-drop') // the admin's: not this ship's to moor at
@@ -790,6 +791,57 @@ describe('the harbor map', () => {
       },
     })
     expect(res.problems.join(' | ')).toBe('')
+  })
+
+  // The swell, the swing at anchor and the pennant are SMIL (a composited CSS
+  // transform animation leaves the ships soft): out of sight the SVG's own
+  // clock stops, and asked for less motion there is none to stop.
+  test('the ships ride the swell in SMIL, its clock stopped out of sight and gone with reduced motion', async () => {
+    seedStore('admin')
+    const proto = window.SVGSVGElement.prototype
+    const calls = []
+    const saved = { pause: proto.pauseAnimations, unpause: proto.unpauseAnimations }
+    proto.pauseAnimations = () => calls.push('pause')
+    proto.unpauseAnimations = () => calls.push('unpause')
+    try {
+      const res = await expectCleanRender(DashboardView, {
+        route: { query: { view: 'map' } },
+        steps: async wrapper => {
+          const ship = name => wrapper.findAll('.hm-ship').find(s => s.attributes('aria-label').startsWith(`${name},`))
+          expect(ship('adm').findAll('.hm-bob > animateTransform').map(a => a.attributes('type'))).toEqual(['translate', 'rotate'])
+          expect(ship('adm').find('.hm-flag animateTransform').attributes('type')).toBe('skewY')
+          expect(ship('bobapp').find('.hm-sway > animateTransform').attributes('type')).toBe('rotate') // at anchor
+          expect(ship('adm').find('.hm-sway > animateTransform').exists()).toBe(false) // moored
+          // the waves drift as their pattern moves; the lighthouse's beam goes round
+          expect(wrapper.find('#hm-waves > animateTransform').attributes('attributeName')).toBe('patternTransform')
+          expect(wrapper.find('.hm-beam > animateTransform').attributes('type')).toBe('rotate')
+          expect(calls.at(-1)).toBe('unpause')
+          Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true })
+          document.dispatchEvent(new Event('visibilitychange'))
+          await settle()
+          expect(calls.at(-1)).toBe('pause')
+          Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
+          document.dispatchEvent(new Event('visibilitychange'))
+          await settle()
+          expect(calls.at(-1)).toBe('unpause')
+        },
+      })
+      expect(res.problems.join(' | ')).toBe('')
+
+      const media = vi.spyOn(window, 'matchMedia').mockImplementation(query => ({ matches: query.includes('reduced-motion'), media: query, addEventListener() {}, removeEventListener() {} }))
+      const calm = await expectCleanRender(DashboardView, {
+        route: { query: { view: 'map' } },
+        steps: async wrapper => {
+          expect(wrapper.find('.hm-ship').exists()).toBe(true)
+          expect(wrapper.find('.hm-svg animateTransform').exists()).toBe(false)
+        },
+      })
+      media.mockRestore()
+      expect(calm.problems.join(' | ')).toBe('')
+    } finally {
+      proto.pauseAnimations = saved.pause
+      proto.unpauseAnimations = saved.unpause
+    }
   })
 })
 

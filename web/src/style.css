@@ -541,8 +541,9 @@ button.filter-chip-clear:hover { background: none; opacity: 0.7; }
 .hm-stop-deep { stop-color: var(--water-deep); }
 .hm-stop-beam, .hm-stop-glow { stop-color: var(--hm-lantern); }
 .hm-wave { fill: none; stroke: var(--water-wave); stroke-width: 1.4; stroke-linecap: round; }
-.hm-waves { animation: hm-drift 14s linear infinite; pointer-events: none; }
-@keyframes hm-drift { to { transform: translateX(56px); } }
+/* the drift is SMIL on the pattern (HarborMap.vue): a CSS transform here would
+   put a bitmap the size of the map on its own layer and slide that */
+.hm-waves { pointer-events: none; }
 /* what stands above the water casts onto it */
 .hm-cast { fill: var(--hm-cast); }
 
@@ -618,12 +619,9 @@ button.filter-chip-clear:hover { background: none; opacity: 0.7; }
 .hm-ship:focus-visible .hm-hull { stroke: var(--accent); }
 .hm-ship.dim { opacity: 0.2; }
 
-/* Afloat: every ship rides the swell a little, each to its own beat. */
-.hm-bob { transform-box: fill-box; transform-origin: center; animation: hm-bob 5.5s ease-in-out infinite; animation-delay: calc(var(--i, 0) * -0.8s); }
-@keyframes hm-bob { 50% { transform: translateY(1px) rotate(0.5deg); } }
-/* At anchor a ship swings about its buoy, on a chain. */
-.hm-ship.side-anchor .hm-sway { transform-origin: 140px 13px; animation: hm-sway 9s ease-in-out infinite; animation-delay: calc(var(--i, 0) * -1.3s); }
-@keyframes hm-sway { 0%, 100% { transform: rotate(-1.2deg); } 50% { transform: rotate(1.2deg); } }
+/* Afloat, a ship rides the swell, and at anchor swings about its buoy: both
+   are SMIL in HarborMap.vue, never a CSS transform animation — Chrome would
+   composite it and turn a bitmap of the ship, soft at every edge. */
 .hm-chain path { fill: none; stroke: var(--dim); stroke-width: 1; stroke-dasharray: 2 2; }
 .hm-buoy { fill: var(--amber); stroke: var(--water); stroke-width: 1.5; }
 .hm-wake path { stroke: var(--accent); opacity: 0.75; stroke-width: 1.6; stroke-linecap: round; fill: none; stroke-dasharray: 4 4; animation: hm-wake 0.8s linear infinite; }
@@ -633,9 +631,10 @@ button.filter-chip-clear:hover { background: none; opacity: 0.7; }
 .hm-berth { transition: transform 1.6s cubic-bezier(0.4, 0, 0.2, 1); }
 /* New commits waiting: a pennant, run up and then flying. */
 .hm-staff { fill: none; stroke: var(--ink); stroke-width: 1; stroke-linecap: round; }
-.hm-flag { fill: var(--amber); stroke: color-mix(in srgb, var(--amber) 60%, #000); stroke-width: 0.7; stroke-linejoin: round; transform-box: fill-box; transform-origin: right center; animation: hm-hoist 0.7s ease-out both, hm-flutter 2.6s ease-in-out 0.7s infinite; }
+.hm-flag { fill: var(--amber); stroke: color-mix(in srgb, var(--amber) 60%, #000); stroke-width: 0.7; stroke-linejoin: round; }
+/* run up once in CSS (soft only for that moment); its flying is SMIL */
+.hm-hoist { transform-box: fill-box; transform-origin: right center; animation: hm-hoist 0.7s ease-out backwards; }
 @keyframes hm-hoist { from { transform: scaleX(0); } }
-@keyframes hm-flutter { 0%, 100% { transform: skewY(-7deg); } 50% { transform: skewY(7deg); } }
 /* What just happened to a ship, for a moment: rings spreading on the water
    (green as it makes port, amber as new commits come in), and a red flare
    going up when its voyage failed. */
@@ -670,7 +669,8 @@ button.filter-chip-clear:hover { background: none; opacity: 0.7; }
 .hm-anchor-here.drop-on text { fill: var(--panel); }
 .hm-slot { pointer-events: none; }
 .hm-slot path { fill: color-mix(in srgb, var(--accent) 18%, transparent); stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 5 3; animation: hm-wake 0.8s linear infinite; }
-.hm-ghost { pointer-events: none; filter: drop-shadow(0 7px 7px rgba(0, 0, 0, 0.32)); }
+.hm-ghost { pointer-events: none; }
+.hm-lift { fill: var(--hm-cast); }
 .hm-ghost.refused { opacity: 0.55; }
 .hm-drop-hint { font: 700 11px var(--sans); fill: var(--accent); paint-order: stroke; stroke: var(--panel); stroke-width: 4px; stroke-linejoin: round; }
 .hm-ghost.refused .hm-drop-hint { fill: var(--red); }
@@ -678,15 +678,14 @@ button.filter-chip-clear:hover { background: none; opacity: 0.7; }
 .hm-svg.settling .hm-ship { transition: opacity 0.25s, transform 0.7s cubic-bezier(0.3, 0, 0.2, 1); }
 .hm-drag-tip { flex: 1 0 100%; margin: 0; font-size: 12px; color: var(--dim); }
 
-/* The lighthouse, its beam going round. */
-.hm-beam { opacity: var(--hm-beam); animation: hm-sweep 22s linear infinite; pointer-events: none; }
-@keyframes hm-sweep { to { transform: rotate(360deg); } }
+/* The lighthouse, its beam going round (SMIL, like everything endless on the map). */
+.hm-beam { opacity: var(--hm-beam); pointer-events: none; }
 .hm-tower { fill: #fff; stroke: var(--quay-edge); stroke-width: 1; }
 .hm-tower-band { fill: var(--red); }
 .hm-tower-lamp { fill: var(--hm-lantern); stroke: #fff; stroke-width: 1; }
 
 @media (prefers-reduced-motion: reduce) {
-  .hm-waves, .hm-bob, .hm-beam, .hm-wake path, .hm-flag, .hm-ship .hm-sway, .hm-ship .hm-lamp-glow { animation: none !important; }
+  .hm-wake path, .hm-hoist, .hm-ship .hm-lamp-glow { animation: none !important; }
   .hm-berth, .hm-svg.settling .hm-ship { transition: none; }
   .hm-slot path { animation: none; }
   .hm-event { display: none; }
