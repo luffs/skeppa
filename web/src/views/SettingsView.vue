@@ -396,9 +396,9 @@
       </template>
 
       <p class="hint" style="font-size: 13.5px">
-        One webhook gets a POST when a deploy fails and when an app restarts
-        three times within ten minutes — so the panel tells you instead of
-        waiting to be looked at. An
+        One webhook gets a POST for the events ticked below — so the panel tells
+        you instead of waiting to be looked at — with the project's address when
+        it is routed. An
         <a href="https://ntfy.sh" target="_blank" rel="noopener">ntfy</a> topic URL
         receives plain text; Discord and Slack webhook URLs are recognized and
         get their JSON shape.
@@ -413,6 +413,38 @@
           : 'https://ntfy.sh/my-secret-topic'"
       />
       <p class="hint">Stored encrypted, like ENV values — the URL is a credential and is never shown again.</p>
+
+      <label>Events</label>
+      <ul class="notify-events">
+        <li v-for="ev in notifyEventList" :key="ev.key" :class="{ off: !notifyForm.events[ev.key].send }">
+          <label class="check-label">
+            <input v-model="notifyForm.events[ev.key].send" type="checkbox" />
+            <span>
+              <span class="notify-name">{{ ev.label }}</span>
+              <span class="notify-sample mono">{{ ev.sample }}</span>
+            </span>
+          </label>
+          <button
+            type="button"
+            class="notify-ping"
+            :class="{ on: notifyForm.events[ev.key].ping && notifyForm.events[ev.key].send }"
+            :disabled="!notifyForm.events[ev.key].send"
+            :aria-pressed="notifyForm.events[ev.key].ping ? 'true' : 'false'"
+            :title="notifyForm.events[ev.key].ping ? 'Mentions the people below — click to stop' : 'Mention the people below'"
+            @click="notifyForm.events[ev.key].ping = !notifyForm.events[ev.key].ping"
+          >
+            @ ping
+          </button>
+        </li>
+      </ul>
+
+      <label>Who a ping reaches</label>
+      <input v-model="notifyForm.mention" class="code" placeholder="@channel" />
+      <p class="hint">
+        <span class="mono">@channel</span>, <span class="mono">@here</span>, <span class="mono">@everyone</span>
+        or member IDs, separated by spaces. In Slack: a profile's ⋮ → Copy member ID. A plain name like
+        <span class="mono">@rasmus</span> does not ping from a webhook.
+      </p>
 
       <p v-if="notifyError" class="error">{{ notifyError }}</p>
       <p v-if="notifyMessage" class="hint">{{ notifyMessage }}</p>
@@ -442,6 +474,18 @@ import { store } from '../store.js'
 import { timeAgo } from '../lib/format.js'
 import CollapseSection from '../components/CollapseSection.vue'
 import AccountFields from '../components/AccountFields.vue'
+
+// The events the server knows (lib/notify.js NOTIFY_EVENTS), in form order.
+const NOTIFY_EVENT_LIST = [
+  { key: 'deploy_success', label: 'Deploy succeeded', sample: '✔ Deployed blog @ cafebab — Add a contact page' },
+  { key: 'deploy_failed', label: 'Deploy failed', sample: '✖ Deploy of blog @ cafebab failed (exit 1)' },
+  { key: 'restart_burst', label: 'Restart burst', sample: '⚠ blog restarted 3 times in the last 10 minutes' },
+]
+// A fresh, editable copy of the server's per-event flags (all off until loaded).
+const notifyEventsFrom = events => Object.fromEntries(NOTIFY_EVENT_LIST.map(({ key }) => [key, {
+  send: Boolean(events?.[key]?.send),
+  ping: Boolean(events?.[key]?.ping),
+}]))
 
 export default {
   name: 'SettingsView',
@@ -479,7 +523,8 @@ export default {
       fbMessage: '',
       gate: null,
       gateForm: { base_domain: '', http_port: '8100', admin_port: '2020' },
-      notifyForm: { url: '' },
+      notifyForm: { url: '', mention: '', events: notifyEventsFrom(null) },
+      notifyEventList: NOTIFY_EVENT_LIST,
       notifyBusy: false,
       notifyError: '',
       notifyMessage: '',
@@ -533,6 +578,8 @@ export default {
       // the webhook URL is write-only — the form never holds the stored value
       this.form.github_app_id = this.status.github_app_id ?? ''
       this.fbText = this.status.firebase_config ? JSON.stringify(this.status.firebase_config, null, 2) : ''
+      this.notifyForm.events = notifyEventsFrom(this.status.notify_events)
+      this.notifyForm.mention = this.status.notify_mention ?? ''
     },
     async save() {
       this.busy = true
@@ -650,15 +697,22 @@ export default {
       this.notifyMessage = ''
       try {
         const url = this.notifyForm.url.trim()
-        if (!url) {
+        if (!url && !this.status?.has_notify_url) {
           this.notifyError = 'Paste a webhook URL — or use Turn off.'
           return
         }
-        await api.put('/api/settings', { notify_url: url })
-        // The server stored exactly what we sent, so mirror it locally rather
-        // than refetching every unrelated setting to learn one field.
-        this.status.has_notify_url = true
-        this.status.notify_url_host = new URL(url).hostname
+        // An empty box keeps the stored URL: it is write-only, so the form
+        // never holds it, and saving the events must not need it pasted again.
+        const body = { notify_events: this.notifyForm.events, notify_mention: this.notifyForm.mention }
+        if (url) body.notify_url = url
+        await api.put('/api/settings', body)
+        // Mirror what the server stored rather than refetching every unrelated
+        // setting — the mention comes back normalized, so read it back.
+        const fresh = await api.get('/api/settings')
+        this.status.has_notify_url = fresh.has_notify_url
+        this.status.notify_url_host = fresh.notify_url_host
+        this.notifyForm.events = notifyEventsFrom(fresh.notify_events)
+        this.notifyForm.mention = fresh.notify_mention ?? ''
         this.notifyForm.url = '' // write-only: the box empties once saved
         this.notifyMessage = 'Saved ✔'
       } catch (err) {
@@ -928,3 +982,59 @@ export default {
   },
 }
 </script>
+
+<style scoped>
+/* One row per event: what it is and what it says on the left, whether it
+   pings on the right — one bordered list, so the three read as a set. */
+.notify-events {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+.notify-events li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.notify-events li:last-child { border-bottom: none; }
+.notify-events .check-label { margin: 0; align-items: flex-start; min-width: 0; }
+.notify-events .check-label input { margin-top: 3px; }
+.notify-name { display: block; }
+.notify-sample {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.notify-events li.off .notify-name,
+.notify-events li.off .notify-sample { opacity: 0.55; }
+
+.notify-ping {
+  flex: none;
+  padding: 3px 10px;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--dim);
+  border: 1px solid var(--line);
+}
+.notify-ping:hover:not(:disabled) { background: var(--hover-tint); }
+.notify-ping.on {
+  background: var(--amber-tint);
+  color: var(--amber);
+  border-color: transparent;
+}
+.notify-ping.on:hover:not(:disabled) { background: var(--amber-tint); filter: brightness(1.1); }
+.notify-ping:disabled { opacity: 0.35; cursor: default; }
+.notify-ping:disabled:hover { background: transparent; }
+</style>

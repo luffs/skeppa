@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { migrate } from '../src/db/migrate.js'
 import { setSetting, getSetting } from '../src/db/settings.js'
-import { buildCaddyConfig, createProxy, PROXY_PROCESS } from '../src/proxy/index.js'
+import { buildCaddyConfig, createProxy, PROXY_PROCESS, projectPublicUrl } from '../src/proxy/index.js'
 import { proxyApiRoutes } from '../src/routes/proxy.js'
 import { projectRoutes } from '../src/routes/projects.js'
 import { writeEcosystem, runtimeEnv, decryptedEnv } from '../src/deploy/envfiles.js'
@@ -365,4 +365,19 @@ test('status lists each route under the host the gate actually routes: handle, o
   // the list and the Caddy config agree host for host
   const routed = buildCaddyConfig(db).apps.http.servers.skeppa.routes.flatMap(r => r.match?.[0]?.host ?? [])
   expect(routes.map(r => r.host).sort()).toEqual(routed.sort())
+})
+
+// Notifications link here, so it must answer only for what the gate routes.
+test('a project\'s public URL is its routed host, and empty when it is not routed', () => {
+  const db = makeDb()
+  const routed = addProject(db, { slug: 'app', subdomain: 'app', port: 4001 })
+  const portless = addProject(db, { slug: 'api', subdomain: 'api' })
+  const bare = addProject(db, { slug: 'job' })
+  expect(projectPublicUrl(db, routed)).toBe('') // no base domain, no gate
+  setSetting(db, 'proxy_base_domain', 'apps.example.com')
+  expect(projectPublicUrl(db, routed)).toBe('https://app.apps.example.com')
+  expect(projectPublicUrl(db, String(routed))).toBe('https://app.apps.example.com')
+  expect(projectPublicUrl(db, portless)).toBe('')
+  expect(projectPublicUrl(db, bare)).toBe('')
+  expect(projectPublicUrl(db, 999)).toBe('')
 })

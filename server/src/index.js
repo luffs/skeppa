@@ -9,8 +9,8 @@ import { createLiveState, initLiveState } from './live/state.js'
 import { createLiveStores } from './live/stores.js'
 import { createLiveTransport } from './live/transport.js'
 import { createPoller } from './live/poller.js'
-import { sendNotification, upgradeNotifyUrl } from './lib/notify.js'
-import { createProxy, proxySettings } from './proxy/index.js'
+import { notifyEvent, upgradeNotifyUrl } from './lib/notify.js'
+import { createProxy, proxySettings, projectPublicUrl } from './proxy/index.js'
 import { GitHubApp } from './github/appClient.js'
 import { DeployRunner, recoverInterrupted } from './deploy/runner.js'
 import { resurrectApps } from './deploy/resurrect.js'
@@ -36,10 +36,19 @@ const liveState = createLiveState()
 initLiveState(liveState, db, config)
 
 const github = new GitHubApp({ db, config })
+// Where a notification links to: the project's routed address, or nothing.
+// Never throws — a notification must not break the deploy or the poll.
+const urlOfProject = projectId => {
+  try {
+    return projectId ? projectPublicUrl(db, projectId) : ''
+  } catch {
+    return ''
+  }
+}
 const poller = createPoller({
   db, config, liveState,
-  onCrashAlert: (label, count) =>
-    sendNotification(db, config.masterKey, `⚠ ${label} restarted ${count} times in the last 10 minutes — check the Engine room`),
+  onCrashAlert: (label, count, projectId) =>
+    notifyEvent(db, config.masterKey, 'restart_burst', `⚠ ${label} restarted ${count} times in the last 10 minutes — check the Engine room`, { url: urlOfProject(projectId) }),
 })
 // A webhook URL saved by an older version sits in plaintext — encrypt it
 // before this boot writes anything else, so the next backup is clean.
@@ -65,7 +74,7 @@ const liveStores = createLiveStores({
 poller.start()
 const runner = new DeployRunner({
   db, config, liveState, logs: liveStores, github, poller,
-  notify: text => sendNotification(db, config.masterKey, text),
+  notify: (event, text, { projectId } = {}) => notifyEvent(db, config.masterKey, event, text, { url: urlOfProject(projectId) }),
   // A deploy that changes what a project is served as moves its route
   // (`proxy` is created just below; this only runs once a deploy finishes).
   applyProxy: () => proxy.apply(),

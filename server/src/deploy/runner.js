@@ -195,11 +195,18 @@ export class DeployRunner {
       `UPDATE deployments SET status = ?, exit_code = ?, finished_at = ? WHERE id = ?`
     ).run(status, exitCode, finishedAt, deploymentId)
 
-    const row = this.db.query('SELECT commit_sha FROM deployments WHERE id = ?').get(deploymentId)
-    if (status === 'failed') {
+    const row = this.db.query('SELECT commit_sha, commit_message FROM deployments WHERE id = ?').get(deploymentId)
+    {
       const p = this.db.query('SELECT name FROM projects WHERE id = ?').get(projectId)
+      const name = p?.name ?? 'a deleted project'
       const sha = row?.commit_sha ? ` @ ${row.commit_sha.slice(0, 7)}` : ''
-      this.notify(`✖ Deploy of ${p?.name ?? 'a deleted project'}${sha} failed (exit ${exitCode})`)
+      if (status === 'failed') {
+        this.notify('deploy_failed', `✖ Deploy of ${name}${sha} failed (exit ${exitCode})`, { projectId })
+      } else {
+        const subject = (row?.commit_message ?? '').split('\n')[0].trim()
+        const said = subject ? ` — ${subject.length > 80 ? `${subject.slice(0, 79)}…` : subject}` : ''
+        this.notify('deploy_success', `✔ Deployed ${name}${sha}${said}`, { projectId })
+      }
     }
     const live = this._live(projectId)
     live.currentDeployment = null

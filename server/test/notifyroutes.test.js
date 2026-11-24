@@ -49,3 +49,32 @@ test('the test endpoint sends through the notifier and reports the outcome', asy
   expect(sent.length).toBe(1)
   expect(sent[0]).toContain('Test notification')
 })
+
+test('event toggles and the mention round-trip, and garbage is refused', async () => {
+  const { app } = setup()
+  let status = await (await app.request('/')).json()
+  expect(status.notify_events.deploy_success).toEqual({ send: false, ping: false })
+  expect(status.notify_mention).toBe('')
+
+  const ok = await put(app, { notify_events: { deploy_success: { send: true }, restart_burst: { ping: true } }, notify_mention: '<!channel>' })
+  expect(ok.status).toBe(200)
+  status = await (await app.request('/')).json()
+  expect(status.notify_events.deploy_success.send).toBe(true)
+  expect(status.notify_events.restart_burst).toEqual({ send: true, ping: true })
+  expect(status.notify_mention).toBe('@channel')
+
+  expect((await put(app, { notify_mention: 'hello there' })).status).toBe(400)
+  expect((await put(app, { notify_events: { deploy_success: { send: 1 } } })).status).toBe(400)
+  expect((await put(app, { notify_events: [] })).status).toBe(400)
+})
+
+test('the test message carries the mention only while some event pings', async () => {
+  const sent = []
+  const { db, app } = setup(async (db_, key_, text, opts) => (sent.push(opts?.mention ?? ''), true))
+  setSetting(db, 'notify_url', 'https://hooks.slack.com/services/T/B/x')
+  await put(app, { notify_mention: '@here' })
+  await app.request('/notify/test', { method: 'POST' })
+  await put(app, { notify_events: { deploy_failed: { ping: true } } })
+  await app.request('/notify/test', { method: 'POST' })
+  expect(sent).toEqual(['', '@here'])
+})

@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { REPO_RE, isValidBranch } from '../lib/validate.js'
 import { suggestSetup } from '../lib/suggest.js'
-import { sendNotification, notifyUrl } from '../lib/notify.js'
+import { sendNotification, notifyUrl, notifyPrefs, saveNotifyPrefs } from '../lib/notify.js'
 import { randomBytes } from 'node:crypto'
 import {
   getSetting, setSetting, setSecretSetting, deleteSetting,
@@ -239,14 +239,22 @@ export function settingsRoutes({ db, config, github, notifyFn = sendNotification
       // other secrets — enough for the form to say what is configured.
       has_notify_url: Boolean(notifyUrl(db, config.masterKey)),
       notify_url_host: hostOf(notifyUrl(db, config.masterKey)),
+      // Which events are sent and pinged, and who a ping reaches — not secret.
+      notify_events: notifyPrefs(db).events,
+      notify_mention: notifyPrefs(db).mention,
     })
   })
 
   // One message through the configured webhook, so the URL can be verified
-  // from the form instead of by waiting for something to break.
+  // from the form instead of by waiting for something to break. It carries
+  // the mention whenever some event pings, so the ping is tested too.
   app.post('/notify/test', async c => {
     if (!notifyUrl(db, config.masterKey)) return c.json({ error: 'no webhook URL configured' }, 400)
-    const ok = await notifyFn(db, config.masterKey, '⛵ Test notification from Skeppa — failed deploys and restart bursts will look like this.')
+    const { events, mention } = notifyPrefs(db)
+    const pings = Object.values(events).some(e => e.send && e.ping)
+    const ok = await notifyFn(db, config.masterKey, '⛵ Test notification from Skeppa — this is where deploys and restart bursts will be reported.', {
+      mention: pings ? mention : '',
+    })
     return c.json({ ok }, ok ? 200 : 502)
   })
 
@@ -282,6 +290,10 @@ export function settingsRoutes({ db, config, github, notifyFn = sendNotification
         }
         setSecretSetting(db, config.masterKey, 'notify_url', raw)
       }
+    }
+    if ('notify_events' in body || 'notify_mention' in body) {
+      const error = saveNotifyPrefs(db, { events: body.notify_events, mention: body.notify_mention })
+      if (error) return c.json({ error }, 400)
     }
     if ('firebase_config' in body) {
       if (body.firebase_config === null) {

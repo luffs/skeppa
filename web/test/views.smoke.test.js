@@ -13,7 +13,8 @@ vi.mock('../src/api.js', () => {
   // Shapes the views read from on load; anything unlisted gets an empty object.
   const answer = url => {
     if (url.startsWith('/api/settings')) {
-      return { github_app_id: null, has_private_key: false, has_webhook_secret: false, firebase_config: null, has_notify_url: false, notify_url_host: '' }
+      return { github_app_id: null, has_private_key: false, has_webhook_secret: false, firebase_config: null, has_notify_url: false, notify_url_host: '',
+        notify_events: { deploy_success: { send: false, ping: false }, deploy_failed: { send: true, ping: false }, restart_burst: { send: true, ping: true } }, notify_mention: '@channel' }
     }
     if (url.startsWith('/api/proxy')) {
       return { base_domain: '', http_port: 8100, admin_port: 2020, routes: [], caddy_available: false, process_status: '', last_error: null }

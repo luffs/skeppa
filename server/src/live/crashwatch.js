@@ -35,7 +35,7 @@ export function createCrashWatch({ threshold = 3, windowMs = 10 * 60_000, cooldo
         s.mutedUntil = now + cooldownMs
         const n = s.events.length
         s.events = []
-        onAlert(label, n)
+        onAlert(label, n, key)
       }
     },
 

@@ -383,9 +383,9 @@ as an app route wins over the route.
 
 Point **Settings → Notifications** at any webhook that accepts a POST — an [ntfy](https://ntfy.sh)
 topic gets plain text, Discord and Slack webhook URLs are recognized and get their JSON shape;
-the URL is stored encrypted like ENV values. The panel notifies on failed deploys and on crash loops (repeated restarts within a few
-minutes — one alert per burst, then a cooldown). Restarts the panel itself causes — deploys,
-your own start/stop clicks — never alert, so a message always means something actually broke.
+the URL is stored encrypted like ENV values. Each event — a deploy that succeeded, one that failed, a crash loop (repeated restarts within a few
+minutes — one alert per burst, then a cooldown) — can be switched on or off and can ping: `@channel`, `@here`, `@everyone` or member IDs (Slack `U…`/`S…`, Discord numeric), each sent in the platform's own mention syntax. A routed project's address is added to its messages. By default failures and crash loops are sent and nobody is pinged. Restarts the panel itself causes — deploys,
+your own start/stop clicks — never alert, so a restart alert always means something actually broke.
 
 ## Backups
 

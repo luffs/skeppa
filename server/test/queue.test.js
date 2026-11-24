@@ -172,7 +172,7 @@ test('recoverInterrupted fails queued and running deployments on startup', () =>
   expect(statuses(db)).toEqual(['failed', 'failed', 'success'])
 })
 
-test('a failed deploy fires the notifier; a successful one stays quiet', async () => {
+test('every finished deploy reaches the notifier as its event, with the project id for its address', async () => {
   const notes = []
   const { execute, pending } = manualExecutor()
   const db = new Database(':memory:')
@@ -185,23 +185,27 @@ test('a failed deploy fires the notifier; a successful one stays quiet', async (
     logs: { openLog() {}, appendLog() {}, closeLog() {} },
     github: null,
     execute,
-    notify: text => notes.push(text),
+    notify: (event, text, opts) => notes.push({ event, text, opts }),
   })
 
-  runner.enqueue(1, { trigger: 'manual' })
+  runner.enqueue(1, { trigger: 'webhook', commitSha: 'cafebabe1234', commitMessage: 'Fix the sails\n\nlonger body' })
   await tick()
   pending[0].resolve()
   await tick(); await tick()
-  expect(notes).toEqual([])
+  expect(notes.length).toBe(1)
+  expect(notes[0].event).toBe('deploy_success')
+  expect(notes[0].text).toBe('✔ Deployed Mageek @ cafebab — Fix the sails')
+  expect(notes[0].opts).toEqual({ projectId: 1 })
 
   runner.enqueue(1, { trigger: 'webhook', commitSha: 'deadbeefcafe' })
   await tick()
   pending[1].reject(new DeployError('boom', 7))
   await tick(); await tick()
-  expect(notes.length).toBe(1)
-  expect(notes[0]).toContain('Mageek')
-  expect(notes[0]).toContain('deadbee')
-  expect(notes[0]).toContain('exit 7')
+  expect(notes.length).toBe(2)
+  expect(notes[1].event).toBe('deploy_failed')
+  expect(notes[1].text).toContain('Mageek')
+  expect(notes[1].text).toContain('deadbee')
+  expect(notes[1].text).toContain('exit 7')
 })
 
 // The apps-dir disk gauge is invalidated by the one event that changes the

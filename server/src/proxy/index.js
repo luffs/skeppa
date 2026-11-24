@@ -52,6 +52,16 @@ export function routedHost(row, baseDomain) {
   return `${row.subdomain}.${nested ? `${row.owner_handle}.` : ''}${baseDomain}`
 }
 
+// The https address a project answers at, '' when it is not routed — the
+// rows and the host come from the same functions as the gate's config, so a
+// notification never links somewhere the gate does not serve.
+export function projectPublicUrl(db, projectId) {
+  const { baseDomain } = proxySettings(db)
+  if (!baseDomain) return ''
+  const row = proxyRouteRows(db).find(r => r.id === Number(projectId))
+  return row ? `https://${routedHost(row, baseDomain)}` : ''
+}
+
 // Where a static project's published snapshot lives (deploy/publish.js) —
 // the only directory the gate ever serves files from.
 export function staticRoot(config, slug) {
