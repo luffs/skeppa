@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import {
   appContainerName, appContainerSpec, resolveRunImage, START_SHELL,
-  recreateAppContainer, appLiveStats, cpuPercent, capturePreviousLogs,
+  recreateAppContainer, appLiveStats, cpuSample, capturePreviousLogs,
 } from '../src/containers/runtime.js'
 
 const CONFIG = { containerSocket: '/sock', buildImage: 'docker.io/oven/bun:1' }
@@ -130,13 +130,15 @@ test.skipIf(!existsSync('/bin/sh'))('the start shell runs the command as given a
 test('appLiveStats maps engine state onto the pm2 stats shape', async () => {
   const engine = {
     async inspectContainer() {
-      return { RestartCount: 2, State: { Running: true, Pid: 4711, StartedAt: '2026-08-14T10:00:00Z' } }
+      return { Id: 'abc', RestartCount: 2, State: { Running: true, Pid: 4711, StartedAt: '2026-08-14T10:00:00Z' } }
     },
     async statsContainer() {
       return {
+        read: '2026-08-14T12:00:05.250Z',
         memory_stats: { usage: 52_428_800 },
         cpu_stats: { cpu_usage: { total_usage: 400 }, system_cpu_usage: 10_000, online_cpus: 2 },
-        precpu_stats: { cpu_usage: { total_usage: 200 }, system_cpu_usage: 6_000 },
+        // the engine's own "previous" reading is deliberately not used
+        precpu_stats: { cpu_usage: { total_usage: 0 }, system_cpu_usage: 0 },
       }
     },
   }
@@ -145,8 +147,16 @@ test('appLiveStats maps engine state onto the pm2 stats shape', async () => {
   expect(stats.pid).toBe(4711)
   expect(stats.restarts).toBe(2)
   expect(stats.memory).toBe(52_428_800)
-  expect(stats.cpu).toBe((200 / 4000) * 2 * 100)
+  expect(stats.cpu).toBeUndefined()
+  expect(stats.cpuSample).toEqual({ key: 'abc@2026-08-14T10:00:00Z', total: 400, at: Date.parse('2026-08-14T12:00:05.250Z') })
   expect(stats.uptime).toBe(Date.parse('2026-08-14T10:00:00Z'))
+})
+
+test('a CPU sample needs a counter, and an unset engine timestamp falls back to now', () => {
+  expect(cpuSample(null, {})).toBeNull()
+  expect(cpuSample({ cpu_stats: {} }, {})).toBeNull()
+  const s = cpuSample({ read: '0001-01-01T00:00:00Z', cpu_stats: { cpu_usage: { total_usage: 5 } } }, { Id: 'x' }, 1234)
+  expect(s).toEqual({ key: 'x@', total: 5, at: 1234 })
 })
 
 test('appLiveStats: missing container → null, exited container → stopped', async () => {
@@ -156,13 +166,6 @@ test('appLiveStats: missing container → null, exited container → stopped', a
   expect(stopped.status).toBe('stopped')
   expect(stopped.pid).toBeNull()
 })
-
-test('cpuPercent is defensive about missing fields', () => {
-  expect(cpuPercent(null)).toBe(0)
-  expect(cpuPercent({})).toBe(0)
-  expect(cpuPercent({ cpu_stats: { cpu_usage: { total_usage: 100 } }, precpu_stats: { cpu_usage: { total_usage: 200 } } })).toBe(0)
-})
-
 // --- network profiles ---------------------------------------------------------
 
 // The runtime field matters: projectEngineNetworks ignores pm2 projects, so the

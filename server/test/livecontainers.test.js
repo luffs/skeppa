@@ -1,5 +1,6 @@
 import { test, expect } from 'bun:test'
 import { collectContainers, containerName, portLabels, stateToStatus } from '../src/live/containers.js'
+import { createCpuMeter } from '../src/live/cpumeter.js'
 
 // A fake engine serving one listing plus per-container inspect/stats, the way
 // the poller uses it.
@@ -80,7 +81,7 @@ test('joins the listing with per-container stats', async () => {
     status: 'online',
     uptime: Date.parse('2026-08-20T10:00:00.000Z'),
     memory: 100 * 1024 * 1024,
-    cpu: 10,
+    cpu: null, // a first reading has nothing to compare with (see the cpu meter test)
     restarts: 2,
     pid: 4242,
     image: 'localhost/skeppa/bun:latest',
@@ -128,4 +129,23 @@ test('keeps the exact image id beside the image name', async () => {
   expect(containers['skeppa-app-blog'].image).toBe('docker.io/oven/bun:1')
   expect(containers['skeppa-app-blog'].imageId).toBe('sha256:aaa')
   expect(containers['skeppa-app-old'].imageId).toBe('')
+})
+
+// CPU is the panel's own measurement between two collects — never the
+// engine's precpu_stats, which once read 25% for idle containers.
+test('container CPU is measured between collects against the same meter', async () => {
+  const stats = {
+    read: '2026-08-20T12:00:00.000Z',
+    memory_stats: { usage: 1 },
+    cpu_stats: { cpu_usage: { total_usage: 1_000_000_000 } },
+    precpu_stats: { cpu_usage: { total_usage: 0 } }, // stale: would say "since start"
+  }
+  const engine = fakeEngine([entry('skeppa-app-blog')], { 'skeppa-app-blog': { inspect: inspect({ Id: 'c1' }), stats } })
+  const cpuMeter = createCpuMeter()
+
+  expect((await collectContainers(engine, { cpuMeter })).containers['skeppa-app-blog'].cpu).toBe(null)
+  // 5 s later, 1.25 s more CPU time: a quarter of a core
+  stats.read = '2026-08-20T12:00:05.000Z'
+  stats.cpu_stats.cpu_usage.total_usage += 1_250_000_000
+  expect((await collectContainers(engine, { cpuMeter })).containers['skeppa-app-blog'].cpu).toBe(25)
 })

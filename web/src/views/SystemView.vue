@@ -34,7 +34,11 @@
           <span :class="meterClass(memoryUsedPercent)" :style="{ width: memoryUsedPercent + '%' }"></span>
         </div>
         <div class="stat-sub">{{ memoryPercent }}% of {{ bytes(status.memory.total) }} in use</div>
-        <div class="stat-sub" v-if="loadavg">load {{ loadavg.join(' · ') }}</div>
+        <!-- Load is a count, not a percentage: read against the cores, it
+             says how busy the host is (a load of 4 on 4 cores is full). -->
+        <div class="stat-sub" v-if="loadavg" :title="loadHint">
+          load {{ loadavg.join(' · ') }}<template v-if="cpuCount"> of {{ cpuCount }} {{ cpuCount === 1 ? 'core' : 'cores' }}</template>
+        </div>
       </div>
       <div class="stat-card">
         <div class="stat-label">Disk</div>
@@ -83,6 +87,7 @@
                 :key="col.key"
                 :class="[col.cls, { num: col.num }]"
                 :aria-sort="ariaSort('pm2', col.key)"
+                :title="col.title || null"
               >
                 <button type="button" class="sort-head" :class="{ sorted: sorts.pm2.key === col.key }" @click="sortBy('pm2', col.key)">
                   {{ col.label }}<span class="sort-arrow" aria-hidden="true">{{ sorts.pm2.dir === 'asc' ? '▲' : '▼' }}</span>
@@ -260,14 +265,32 @@ export default {
       CRASHES_HINT,
       // One sort per table, remembered in the browser.
       sorts: { pm2: loadSort(SORT_KEYS.pm2), containers: loadSort(SORT_KEYS.containers) },
-      processColumns: [{ key: 'name', label: 'Process' }, ...COLUMNS],
-      // The engine's restart count is a crash count (see CRASHES_HINT).
-      containerColumns: [{ key: 'name', label: 'Container' }, ...COLUMNS.map(c => c.key === 'restarts'
-        ? { ...c, label: 'Crashes', title: CRASHES_HINT }
-        : c)],
     }
   },
   computed: {
+    // Cores on the host, 0 when the server could not say.
+    cpuCount() {
+      return this.status?.cpuCount || 0
+    },
+    loadHint() {
+      const full = this.cpuCount ? `${this.cpuCount} is every core busy` : 'one per core is every core busy'
+      return `Average over 1, 5 and 15 minutes — ${full}`
+    },
+    // The headers, with CPU's hint saying what full would read.
+    columns() {
+      const n = this.cpuCount
+      const cpuHint = n > 1 ? `% of one core — all ${n} cores busy is ${n * 100}%` : '% of one core'
+      return COLUMNS.map(c => (c.key === 'cpu' ? { ...c, title: cpuHint } : c))
+    },
+    processColumns() {
+      return [{ key: 'name', label: 'Process' }, ...this.columns]
+    },
+    // The engine's restart count is a crash count (see CRASHES_HINT).
+    containerColumns() {
+      return [{ key: 'name', label: 'Container' }, ...this.columns.map(c => (c.key === 'restarts'
+        ? { ...c, label: 'Crashes', title: CRASHES_HINT }
+        : c))]
+    },
     // Fed by the server-side poller through LiveState — renders instantly on
     // navigation and refreshes itself as diffs arrive.
     status() {

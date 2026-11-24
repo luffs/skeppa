@@ -117,7 +117,7 @@ function seedStore(role) {
     },
     system: {
       appsDir: '/home/skeppa/apps', hostBootAt: NOW - 1e7, panelStartedAt: NOW - 1e5,
-      selfPm2Name: 'skeppa', proxyPm2Name: 'skeppa-proxy', loadavg: [0.1, 0.2, 0.3],
+      selfPm2Name: 'skeppa', proxyPm2Name: 'skeppa-proxy', loadavg: [0.1, 0.2, 0.3], cpuCount: 4,
       memory: { total: 8e9, free: 4e9 }, disk: { appsDirBytes: 1e9, free: 5e10, total: 1e11 },
       pm2Error: null, pm2: { skeppa: { ...stats }, 'skeppa-proxy': { ...stats } },
       containerSocket: '/run/user/1000/podman/podman.sock', containerError: '',

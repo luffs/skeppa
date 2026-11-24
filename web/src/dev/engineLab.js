@@ -33,7 +33,7 @@ store.live = {
   images: { managedPrefix: 'localhost/skeppa/', managed: [], local: [], storeListed: false, engineError: '', defaultImage: 'docker.io/oven/bun:1' },
   system: {
     appsDir: '/home/skeppa/apps', hostBootAt: ago(40 * 86400), panelStartedAt: ago(2 * 86400), selfPm2Name: 'skeppa', proxyPm2Name: 'skeppa-proxy',
-    loadavg: [0.31, 0.4, 0.38], memory: { total: 8e9, free: 3.1e9 }, disk: { appsDirBytes: 2.4e9, free: 41e9, total: 100e9 },
+    loadavg: [0.31, 0.4, 0.38], cpuCount: 4, memory: { total: 8e9, free: 3.1e9 }, disk: { appsDirBytes: 2.4e9, free: 41e9, total: 100e9 },
     pm2Error: null,
     pm2: {
       skeppa: proc('online', { memory: 142 * MB, cpu: 3.4, restarts: 2 }),

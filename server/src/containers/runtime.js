@@ -114,39 +114,47 @@ export async function recreateAppContainer({ config, project, dirs, env, onLine 
   return id
 }
 
-// CPU percentage from one Docker stats sample (delta vs precpu), defensive
-// against fields podman may omit.
-export function cpuPercent(stats) {
-  const cpu = stats?.cpu_stats
-  const pre = stats?.precpu_stats
-  const cpuDelta = (cpu?.cpu_usage?.total_usage ?? 0) - (pre?.cpu_usage?.total_usage ?? 0)
-  const sysDelta = (cpu?.system_cpu_usage ?? 0) - (pre?.system_cpu_usage ?? 0)
-  if (cpuDelta <= 0 || sysDelta <= 0) return 0
-  return (cpuDelta / sysDelta) * (cpu?.online_cpus || 1) * 100
+// One raw CPU reading from a stats sample, for live/cpumeter.js to turn into
+// a percentage against the panel's previous reading — never against the
+// sample's own precpu_stats, whose moment is the engine's choice. `at` is the
+// engine's timestamp for the reading (an unset Go time parses to year 1, so
+// anything implausible falls back to now); `key` names this run of the
+// container, since its CPU counter restarts with it. null without a counter.
+const PLAUSIBLE_MS = Date.parse('2000-01-01T00:00:00Z')
+export function cpuSample(stats, inspect, now = Date.now()) {
+  const total = stats?.cpu_stats?.cpu_usage?.total_usage
+  if (typeof total !== 'number') return null
+  const read = Date.parse(stats.read ?? '')
+  return {
+    key: `${inspect?.Id ?? ''}@${inspect?.State?.StartedAt ?? ''}`,
+    total,
+    at: read > PLAUSIBLE_MS ? read : now,
+  }
 }
 
 // The container's stats in the same shape the poller reports for pm2
-// processes, so LiveState and the UI need no second vocabulary. Returns null
-// when the container does not exist ("not started").
+// processes, so LiveState and the UI need no second vocabulary — except CPU,
+// which comes back as a raw `cpuSample` for the poller's meter to finish.
+// Returns null when the container does not exist ("not started").
 export async function appLiveStats(engine, name) {
   const inspect = await engine.inspectContainer(name)
   if (!inspect) return null
   const state = inspect.State ?? {}
   const status = state.Running ? 'online' : state.Restarting ? 'launching' : 'stopped'
   let memory = null
-  let cpu = null
+  let sample = null
   if (state.Running) {
     const stats = await engine.statsContainer(name).catch(() => null)
     if (stats) {
       memory = stats.memory_stats?.usage ?? null
-      cpu = cpuPercent(stats)
+      sample = cpuSample(stats, inspect)
     }
   }
   return {
     status,
     uptime: state.Running && state.StartedAt ? Date.parse(state.StartedAt) : null,
     memory,
-    cpu,
+    cpuSample: sample,
     restarts: inspect.RestartCount ?? null,
     pid: state.Running ? state.Pid ?? null : null,
   }

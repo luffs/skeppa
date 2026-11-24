@@ -1,5 +1,6 @@
 import { appLiveStats } from '../containers/runtime.js'
 import { roundCpu, roundMem } from './quantize.js'
+import { createCpuMeter } from './cpumeter.js'
 
 // The container half of the Engine room. Every container the engine reports —
 // panel-owned or not — described in the same vocabulary the poller uses for
@@ -52,17 +53,19 @@ const NO_STATS = { uptime: null, memory: null, cpu: null, restarts: null, pid: n
 
 // One entry from the listing, joined with its own stats. A failed inspect is
 // not fatal: the listing already knows whether the thing is running.
-async function describe(engine, entry) {
+async function describe(engine, entry, cpuMeter) {
   const name = containerName(entry)
-  const stats = await appLiveStats(engine, name).catch(() => null)
+  const { cpuSample, ...stats } = (await appLiveStats(engine, name).catch(() => null)) ?? {}
   return [name, {
     ...NO_STATS,
-    ...(stats ?? {}),
+    ...stats,
     // The listing is the fresher of the two — inspect can lose the race with
     // a container that stopped mid-tick.
     status: stateToStatus(entry.State),
     memory: roundMem(stats?.memory),
-    cpu: roundCpu(stats?.cpu),
+    // Measured against this meter's previous reading (live/cpumeter.js);
+    // null until there is one.
+    cpu: roundCpu(cpuMeter.sample(name, cpuSample)),
     image: entry.Image ?? '',
     // The exact image behind that name. The tag it was started from may point
     // somewhere else by now (a pull), and the client tells those apart by
@@ -79,8 +82,10 @@ async function describe(engine, entry) {
 }
 
 // { containers, error }: containers keyed by name, or null when the engine
-// could not be reached at all (which the error string explains).
-export async function collectContainers(engine) {
+// could not be reached at all (which the error string explains). The poller
+// passes one long-lived cpuMeter, so CPU is a reading between its ticks; a
+// call without one has nothing to compare with and reports no CPU.
+export async function collectContainers(engine, { cpuMeter = createCpuMeter() } = {}) {
   if (!engine) return { containers: null, error: 'no container engine socket configured' }
   let list
   try {
@@ -88,6 +93,8 @@ export async function collectContainers(engine) {
   } catch (err) {
     return { containers: null, error: err.message }
   }
-  const described = await Promise.all(list.filter(e => containerName(e)).map(e => describe(engine, e)))
+  const named = list.filter(e => containerName(e))
+  const described = await Promise.all(named.map(e => describe(engine, e, cpuMeter)))
+  cpuMeter.keepOnly(new Set(named.map(containerName)))
   return { containers: Object.fromEntries(described), error: '' }
 }

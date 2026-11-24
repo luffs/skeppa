@@ -7,6 +7,7 @@ import { appContainerName } from '../containers/runtime.js'
 import { PROXY_PROCESS } from '../proxy/index.js'
 import { liveRuntime } from '../lib/runtime.js'
 import { collectContainers } from './containers.js'
+import { createCpuMeter } from './cpumeter.js'
 import { createCrashWatch } from './crashwatch.js'
 import { roundCpu, roundMem } from './quantize.js'
 import { syncImages } from './images.js'
@@ -72,6 +73,8 @@ export function createPoller({ db, config, liveState, intervalMs = 5000, idleInt
   let timerMs = null
   let ticking = false
   const crashWatch = onCrashAlert ? createCrashWatch({ onAlert: onCrashAlert }) : null
+  // Container CPU is measured between this poller's own ticks (live/cpumeter.js).
+  const cpuMeter = createCpuMeter()
   let engine = containerClient
   const getEngine = () => {
     if (!engine && config.containerSocket) engine = createContainerClient({ socketPath: config.containerSocket })
@@ -113,7 +116,7 @@ export function createPoller({ db, config, liveState, intervalMs = 5000, idleInt
       let containers = null
       let containerError = ''
       const eng = getEngine()
-      if (eng) ({ containers, error: containerError } = await collectContainers(eng))
+      if (eng) ({ containers, error: containerError } = await collectContainers(eng, { cpuMeter }))
 
       let list = null
       let pm2Error = null
@@ -173,6 +176,9 @@ export function createPoller({ db, config, liveState, intervalMs = 5000, idleInt
         // the panel's own proxy process without hardcoding its name.
         proxyPm2Name: PROXY_PROCESS,
         loadavg: os.loadavg().map(n => Math.round(n * 100) / 100),
+        // What load and CPU are read against: a load of cpuCount, or a CPU
+        // reading of cpuCount × 100%, is every core busy. 0 when unknown.
+        cpuCount: os.cpus().length,
         memory: { total: os.totalmem(), free: roundMem(os.freemem()) },
         disk: { appsDirBytes, ...diskFree(config.appsDir) },
         pm2Error,
