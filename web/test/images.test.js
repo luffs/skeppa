@@ -101,7 +101,7 @@ describe('the system view flags a container left behind by its tag', () => {
       'skeppa-app-fresh': { ...base, image: 'docker.io/oven/bun:1', imageId: 'sha256:new' },
     }
     const wrapper = mount(SystemView, { global: { stubs, mocks } })
-    const cards = wrapper.findAll('.proc-card').filter(c => c.text().includes('skeppa-app-'))
+    const cards = wrapper.findAll('.proc-table tbody tr').filter(c => c.text().includes('skeppa-app-'))
 
     const stale = cards.find(c => c.text().includes('skeppa-app-stale'))
     const fresh = cards.find(c => c.text().includes('skeppa-app-fresh'))

@@ -135,7 +135,7 @@ h2 { font-size: 16px; font-weight: 800; letter-spacing: 0.04em; margin: 24px 0 8
    intrinsic sizing entirely; max-width + auto margins still cap and center. */
 .container { width: 100%; max-width: 1180px; margin: 0 auto; padding: 36px 28px 64px; }
 .container.narrow { max-width: 680px; }
-/* Engine room and Shipyard: card lists read best around 700px, and capping
+/* Shipyard and the account page: card lists read best around 700px, and capping
    only the lists left them hugging the left edge under a full-width header.
    Narrowing the whole container keeps every section the same width and lets
    the auto margins center the page as one column. */
@@ -1194,97 +1194,103 @@ a.repo-link:hover { color: var(--accent); }
   margin: 26px 0 12px;
 }
 
-/* ---- engine room process list ---- */
+/* ---- engine room process tables ---- */
 
-.proc-list { display: flex; flex-direction: column; gap: 12px; }
-
-.proc-card {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  box-shadow: 0 1px 0 var(--shadow);
-  overflow: hidden;
+/* One table per kind (pm2, containers), the same fixed columns in both so a
+   reading sits at the same x all the way down the page. No overflow clipping
+   on the panel: a row's ⋮ menu opens past its edge. */
+.proc-table { padding: 0; }
+.proc-table table { table-layout: fixed; }
+.proc-table th, .proc-table td { padding: 10px 12px; vertical-align: middle; }
+.proc-table th:first-child, .proc-table td:first-child { padding-left: 18px; }
+.proc-table td.menu { padding: 4px 10px 4px 0; text-align: right; }
+.proc-table col.c-project { width: 128px; }
+.proc-table col.c-status { width: 108px; }
+.proc-table col.c-up { width: 84px; }
+.proc-table col.c-cpu { width: 64px; }
+.proc-table col.c-mem { width: 92px; }
+.proc-table col.c-restarts { width: 80px; }
+.proc-table col.c-pid { width: 72px; }
+.proc-table col.c-menu { width: 44px; }
+/* Narrower windows fold columns away. Folded, not removed: a column keeps
+   its slot at zero width, because the logs row spans all nine — with fewer
+   columns really there, the table would invent the missing ones and push the
+   others aside. */
+/* A medium window keeps the name readable by letting cpu and pid go first —
+   the least looked-at readings; restarts stay, they are what goes wrong. */
+@media (max-width: 1000px) {
+  .proc-table col.c-cpu, .proc-table col.c-pid { width: 0; }
+  .proc-table th.c-cpu, .proc-table td.c-cpu,
+  .proc-table th.c-pid, .proc-table td.c-pid { padding: 0; overflow: hidden; visibility: hidden; }
 }
-.proc-card.open { border-color: var(--line-strong); }
-
-/* Stacked rows, each spanning the whole card: title, numbers, container facts,
-   buttons. Sharing a row with the buttons used to cost the numbers half the
-   card, which pushed a column onto a second line on anything but a maximized
-   window. */
-.proc-head { display: flex; flex-direction: column; padding: 16px 18px; }
-/* Name first, chips hard right. When a long name leaves no room the chip
-   group drops to its own right-aligned line whole, rather than the name
-   breaking mid-word beside it. */
-.proc-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.proc-name {
-  font-family: var(--mono);
-  font-size: 15px;
-  font-weight: 600;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-/* Owner and status ride the right edge, status outermost. margin-left survives
-   a wrap, so on a narrow card the pair drops to its own line still aligned
-   right instead of drifting back under the name. */
-.proc-tags { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; flex: 0 1 auto; margin-left: auto; }
-
-/* A grid with fixed tracks rather than a flowing row: every card is the same
-   width, so cpu and mem land at the same x on all of them and the column can
-   be read straight down the list instead of hunted for behind a pid or an
-   uptime of some other length. Label above value, value in full ink — the
-   numbers are the point, the labels only say which. */
-.proc-stats {
-  display: grid;
-  /* min() guards intrinsic sizing: a plain 94px floor would count toward the
-     grid's min-content width, which layouts like App.vue's flex column
-     propagate into a page-wide minimum. The percentage collapses to zero
-     there, and in real layout 100% always exceeds one track. */
-  grid-template-columns: repeat(auto-fill, minmax(min(94px, 100%), 1fr));
-  gap: 10px 14px;
-  margin-top: 12px;
+.proc-table .num {
+  text-align: right;
   font-family: var(--mono);
   font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
-.proc-stats > span { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.proc-stats i {
-  font-style: normal;
-  font-size: 10px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  opacity: 0.75;
-  color: var(--dim);
+/* Sortable headers: the header's own look, as a button. The arrow is there
+   for the sorted column only (a faint one on hover elsewhere); on the
+   right-aligned readings it goes on the left, so the labels stay lined up
+   with their numbers. */
+.proc-table th button.sort-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
 }
-.proc-stats b { font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-/* The mem cell's limit meter — same idiom as the stat cards', cell-sized. */
-.proc-stats .stat-meter { margin: 5px 0 0; }
+.proc-table th.num button.sort-head { flex-direction: row-reverse; }
+.proc-table th button.sort-head:hover,
+.proc-table th button.sort-head.sorted { color: var(--ink); background: transparent; }
+.sort-arrow { font-size: 8px; visibility: hidden; opacity: 0.45; }
+.sort-head:hover .sort-arrow { visibility: visible; }
+.sort-head.sorted .sort-arrow { visibility: visible; opacity: 1; }
+.proc-table tbody tr:not(.proc-logs-row):hover td { background: var(--row-hover); }
+/* The row whose logs are open, joined to them. */
+.proc-table tr.open td { background: var(--row-selected); border-bottom-color: transparent; }
+.proc-logs-row > td { padding: 0 !important; }
 
-/* The container-only facts. Free text of wildly varying length, so they stay
-   out of the metric grid and keep the old inline shape. */
-.proc-meta {
-  display: flex;
-  gap: 16px;
-  flex-wrap: wrap;
-  margin-top: 8px;
+/* Names are long (skeppa-app-<slug>) and have no spaces to break on: one
+   line, cut with an ellipsis, the whole name on hover. */
+.proc-name {
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 13.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A container's own facts — image, ports, odd states — small under its name. */
+.proc-facts {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  margin-top: 3px;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 11.5px;
   color: var(--dim);
 }
-.proc-meta i {
-  font-style: normal;
-  font-size: 10px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  opacity: 0.75;
-  margin-right: 5px;
+.proc-facts .proc-image { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proc-facts .chip { padding: 1px 7px; font-size: 9.5px; }
+.proc-project {
+  cursor: pointer;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
 }
-/* Image refs are long and have no spaces to break on. */
-.proc-meta .proc-image { min-width: 0; overflow-wrap: anywhere; }
-
-/* Own row, pushed to the right edge so the buttons sit under the status chip
-   rather than under the numbers. */
-.proc-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 16px 0 0 auto; }
-.proc-actions button { padding: 7px 13px; font-size: 12px; }
+/* The mem cell's limit meter, under the reading and as wide as a reading. */
+.proc-table td .stat-meter { display: block; width: 56px; margin: 4px 0 0 auto; }
 
 .proc-logs { border-top: 1px solid var(--line); padding: 14px 18px 16px; }
 .log-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
@@ -1513,15 +1519,19 @@ a.repo-link:hover { color: var(--accent); }
   .stat-card { padding: 14px 16px; }
   .stat-card .stat-value { font-size: 19px; }
   .stat-pair { gap: 22px; }
-  .proc-head { padding: 14px 16px; }
-  /* Tighter tracks so the readings land three-and-two instead of two-two-one
-     with a stranded cell. Still a fixed grid: the same column holds the same
-     reading on every card, which is the whole point of the row. */
-  .proc-stats { grid-template-columns: repeat(auto-fill, minmax(min(84px, 100%), 1fr)); gap: 10px; font-size: 12px; }
-  /* One fact per line — an image ref on its own is wider than a phone. */
-  .proc-meta { flex-direction: column; gap: 6px; margin-top: 12px; }
-  .proc-actions { margin-left: 0; width: 100%; }
-  .proc-actions button { flex: 1 1 auto; }
+  /* What a phone has room for: name, status, memory and the ⋮ — the name
+     says whose it is (skeppa-app-<slug>), and the rest is a wider window
+     away. Columns and cells go alike. */
+  .proc-table th, .proc-table td { padding: 9px 8px; }
+  .proc-table th:first-child, .proc-table td:first-child { padding-left: 14px; }
+  .proc-table col.c-project, .proc-table col.c-up, .proc-table col.c-restarts { width: 0; }
+  .proc-table th.c-project, .proc-table td.c-project,
+  .proc-table th.c-up, .proc-table td.c-up,
+  .proc-table th.c-restarts, .proc-table td.c-restarts { padding: 0; overflow: hidden; visibility: hidden; }
+  .proc-table col.c-status { width: 96px; }
+  .proc-table col.c-mem { width: 76px; }
+  .proc-table col.c-menu { width: 40px; }
+  .proc-table .num { font-size: 12px; }
   .proc-logs { padding: 12px 14px 14px; }
   /* Keeps the stream switch, refresh and live toggle on one row. */
   .log-meta { display: none; }
