@@ -1,10 +1,13 @@
 <template>
-  <div class="container narrow">
-    <!-- Another server's page, run through the fleet (lib/ship.js). -->
-    <router-link v-if="ship.node" to="/fleet" class="mono" style="font-size: 12px; color: var(--dim)">← back to the fleet</router-link>
-    <ShipOffline />
-    <h1 style="margin-bottom: 22px">Rigging <span v-if="ship.node" class="chip blue">on {{ ship.name }}</span></h1>
-    <p v-if="ship.node" class="hint" style="margin-top: -12px">
+  <div :class="embedded ? 'embedded-view narrow-embedded' : 'container narrow'">
+    <!-- Another server's page, run through the fleet (lib/ship.js); a tab of
+         its server page when embedded, which has the heading and the banner. -->
+    <template v-if="!embedded">
+      <router-link v-if="ship.node" to="/fleet" class="mono" style="font-size: 12px; color: var(--dim)">← back to the fleet</router-link>
+      <ShipOffline />
+    </template>
+    <h1 v-if="!embedded" style="margin-bottom: 22px">Rigging <span v-if="ship.node" class="chip blue">on {{ ship.name }}</span></h1>
+    <p v-if="ship.node" class="hint" :style="embedded ? 'margin-top: 14px' : 'margin-top: -12px'">
       That server's harbor gate and notifications. It deploys from GitHub with this panel's GitHub App, lent one
       repository at a time; its crew, Google sign-in and a GitHub App of its own are set on its own panel
       (<span class="mono">AGENT_LOCAL_UI=true</span> in its config).

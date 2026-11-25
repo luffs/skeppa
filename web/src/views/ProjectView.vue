@@ -1,6 +1,6 @@
 <template>
   <div class="container" v-if="project">
-    <router-link :to="ship.home" class="mono" style="font-size: 12px; color: var(--dim)">{{ ship.node ? '← back to the fleet' : '← back to harbor' }}</router-link>
+    <router-link :to="ship.home" class="mono" style="font-size: 12px; color: var(--dim)">← back to harbor</router-link>
     <ShipOffline />
     <div class="project-head">
       <div class="project-title">

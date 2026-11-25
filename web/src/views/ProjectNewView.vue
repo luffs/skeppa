@@ -1,7 +1,7 @@
 <template>
   <div class="container narrow">
     <!-- Mooring on another server, through the fleet (lib/ship.js). -->
-    <router-link v-if="ship.node" to="/fleet" class="mono" style="font-size: 12px; color: var(--dim)">← back to the fleet</router-link>
+    <router-link v-if="ship.node" :to="`/fleet/${ship.node}`" class="mono" style="font-size: 12px; color: var(--dim)">← back to {{ ship.name }}</router-link>
     <ShipOffline />
     <h1 style="margin-bottom: 0">Moor a new project <span v-if="ship.node" class="chip blue">on {{ ship.name }}</span></h1>
     <p class="hint" style="font-size: 14px; margin: 6px 0 22px">

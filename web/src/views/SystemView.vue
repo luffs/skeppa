@@ -1,11 +1,14 @@
 <template>
-  <div class="container">
-    <!-- Another server's page, run through the fleet (lib/ship.js). -->
-    <router-link v-if="ship.node" to="/fleet" class="mono" style="font-size: 12px; color: var(--dim)">← back to the fleet</router-link>
-    <ShipOffline />
+  <div :class="embedded ? 'embedded-view' : 'container'">
+    <!-- Another server's page, run through the fleet (lib/ship.js); a tab of
+         its server page when embedded, which has the heading and the banner. -->
+    <template v-if="!embedded">
+      <router-link v-if="ship.node" to="/fleet" class="mono" style="font-size: 12px; color: var(--dim)">← back to the fleet</router-link>
+      <ShipOffline />
+    </template>
     <div class="page-head">
-      <h1 style="margin: 0">Engine room</h1>
-      <span v-if="ship.node" class="chip blue">on {{ ship.name }}</span>
+      <h1 v-if="!embedded" style="margin: 0">Engine room</h1>
+      <span v-if="ship.node && !embedded" class="chip blue">on {{ ship.name }}</span>
       <span class="mono" style="font-size: 12px" :style="{ color: connected ? 'var(--dim)' : 'var(--amber, #d29922)' }" v-if="status">
         {{ updatedLabel }}
       </span>

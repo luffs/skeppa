@@ -53,6 +53,12 @@
         />
         <span v-if="filtering" class="harbor-count">{{ visibleCount }} of {{ harborCount }}</span>
       </div>
+      <!-- One server of the fleet, or this one (?server=here|<node id>). -->
+      <select v-if="nodeShips.length" v-model="serverFilter" class="harbor-server" aria-label="Show the vessels of">
+        <option value="">every server</option>
+        <option value="here">this server</option>
+        <option v-for="{ n } in nodeShips" :key="n.id" :value="String(n.id)">{{ n.name }}</option>
+      </select>
       <span v-if="stateFilter" class="chip blue filter-chip">
         {{ STATE_FILTERS[stateFilter].label }}
         <button type="button" class="filter-chip-clear" aria-label="Clear the filter" @click="stateFilter = ''">✕</button>
@@ -107,7 +113,7 @@
         </div>
         <HarborMap
           v-if="view === 'map'"
-          v-show="projects.length || !mapServers.length"
+          v-show="(projects.length || !mapServers.length) && showsHere"
           :fleets="allFleets"
           :matches="matchIds"
           :state-filter="stateFilter"
@@ -367,6 +373,8 @@ export default {
       STATE_FILTERS,
       query: typeof q.q === 'string' ? q.q : '',
       stateFilter: q.state in STATE_FILTERS ? q.state : '',
+      // '' every server, 'here' this one, or a fleet server's id (the Fleet page links here so)
+      serverFilter: typeof q.server === 'string' && /^(here|\d+)$/.test(q.server) ? q.server : '',
       // List or map: from the URL first, then this browser's last choice.
       view: q.view === 'map' || q.view === 'list' ? q.view : loadView(),
       FEED_FIRST, // read by the template
@@ -398,10 +406,15 @@ export default {
         .sort((a, b) => a.name.localeCompare(b.name))
     },
     filtering() {
-      return Boolean(this.query.trim() || this.stateFilter)
+      return Boolean(this.query.trim() || this.stateFilter || this.serverFilter)
+    },
+    // Whether the server filter lets this panel's own vessels through, and a fleet server's.
+    showsHere() {
+      return !this.serverFilter || this.serverFilter === 'here'
     },
     // The projects the search and the state filter let through.
     visible() {
+      if (!this.showsHere) return []
       const words = filterWords(this.query)
       return this.projects.filter(p =>
         matchesState(liveProject(p.id), this.stateFilter) &&
@@ -446,7 +459,7 @@ export default {
           key: `n${n.id}`, label: n.name, online: n.online, ship, count: all.length, shown: shown.length,
           piers: this.filtering ? piers.filter(x => x.projects.length) : piers, loose,
         }
-      }).filter(s => !this.filtering || s.shown)
+      }).filter(s => this.showsServer(s.key) && (!this.filtering || s.shown))
     },
     // The map's: each fleet server with vessels, as one fleet of its own
     // (HarborMap's shape), unfiltered — the map dims instead — with the ids
@@ -470,7 +483,7 @@ export default {
           key: `n${n.id}`, label: n.name, online: n.online, ship, count: all.length, matches,
           fleets: [{ key: `n${n.id}`, label: n.name, detail: '', mine: false, projects: all, piers, loose }],
         }
-      }).filter(s => s.count)
+      }).filter(s => s.count && this.showsServer(s.key))
     },
     // The vessels with new commits, here and on every fleet server that is
     // online — not the panels themselves (a self-deploy restarts the panel;
@@ -580,6 +593,9 @@ export default {
     stateFilter() {
       this.syncQuery()
     },
+    serverFilter() {
+      this.syncQuery()
+    },
     view() {
       this.syncQuery()
     },
@@ -658,6 +674,11 @@ export default {
     clearFilters() {
       this.query = ''
       this.stateFilter = ''
+      this.serverFilter = ''
+    },
+    // A fleet server's section (key n<id>) under the server filter.
+    showsServer(key) {
+      return !this.serverFilter || key === `n${this.serverFilter}`
     },
     // Search and filter into the URL, replacing the entry: typing is not
     // history worth stepping back through.
@@ -668,6 +689,8 @@ export default {
       else delete query.q
       if (this.stateFilter) query.state = this.stateFilter
       else delete query.state
+      if (this.serverFilter) query.server = this.serverFilter
+      else delete query.server
       if (this.view === 'map') query.view = 'map'
       else delete query.view
       this.$router?.replace?.({ query })

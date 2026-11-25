@@ -84,6 +84,7 @@ import ShipyardView from '../src/views/ShipyardView.vue'
 import AccountView from '../src/views/AccountView.vue'
 import LoginView from '../src/views/LoginView.vue'
 import FleetView from '../src/views/FleetView.vue'
+import ServerView from '../src/views/ServerView.vue'
 
 // --- a LiveState the way the server would send it ----------------------------
 const NOW = Date.now()
@@ -2088,22 +2089,23 @@ test('a container app can let the gate serve its build, which asks for a publish
 
 // The fleet: other servers reporting here, read-only. A row opens its
 // voyages, a voyage its log from that server; adding one shows the command.
-test('the fleet lists the servers, opens a remote voyage, and pairs a new one', async () => {
+test('the fleet lists the servers — this panel first — and pairs a new one', async () => {
   seedStore('admin')
+  store.live.system.version = 'abc1234'
+  store.live.nodes[1] = { ...store.live.nodes[1], version: 'abc1234' }
   const post = vi.spyOn(api, 'post').mockImplementation(async url =>
     url === '/api/nodes' ? { node: { id: 3, name: 'ny' }, code: 'skj_3_' + 'a'.repeat(32), expiresAt: new Date(NOW + 6e5).toISOString() } : {})
   const { problems } = await expectCleanRender(FleetView, {
     steps: async wrapper => {
-      const text = wrapper.text()
-      expect(text).toContain('jobb-1')
-      expect(text).toContain('hemma-2')
-      expect(text).toContain('not paired')
-      expect(text).toContain('jobb.example.com')
-      expect(wrapper.find('a.vessel-addr').attributes('href')).toBe('https://app.jobb.example.com')
-      await wrapper.find('.fleet-row').trigger('click')
-      await wrapper.find('.fleet-voyage').trigger('click')
-      await settle()
-      expect(wrapper.findComponent({ name: 'DeployLog' }).props()).toMatchObject({ deploymentId: 5, node: 1, active: false })
+      const rows = wrapper.findAll('.fleet-server')
+      expect(rows.map(r => r.find('.fleet-server-name').text())).toEqual(['this panel', 'hemma-2', 'jobb-1'])
+      expect(rows[0].find('.fleet-server-name a').exists()).toBe(false) // this panel has its own pages in the masthead
+      expect(rows[2].find('.fleet-server-name a').attributes('href')).toBe('/fleet/1')
+      expect(rows[1].text()).toContain('not paired')
+      // its vessels are in the harbor, filtered by server
+      expect(rows[2].find('.fleet-vessels').attributes('href')).toBe('/?server=1')
+      expect(rows[0].find('.fleet-vessels').attributes('href')).toBe('/?server=here')
+      expect(wrapper.text()).not.toContain('remote') // no project rows here any more
       await wrapper.findAll('button').find(b => b.text().includes('Add a server')).trigger('click')
       await wrapper.find('.fleet-add input').setValue('ny')
       await wrapper.findAll('.fleet-add button').find(b => b.text() === 'Add').trigger('click')
@@ -2136,7 +2138,7 @@ test("another server's project page reads that server and sends every call there
       expect(wrapper.text()).toContain('on jobb-1')
       expect(wrapper.text()).toContain('Jobbpiren') // that server's pier
       expect(wrapper.find('.vessel-addr').attributes('href')).toBe('https://app.jobb.example.com')
-      expect(wrapper.find('a[href="/fleet"]').text()).toContain('back to the fleet')
+      expect(wrapper.find('a[href="/"]').text()).toContain('back to harbor') // its vessels are in the harbor too
       for (const tab of ['deploys', 'logs', 'env', 'files', 'settings']) {
         wrapper.vm.tab = tab
         await settle()
@@ -2172,22 +2174,99 @@ test("this panel's own project page still talks to this panel", async () => {
   expect(urls.every(u => !u.startsWith('/api/nodes'))).toBe(true)
 })
 
-test('a fleet row runs its action on that server', async () => {
+test("a server's page: its overview runs its vessels there, its tabs are its pages", async () => {
   seedStore('admin')
   store.live.nodeStates[1].projects[5].headCommit = { sha: 'c'.repeat(40), message: 'new', pushedAt: ISO } // ahead → Deploy latest
   const post = vi.spyOn(api, 'post').mockImplementation(async () => ({ id: 9 }))
-  const { problems } = await expectCleanRender(FleetView, {
+  const pushed = []
+  const { problems } = await expectCleanRender(ServerView, {
+    props: { node: '1' },
+    route: { path: '/fleet/1', query: {} },
+    router: { push: to => pushed.push(to) },
     steps: async wrapper => {
-      const button = wrapper.findAll('.fleet-row button').find(b => b.text() === 'Deploy latest')
-      await button.trigger('click')
+      expect(wrapper.find('h1').text()).toBe('jobb-1')
+      expect(wrapper.findAll('.tabs button').map(b => b.text())).toEqual(['Overview', 'Engine room', 'Shipyard', 'Rigging', 'Log', 'Pairing'])
+      expect(wrapper.text()).toContain('jobb.example.com') // its harbor gate
+      expect(wrapper.find('a.vessel-name').attributes('href')).toBe('/fleet/1/projects/5')
+      await wrapper.findAll('.vessel-rows button').find(b => b.text() === 'Deploy latest').trigger('click')
       await settle()
-      expect(wrapper.find('.fleet-row a.fleet-name').attributes('href')).toBe('/fleet/1/projects/5')
+      for (const [label, view] of [['Engine room', 'SystemView'], ['Shipyard', 'ShipyardView'], ['Rigging', 'SettingsView']]) {
+        await wrapper.findAll('.tabs button').find(b => b.text() === label).trigger('click')
+        await settle()
+        const page = wrapper.findComponent({ name: view })
+        expect(page.props()).toMatchObject({ node: '1', embedded: true })
+        expect(page.text()).not.toContain('back to the fleet') // the server page has it, once
+      }
+      await wrapper.findAll('.tabs button').find(b => b.text() === 'Log').trigger('click')
+      await settle()
+      expect(wrapper.findComponent({ name: 'FleetLog' }).props('node')).toBe(1)
     },
   })
   const posted = post.mock.calls.map(c => c[0])
   post.mockRestore()
   expect(problems.join(' | ')).toBe('')
   expect(posted).toEqual(['/api/nodes/1/api/projects/5/deploy'])
+  expect(pushed.map(q => q.query?.tab)).toEqual(['engine', 'shipyard', 'rigging', 'log'])
+})
+
+test("a server's Pairing: rename, a new code, unpair and remove — and gone, back to the fleet", async () => {
+  seedStore('admin')
+  const post = vi.spyOn(api, 'post').mockImplementation(async url => (url.endsWith('/code') ? { code: 'skj_1_' + 'b'.repeat(32), expiresAt: new Date(NOW + 6e5).toISOString() } : {}))
+  const patch = vi.spyOn(api, 'patch').mockImplementation(async () => ({}))
+  const del = vi.spyOn(api, 'del').mockImplementation(async () => ({}))
+  const pushed = []
+  const { problems } = await expectCleanRender(ServerView, {
+    props: { node: '1' },
+    route: { path: '/fleet/1', query: { tab: 'pairing' } },
+    router: { push: to => pushed.push(to) },
+    steps: async wrapper => {
+      await wrapper.find('.server-pairing input').setValue('jobb-ci')
+      await wrapper.findAll('.server-pairing button').find(b => b.text() === 'Rename').trigger('click')
+      await settle()
+      await wrapper.findAll('.server-pairing button').find(b => b.text() === 'New join code').trigger('click')
+      await settle()
+      expect(wrapper.find('.fleet-command code').text()).toContain('skj_1_')
+      await wrapper.findAll('.server-pairing button').find(b => b.text() === 'Remove').trigger('click')
+      await settle()
+      settleDialog(true)
+      await settle()
+    },
+  })
+  const calls = { post: post.mock.calls.map(c => c[0]), patch: patch.mock.calls, del: del.mock.calls.map(c => c[0]) }
+  post.mockRestore()
+  patch.mockRestore()
+  del.mockRestore()
+  expect(problems.join(' | ')).toBe('')
+  expect(calls.patch).toEqual([['/api/nodes/1', { name: 'jobb-ci' }]])
+  expect(calls.post).toEqual(['/api/nodes/1/code'])
+  expect(calls.del).toEqual(['/api/nodes/1'])
+  expect(pushed).toEqual(['/fleet'])
+})
+
+test('a server that is gone says so', async () => {
+  seedStore('admin')
+  const { problems, html } = await expectCleanRender(ServerView, { props: { node: '42' } })
+  expect(problems.join(' | ')).toBe('')
+  expect(html).toContain('No such server')
+})
+
+// The Harbor's server filter: this panel, or one server of the fleet.
+test('the harbor filters by server', async () => {
+  seedStore('admin')
+  const { problems } = await expectCleanRender(DashboardView, {
+    route: { query: { server: '1' } },
+    steps: async wrapper => {
+      expect(wrapper.find('.harbor-server').element.value).toBe('1')
+      expect(wrapper.findAll('.server-section')).toHaveLength(1)
+      expect(wrapper.text()).not.toContain('adm') // this panel's own vessels are filtered out
+      expect(wrapper.find('.harbor-count').text()).toBe('1 of 3')
+      await wrapper.find('.harbor-server').setValue('here')
+      await settle()
+      expect(wrapper.findAll('.server-section')).toHaveLength(0)
+      expect(wrapper.text()).toContain('adm')
+    },
+  })
+  expect(problems.join(' | ')).toBe('')
 })
 
 // Phase 4: a fleet server's admin pages are this panel's own views, about
@@ -2240,21 +2319,13 @@ describe("a fleet server's admin pages", () => {
     expect(html).toContain('back to the fleet')
   })
 
-  test('the fleet card leads to them', async () => {
+  test("a fleet server's pages are its server page's tabs", async () => {
     seedNode()
-    const pushed = []
-    const { problems } = await expectCleanRender(FleetView, {
-      router: { push: to => pushed.push(to) },
-      steps: async wrapper => {
-        await wrapper.findAll('.fleet-node-head .action-menu-toggle')[1].trigger('click') // jobb-1 (sorted after hemma-2)
-        await settle()
-        const item = wrapper.findAll('[role="menuitem"]').find(b => b.text() === 'Engine room')
-        await item.trigger('click')
-        await settle()
-      },
-    })
-    expect(problems.join(' | ')).toBe('')
-    expect(pushed).toEqual(['/fleet/1/system'])
+    const { nodeShip } = await import('../src/lib/ship.js')
+    expect(nodeShip(1).page('system')).toBe('/fleet/1?tab=engine')
+    expect(nodeShip(1).page('shipyard')).toBe('/fleet/1?tab=shipyard')
+    expect(nodeShip(1).page('settings')).toBe('/fleet/1?tab=rigging')
+    expect(nodeShip(1).page('projects/new')).toBe('/fleet/1/projects/new')
   })
 })
 
@@ -2290,7 +2361,7 @@ test('mooring a project on a fleet server', async () => {
   get.mockRestore()
   post.mockRestore()
   expect(problems.join(' | ')).toBe('')
-  expect(html).toContain('back to the fleet')
+  expect(html).toContain('back to jobb-1') // its server's page
   for (const url of urls) expect(url).toMatch(/^\/api\/nodes\/1\/api\//)
   expect(urls).toContain('/api/nodes/1/api/github/repos')
   expect(urls.some(u => u.startsWith('/api/nodes/1/api/github/repos/suggest?'))).toBe(true)
@@ -2460,7 +2531,7 @@ describe('updating the fleet', () => {
       steps: async wrapper => {
         expect(wrapper.text()).toContain('1 on another version than this panel (aaaaaaa)')
         expect(wrapper.text()).toContain('abc1234 ≠ aaaaaaa')
-        expect(wrapper.findAll('.fleet-node-head button').filter(b => b.text() === 'Update panel')).toHaveLength(2)
+        expect(wrapper.findAll('.fleet-server-actions button').filter(b => b.text() === 'Update panel')).toHaveLength(2)
         await wrapper.findAll('.page-head button').find(b => b.text() === 'Update all 2 panels').trigger('click')
         await settle()
         expect(dialogState.message).toContain('2 servers (hemma-2, jobb-1)')
@@ -2664,11 +2735,13 @@ test("the fleet page shows each server's disk, and warns when it fills", async (
   store.live.nodeStates[1].system = { ...store.live.nodeStates[1].system, disk: { total: 100e9, free: 40e9 } }
   const roomy = await expectCleanRender(FleetView)
   expect(roomy.problems.join(' | ')).toBe('')
-  expect(roomy.html).toContain('disk 60%')
-  expect(roomy.html).not.toMatch(/chip[^"]*red[^>]*>disk/)
+  expect(roomy.html).toMatch(/class="chip"[^>]*>60%/)
 
   store.live.nodeStates[1].system.disk = { total: 100e9, free: 7e9 }
   const full = await expectCleanRender(FleetView)
   expect(full.problems.join(' | ')).toBe('')
-  expect(full.html).toMatch(/class="chip red"[^>]*>disk 93%/)
+  expect(full.html).toMatch(/class="chip red"[^>]*>93%/)
+  const page = await expectCleanRender(ServerView, { props: { node: '1' } })
+  expect(page.problems.join(' | ')).toBe('')
+  expect(page.html).toMatch(/class="chip red"[^>]*>disk 93%/)
 })

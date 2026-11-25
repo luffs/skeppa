@@ -11,6 +11,7 @@ import SystemView from './views/SystemView.vue'
 import ShipyardView from './views/ShipyardView.vue'
 import AccountView from './views/AccountView.vue'
 import FleetView from './views/FleetView.vue'
+import ServerView from './views/ServerView.vue'
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -22,10 +23,12 @@ export const router = createRouter({
     // Another server's project, run through the fleet (lib/ship.js).
     { path: '/fleet/:node/projects/new', component: ProjectNewView, props: true, meta: { nodePage: true } },
     { path: '/fleet/:node/projects/:id', component: ProjectView, props: true, meta: { project: true } },
-    // …and its admin pages: the same views, about that server.
-    { path: '/fleet/:node/system', component: SystemView, props: true, meta: { nodePage: true } },
-    { path: '/fleet/:node/shipyard', component: ShipyardView, props: true, meta: { nodePage: true } },
-    { path: '/fleet/:node/settings', component: SettingsView, props: true, meta: { nodePage: true } },
+    // …and the server's own page: its overview, and its admin pages as tabs.
+    { path: '/fleet/:node(\\d+)', component: ServerView, props: true, meta: { nodePage: true } },
+    // the admin pages' own addresses from before they were tabs
+    { path: '/fleet/:node/system', redirect: to => ({ path: `/fleet/${to.params.node}`, query: { tab: 'engine' } }) },
+    { path: '/fleet/:node/shipyard', redirect: to => ({ path: `/fleet/${to.params.node}`, query: { tab: 'shipyard' } }) },
+    { path: '/fleet/:node/settings', redirect: to => ({ path: `/fleet/${to.params.node}`, query: { tab: 'rigging' } }) },
     { path: '/settings', component: SettingsView },
     { path: '/system', component: SystemView },
     { path: '/shipyard', component: ShipyardView },

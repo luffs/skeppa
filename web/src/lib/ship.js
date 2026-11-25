@@ -34,6 +34,8 @@ export const localShip = Object.freeze({
 })
 
 const EMPTY = Object.freeze({})
+// A fleet server's admin pages, as tabs of its server page (ServerView).
+const SERVER_TABS = { system: 'engine', shipyard: 'shipyard', settings: 'rigging' }
 
 export function nodeShip(node) {
   node = Number(node)
@@ -80,9 +82,9 @@ export function nodeShip(node) {
         users: EMPTY,
       }
     },
-    home: '/fleet',
+    home: '/', // its vessels are in the harbor too
     link: id => `/fleet/${node}/projects/${id}`,
-    page: name => `/fleet/${node}/${name}`,
+    page: name => (SERVER_TABS[name] ? `/fleet/${node}?tab=${SERVER_TABS[name]}` : `/fleet/${node}/${name}`),
   })
 }
 
@@ -93,7 +95,12 @@ export const shipInject = { ship: { default: () => localShip } }
 // `node` prop, `this.ship`, and the ship provided to everything under it.
 // The router keys such views by server, so the ship is fixed for a view's life.
 export const shipProvider = {
-  props: { node: { type: [String, Number], default: 0 } },
+  props: {
+    node: { type: [String, Number], default: 0 },
+    // A tab of a server's page (ServerView), which carries the heading,
+    // the way back and the offline banner itself.
+    embedded: { type: Boolean, default: false },
+  },
   computed: {
     ship() {
       return Number(this.node) ? nodeShip(this.node) : localShip
