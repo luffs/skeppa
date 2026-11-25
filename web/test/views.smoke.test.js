@@ -2852,7 +2852,7 @@ describe('server facts and this panel as a server', () => {
           sub: g.find('.gauge-sub').text(),
         }))
         expect(gauges.map(g => g.label)).toEqual(['Load', 'Memory', 'Disk'])
-        expect(gauges[0]).toMatchObject({ percent: '3%', sub: 'of 4 cores · 0.2 · 0.3' }) // load 0.1 of 4 cores
+        expect(gauges[0]).toMatchObject({ percent: '3%', sub: 'of 4 cores · 0.20 · 0.30' }) // load 0.1 of 4 cores
         expect(gauges[1].percent).toBe('50%') // 4 of 8 GB
         expect(gauges[2].percent).toBe('50%')
         expect(gauges[2].sub).toMatch(/^of [\d.]+ GB · apps [\d.]+ [kMG]B$/) // the apps dir by size, not by path
@@ -2863,6 +2863,26 @@ describe('server facts and this panel as a server', () => {
     const tab = await expectCleanRender(SystemView, { props: { node: '1', embedded: true } })
     expect(tab.problems.join(' | ')).toBe('')
     expect(tab.html).not.toContain('facts-meta')
+  })
+
+  test('an idle server reads load 0.00; one that cannot say (no loadavg) reads —', async () => {
+    seedStore('admin')
+    store.live.system.loadavg = [0, 0, 0]
+    const idle = await expectCleanRender(SystemView, {
+      steps: async wrapper => {
+        const load = wrapper.find('.gauge')
+        expect(load.find('.gauge-value').text()).toBe('0.00')
+        expect(load.find('.gauge-sub').text()).toBe('of 4 cores · 0.00 · 0.00')
+      },
+    })
+    expect(idle.problems.join(' | ')).toBe('')
+    delete store.live.system.loadavg
+    const unknown = await expectCleanRender(SystemView, {
+      steps: async wrapper => {
+        expect(wrapper.find('.gauge .gauge-value').text()).toBe('—')
+      },
+    })
+    expect(unknown.problems.join(' | ')).toBe('')
   })
 
   test('a gauge filling up turns amber, then red', async () => {

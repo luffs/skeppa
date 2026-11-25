@@ -180,7 +180,9 @@ export function createPoller({ db, config, liveState, intervalMs = 5000, idleInt
         // Like images.managedPrefix: sent along so the client can recognize
         // the panel's own proxy process without hardcoding its name.
         proxyPm2Name: PROXY_PROCESS,
-        loadavg: os.loadavg().map(n => Math.round(n * 100) / 100),
+        // Absent on Windows, where os.loadavg() is always zeroes; anywhere
+        // else zeroes are a quiet server (it rounds to 0.00 often enough).
+        ...(os.platform() === 'win32' ? {} : { loadavg: os.loadavg().map(n => Math.round(n * 100) / 100) }),
         // What load and CPU are read against: a load of cpuCount, or a CPU
         // reading of cpuCount × 100%, is every core busy. 0 when unknown.
         cpuCount: os.cpus().length,

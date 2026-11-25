@@ -73,21 +73,22 @@ export default {
     },
     gauges() {
       const s = this.system
-      // os.loadavg() is all zeroes on Windows: nothing to read there
-      const load = this.online && Array.isArray(s.loadavg) && s.loadavg.some(n => n > 0) ? s.loadavg : null
+      // No loadavg is a server that cannot say (Windows); all zeroes is an
+      // idle one, and reads 0.00.
+      const load = this.online && Array.isArray(s.loadavg) && s.loadavg.length === 3 ? s.loadavg.map(n => Number(n).toFixed(2)) : null
       const cores = s.cpuCount || 0
       const loadFull = cores ? `${cores} is every core busy` : 'one per core is every core busy'
       const mem = this.online && s.memory?.total ? s.memory : null
       const disk = Number.isFinite(s.disk?.total) && Number.isFinite(s.disk?.free) && s.disk.total > 0 ? s.disk : null
       const appsDir = s.disk?.appsDirBytes != null ? `apps ${bytes(s.disk.appsDirBytes)}` : ''
-      const loadPercent = load && cores ? pct(load[0], cores) : null
+      const loadPercent = load && cores ? pct(Number(load[0]), cores) : null
       const memPercent = mem ? pct(mem.total - mem.free, mem.total) : null
       const diskPercent = disk ? pct(disk.total - disk.free, disk.total) : null
       return [
         {
           key: 'load',
           label: 'Load',
-          value: load ? String(load[0]) : '—',
+          value: load ? load[0] : '—',
           percent: loadPercent,
           tone: tone(loadPercent),
           sub: cores ? `of ${cores} ${cores === 1 ? 'core' : 'cores'}${load ? ` · ${load[1]} · ${load[2]}` : ''}` : '',

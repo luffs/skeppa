@@ -39,7 +39,7 @@ export function memoryOf(ship) {
 export function loadOf(ship) {
   const sys = ship.live.system
   if (!Array.isArray(sys?.loadavg)) return ''
-  return `${sys.loadavg[0]}${sys.cpuCount ? ` / ${sys.cpuCount}` : ''}`
+  return `${Number(sys.loadavg[0]).toFixed(2)}${sys.cpuCount ? ` / ${sys.cpuCount}` : ''}`
 }
 
 // The chip a disk earns: amber from 80 %, red from 90 % (the server's own
