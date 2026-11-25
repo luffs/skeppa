@@ -187,6 +187,9 @@ const live = createLiveTransport({
   liveStores: {
     get: id => (links.owns(id) ? links.get(id) : liveStores.get(id)),
     canOpen: (user, id) => (links.owns(id) ? links.canOpen(user, id) : liveStores.canOpen(user, id)),
+    // For the inspector: what is open now, never opened by a look
+    has: id => (links.owns(id) ? links.has(id) : liveStores.has(id)),
+    ids: () => [...liveStores.ids(), ...links.ids()],
   },
 })
 // Bun has one websocket handler per server: the agents' sockets carry

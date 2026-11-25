@@ -327,6 +327,7 @@ export function createLiveStores({
   return {
     // The shape createHandlers takes as `stores`: get(id) → store or null
     get: id => stores.get(id) ?? null,
+    has: id => stores.has(id),
     ids: () => [...stores.keys()],
     canOpen,
     openLog,

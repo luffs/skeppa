@@ -403,6 +403,23 @@ export function createNodeLinks({
       return null
     },
     owns: storeId => NODE_STORE.test(storeId) || NODE_DEPLOY.test(storeId),
+    // What is there now, without opening anything: a node's store, and the
+    // logs over there someone follows (get() would start following one).
+    // For the inspector, which looks and never loads.
+    has(storeId) {
+      let m = NODE_STORE.exec(storeId)
+      if (m) return nodes.has(Number(m[1]))
+      m = NODE_DEPLOY.exec(storeId)
+      return Boolean(m) && Boolean(nodes.get(Number(m[1]))?.logs.has(`${m[2]}-${m[3]}`))
+    },
+    ids() {
+      const ids = []
+      for (const n of nodes.values()) {
+        ids.push(nodeStoreId(n.id))
+        for (const upstreamId of n.logs.keys()) ids.push(`node-${n.id}-${upstreamId}`)
+      }
+      return ids
+    },
     // A node's state and logs are its admin's: deploy logs echo ENV values,
     // and tenants on agents are a later phase.
     canOpen(user, storeId) {

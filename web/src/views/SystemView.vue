@@ -12,6 +12,17 @@
       <span class="mono" style="font-size: 12px" :style="{ color: connected ? 'var(--dim)' : 'var(--amber, #d29922)' }" v-if="status">
         {{ updatedLabel }}
       </span>
+      <!-- lazy-storage's inspector (server live/transport.js): this panel's
+           stores, the fleet's mirrors among them — admins only, read only -->
+      <a
+        v-if="!ship.node"
+        class="inspect-link"
+        style="margin-left: auto; font-size: 12.5px"
+        href="/live/inspect"
+        target="_blank"
+        rel="noopener"
+        title="The live stores this panel serves — records, who has them open, what each sent — in lazy-storage's inspector. Read only."
+      >Inspect live stores ↗</a>
     </div>
 
     <p v-if="!status" class="hint">Waiting for live data…</p>

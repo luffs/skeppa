@@ -7,7 +7,7 @@ import { createNetwork } from 'lazy-storage/testing'
 import { migrate } from '../src/db/migrate.js'
 import { createLiveState, initLiveState, projectDefaults, getProjectInfo } from '../src/live/state.js'
 import { createLiveStores, canOpenStore, STORE_SHAPES } from '../src/live/stores.js'
-import { createLiveTransport } from '../src/live/transport.js'
+import { createLiveTransport, inspectorNameOf } from '../src/live/transport.js'
 import { createSession, COOKIE_NAME } from '../src/auth/sessions.js'
 
 // LiveState served as lazy-storage stores (live/stores.js): the layout that
@@ -413,4 +413,62 @@ test('the snapshot route authenticates by session cookie and authorizes per stor
 
   // Anything outside /live is Hono's.
   expect(await status('admin', '/api/projects')).toBeNull()
+})
+
+// lazy-storage's inspector at /live/inspect: admins only, whatever a store's
+// own authorize would let a tenant open; read only (a change is refused
+// before anything is done); and a look opens no store.
+test('the inspector is for admins, reads only, and opens nothing by looking', async () => {
+  const { db, live } = setup({ canReadDeployment: user => user.role === 'admin' })
+  db.query(`INSERT INTO deployments (project_id, "trigger", log) VALUES (1, 'manual', '')`).run()
+  live.openLog(1)
+  live.appendLog(1, 'ADMIN_SECRET=x')
+  let resolved = []
+  const stores = {
+    get: id => (resolved.push(id), live.get(id)),
+    has: id => live.has(id),
+    ids: () => live.ids(),
+    canOpen: (user, id) => live.canOpen(user, id),
+  }
+  const transport = createLiveTransport({ db, liveStores: stores })
+  const cookies = {
+    admin: `${COOKIE_NAME}=${createSession(db, 1)}`,
+    bob: `${COOKIE_NAME}=${createSession(db, 2)}`,
+  }
+  const ask = (who, path, init = {}) => {
+    const headers = { ...(cookies[who] ? { cookie: cookies[who] } : {}), ...(init.headers ?? {}) }
+    return transport.upgrade(new Request(`http://panel${path}`, { ...init, headers }), {})
+  }
+
+  expect((await ask('anon', '/live/inspect')).status).toBe(401)
+  expect((await ask('bob', '/live/inspect')).status).toBe(401)
+  expect((await ask('bob', '/live/inspect/api/records?store=fleet-2&c=projects')).status).toBe(401) // not even a tenant's own
+  const page = await ask('admin', '/live/inspect')
+  expect(page.status).toBe(200)
+  expect(page.headers.get('content-security-policy')).toBeTruthy()
+
+  const every = await (await ask('admin', '/live/inspect/api/everyStore')).json()
+  expect(every.stores.map(s => s.id).sort()).toEqual(['deploy-1', 'fleet-1', 'fleet-2', 'harbor', 'panel'])
+  const log = await (await ask('admin', '/live/inspect/api/records?store=deploy-1&c=lines')).json()
+  expect(Object.values(log.record)).toEqual(['ADMIN_SECRET=x'])
+
+  // a store that is not open is not opened by a look, nor by asking to load it
+  resolved = []
+  expect((await ask('admin', '/live/inspect/api/glance?store=deploy-9')).status).toBe(404)
+  const load = await ask('admin', '/live/inspect/api/load', {
+    method: 'POST', body: JSON.stringify({ store: 'deploy-9' }), headers: { 'content-type': 'application/json', 'x-lazy-inspect': '1' },
+  })
+  expect(load.status).toBe(401)
+  expect(resolved).not.toContain('deploy-9')
+  expect(live.has('deploy-9')).toBe(false)
+})
+
+test('the inspector names users by their keys', () => {
+  const { db } = setup()
+  const nameOf = inspectorNameOf(db)
+  expect(nameOf('1')).toBe('cap')
+  expect(nameOf('2')).toBe('bob')
+  expect(nameOf('master')).toBe('the master')
+  expect(nameOf('99')).toBeNull()
+  expect(nameOf('{"id":1}')).toBeNull()
 })
