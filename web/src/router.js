@@ -24,7 +24,7 @@ export const router = createRouter({
     { path: '/fleet/:node/projects/new', component: ProjectNewView, props: true, meta: { nodePage: true } },
     { path: '/fleet/:node/projects/:id', component: ProjectView, props: true, meta: { project: true } },
     // …and the server's own page: its overview, and its admin pages as tabs.
-    { path: '/fleet/:node(\\d+)', component: ServerView, props: true, meta: { nodePage: true } },
+    { path: '/fleet/:node(\\d+|here)', component: ServerView, props: true, meta: { nodePage: true } },
     // the admin pages' own addresses from before they were tabs
     { path: '/fleet/:node/system', redirect: to => ({ path: `/fleet/${to.params.node}`, query: { tab: 'engine' } }) },
     { path: '/fleet/:node/shipyard', redirect: to => ({ path: `/fleet/${to.params.node}`, query: { tab: 'shipyard' } }) },

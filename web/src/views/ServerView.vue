@@ -11,7 +11,7 @@
         </div>
         <div class="row">
           <button
-            v-if="panel && server.online"
+            v-if="!local && panel && server.online"
             class="secondary"
             :disabled="updating"
             :title="`Deploy its own panel project (${panel.info.name}): the latest commit of ${panel.info.branch}`"
@@ -22,56 +22,31 @@
       <ShipOffline />
 
       <div class="tabs">
-        <button v-for="t in TABS" :key="t.key" :class="{ active: tab === t.key }" @click="setTab(t.key)">{{ t.label }}</button>
+        <button v-for="t in tabs" :key="t.key" :class="{ active: tab === t.key }" @click="setTab(t.key)">{{ t.label }}</button>
       </div>
 
       <!-- Overview: how it is doing, and what it runs. -->
       <div v-if="tab === 'overview'">
-        <div class="server-facts">
-          <div class="panel server-fact">
-            <span class="section-label">Reporting</span>
-            <b>{{ server.online ? 'now' : server.lastSeenAt ? timeAgo(server.lastSeenAt) : 'never' }}</b>
-            <span class="fleet-dim">{{ server.paired ? 'paired' : 'not paired' }}</span>
-          </div>
-          <div class="panel server-fact">
-            <span class="section-label">Load</span>
-            <b>{{ load || '—' }}</b>
-            <span class="fleet-dim">one minute, against its cores</span>
-          </div>
-          <div class="panel server-fact">
-            <span class="section-label">Memory</span>
-            <b>{{ memory ? `${memory.percent}%` : '—' }}</b>
-            <span class="fleet-dim">{{ memory?.title ?? '' }}</span>
-          </div>
-          <div class="panel server-fact">
-            <span class="section-label">Disk</span>
-            <b :class="diskTone ? `tone-${diskTone}` : ''">{{ disk ? `${disk.percent}%` : '—' }}</b>
-            <span class="fleet-dim">{{ disk?.title ?? '' }}</span>
-          </div>
-          <div class="panel server-fact">
-            <span class="section-label">Harbor gate</span>
-            <b class="mono">{{ ship.live.proxy?.baseDomain || '—' }}</b>
-            <span class="fleet-dim">its base domain</span>
-          </div>
-        </div>
+        <!-- the same cards as over this panel's own Engine room -->
+        <ServerFacts :node="local ? null : server" style="margin-top: 14px" />
 
         <div class="section-head" style="margin-top: 20px">
           <span class="section-label">Vessels</span>
           <span class="spacer"></span>
-          <router-link :to="`/?server=${server.id}`" class="small-link">In the harbor</router-link>
-          <router-link v-if="server.online" :to="ship.page('projects/new')"><button class="small">+ Moor a project there</button></router-link>
+          <router-link :to="`/?server=${local ? 'here' : server.id}`" class="small-link">In the harbor</router-link>
+          <router-link v-if="server.online" :to="ship.page('projects/new')"><button class="small">{{ local ? '+ Moor a project' : '+ Moor a project there' }}</button></router-link>
         </div>
         <div v-if="vessels.length" class="vessel-rows">
           <ProjectRow v-for="p in vessels" :key="p.id" :project="p" :ship="ship" />
         </div>
         <p v-else class="hint">
-          {{ server.online ? 'Nothing moored there yet.' : server.paired ? 'Nothing reported since this panel started — it shows up when the server dials in.' : 'Not paired yet: make a code under Pairing and run the command on that server.' }}
+          {{ local ? 'Nothing moored here yet.' : server.online ? 'Nothing moored there yet.' : server.paired ? 'Nothing reported since this panel started — it shows up when the server dials in.' : 'Not paired yet: make a code under Pairing and run the command on that server.' }}
         </p>
       </div>
 
-      <SystemView v-else-if="tab === 'engine'" :node="node" embedded />
-      <ShipyardView v-else-if="tab === 'shipyard'" :node="node" embedded />
-      <SettingsView v-else-if="tab === 'rigging'" :node="node" embedded />
+      <SystemView v-else-if="tab === 'engine'" :node="local ? 0 : node" embedded />
+      <ShipyardView v-else-if="tab === 'shipyard'" :node="local ? 0 : node" embedded />
+      <SettingsView v-else-if="tab === 'rigging'" :node="local ? 0 : node" embedded />
       <FleetLog v-else-if="tab === 'log'" ref="log" :node="server.id" />
 
       <!-- Pairing: its name, its key, and taking it out — apart from the rest. -->
@@ -115,8 +90,9 @@ import { store } from '../store.js'
 import { timeAgo } from '../lib/format.js'
 import { confirmDialog } from '../lib/dialog.js'
 import { shipProvider } from '../lib/ship.js'
-import { diskOf, diskTone, memoryOf, loadOf, versionChip, stateChip, panelOf } from '../lib/fleet.js'
+import { diskOf, diskTone, versionChip, stateChip, panelOf } from '../lib/fleet.js'
 import ProjectRow from '../components/ProjectRow.vue'
+import ServerFacts from '../components/ServerFacts.vue'
 import ShipOffline from '../components/ShipOffline.vue'
 import FleetLog from '../components/FleetLog.vue'
 import JoinCode from '../components/JoinCode.vue'
@@ -133,20 +109,21 @@ const TABS = [
   { key: 'pairing', label: 'Pairing' },
 ]
 
-// One server of the fleet, the way a project has its page: an overview (how
+// One server — this panel (/fleet/here) or one of the fleet — the way a
+// project has its page: an overview (how
 // it is doing, what it runs), its Engine room, Shipyard and Rigging (this
 // panel's own views, embedded, run on that server through the ship), its log,
 // and pairing — name, join code, unpair, remove — kept apart. The tab is in
 // the URL (?tab=), so a reload and a link land where they mean to.
 export default {
   name: 'ServerView',
-  components: { ProjectRow, ShipOffline, FleetLog, JoinCode, SystemView, ShipyardView, SettingsView },
+  components: { ProjectRow, ServerFacts, ShipOffline, FleetLog, JoinCode, SystemView, ShipyardView, SettingsView },
   mixins: [shipProvider],
   data() {
     const tab = this.$route?.query?.tab
     return {
       TABS,
-      tab: TABS.some(t => t.key === tab) ? tab : 'overview',
+      tab: TABS.some(t => t.key === tab) && !(this.node === 'here' && (tab === 'log' || tab === 'pairing')) ? tab : 'overview',
       renameTo: '',
       join: null,
       busy: false,
@@ -155,13 +132,25 @@ export default {
     }
   },
   computed: {
+    // /fleet/here: this panel's own page — the same tabs, without the log
+    // and pairing a fleet server has (changes here are not relayed).
+    local() {
+      return this.node === 'here'
+    },
     server() {
+      if (this.local) {
+        return { id: 0, name: 'this panel', online: true, paired: true, version: store.live.system?.version ?? '', lastSeenAt: '' }
+      }
       return store.live.nodes?.[Number(this.node)] ?? null
+    },
+    tabs() {
+      return this.local ? TABS.filter(t => t.key !== 'log' && t.key !== 'pairing') : TABS
     },
     state() {
       return stateChip(this.server)
     },
     version() {
+      if (this.local) return this.server.version ? { text: this.server.version, color: '', title: 'The commit this panel runs' } : null
       return versionChip(this.server?.version)
     },
     disk() {
@@ -169,12 +158,6 @@ export default {
     },
     diskTone() {
       return diskTone(this.disk)
-    },
-    memory() {
-      return this.server?.online ? memoryOf(this.ship) : null
-    },
-    load() {
-      return this.server?.online ? loadOf(this.ship) : ''
     },
     panel() {
       return panelOf(this.ship)
@@ -259,11 +242,6 @@ export default {
 
 <style scoped>
 .server-page-head { margin: 8px 0 4px; }
-.server-facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; margin-top: 14px; }
-.server-fact { display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; }
-.server-fact b { font-size: 18px; }
-.server-fact b.tone-red { color: var(--red, #f85149); }
-.server-fact b.tone-amber { color: var(--amber, #d29922); }
 .fleet-dim { font-size: 12px; color: var(--dim); }
 .small-link { font-size: 12.5px; margin-right: 10px; }
 .server-pairing { display: flex; flex-direction: column; gap: 14px; margin-top: 14px; max-width: 760px; }

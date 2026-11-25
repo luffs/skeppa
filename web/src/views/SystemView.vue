@@ -16,52 +16,9 @@
 
     <p v-if="!status" class="hint">Waiting for live data…</p>
 
-    <!-- Always exactly three cards, so the grid never leaves a stray: three
-         across on desktop, and on narrow screens uptime takes a full-width
-         row above the other two. -->
-    <div v-if="status" class="stat-grid">
-      <div class="stat-card">
-        <div class="stat-label">Uptime</div>
-        <!-- Label over value, the same vocabulary as the process cards. -->
-        <div class="stat-pair">
-          <div>
-            <div class="stat-tag">panel</div>
-            <div class="stat-value">{{ uptimeSince(status.panelStartedAt) }}</div>
-          </div>
-          <div>
-            <div class="stat-tag">host</div>
-            <div class="stat-value">{{ uptimeSince(status.hostBootAt) }}</div>
-          </div>
-        </div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">Memory</div>
-        <div class="stat-value">{{ bytes(usedMemory) }}</div>
-        <div class="stat-meter" v-if="memoryUsedPercent != null">
-          <span :class="meterClass(memoryUsedPercent)" :style="{ width: memoryUsedPercent + '%' }"></span>
-        </div>
-        <div class="stat-sub">{{ memoryPercent }}% of {{ bytes(status.memory.total) }} in use</div>
-        <!-- Load is a count, not a percentage: read against the cores, it
-             says how busy the host is (a load of 4 on 4 cores is full). -->
-        <div class="stat-sub" v-if="loadavg" :title="loadHint">
-          load {{ loadavg.join(' · ') }}<template v-if="cpuCount"> of {{ cpuCount }} {{ cpuCount === 1 ? 'core' : 'cores' }}</template>
-        </div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">Disk</div>
-        <div class="stat-value">{{ bytes(status.disk?.free) }}</div>
-        <div class="stat-meter" v-if="diskUsedPercent != null">
-          <span :class="meterClass(diskUsedPercent)" :style="{ width: diskUsedPercent + '%' }"></span>
-        </div>
-        <!-- Worded like the memory card so the meter under it reads as what
-             it is — used share — while the big number stays the free space. -->
-        <div class="stat-sub" v-if="diskUsedPercent != null">
-          {{ diskUsedPercent }}% of {{ bytes(status.disk.total) }} in use
-        </div>
-        <div class="stat-sub" v-else>free of {{ bytes(status.disk?.total) }}</div>
-        <div class="stat-sub stat-path" :title="status.appsDir">{{ appsDirNote }}</div>
-      </div>
-    </div>
+    <!-- How the server is doing (ServerFacts, the same cards as a server's
+         Overview) — on its own page; as a tab of a server page the Overview has them. -->
+    <ServerFacts v-if="status && !embedded" />
 
     <div v-if="status">
       <div class="section-head">
@@ -233,6 +190,7 @@
 import StatusBadge from '../components/StatusBadge.vue'
 import Pm2Logs from '../components/Pm2Logs.vue'
 import ShipOffline from '../components/ShipOffline.vue'
+import ServerFacts from '../components/ServerFacts.vue'
 import ActionMenu from '../components/ActionMenu.vue'
 import { store, appUrlFor } from '../store.js'
 import { shipProvider } from '../lib/ship.js'
@@ -262,7 +220,7 @@ const CRASHES_HINT = 'Crashes the engine restarted the container after. A restar
 export default {
   name: 'SystemView',
   mixins: [shipProvider], // this panel's engine room, or a fleet server's
-  components: { StatusBadge, Pm2Logs, ActionMenu, ShipOffline },
+  components: { StatusBadge, Pm2Logs, ActionMenu, ShipOffline, ServerFacts },
   data() {
     return {
       opened: null,
@@ -280,10 +238,6 @@ export default {
     // Cores on the host, 0 when the server could not say.
     cpuCount() {
       return this.status?.cpuCount || 0
-    },
-    loadHint() {
-      const full = this.cpuCount ? `${this.cpuCount} is every core busy` : 'one per core is every core busy'
-      return `Average over 1, 5 and 15 minutes — ${full}`
     },
     // The headers, with CPU's hint saying what full would read.
     columns() {
@@ -319,36 +273,6 @@ export default {
     },
     liveUpdatedAt() {
       return store.liveUpdatedAt
-    },
-    usedMemory() {
-      const m = this.status?.memory
-      return m ? m.total - m.free : null
-    },
-    memoryPercent() {
-      return this.memoryUsedPercent ?? '—'
-    },
-    // Used fractions for the meters. null hides the bar entirely — a full or
-    // empty bar on missing data would be a claim, not an absence.
-    memoryUsedPercent() {
-      const m = this.status?.memory
-      return m?.total ? Math.round(((m.total - m.free) / m.total) * 100) : null
-    },
-    diskUsedPercent() {
-      const d = this.status?.disk
-      return d?.total && d.free != null ? Math.round(((d.total - d.free) / d.total) * 100) : null
-    },
-    // `du` is unavailable on some hosts (Windows) — leave the size out entirely
-    // there rather than printing a dash between the label and the path.
-    appsDirNote() {
-      const size = this.status?.disk?.appsDirBytes
-      return size != null
-        ? `apps dir ${bytes(size)} · ${this.status.appsDir}`
-        : `apps dir ${this.status?.appsDir ?? ''}`
-    },
-    // os.loadavg() is all zeroes on Windows — only worth showing where it means something.
-    loadavg() {
-      const l = this.status?.loadavg
-      return l?.some(n => n > 0) ? l : null
     },
     // pm2 name -> project, so managed processes can link to their project page.
     projectsByPm2Name() {

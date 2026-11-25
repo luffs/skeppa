@@ -64,8 +64,7 @@
             <tr v-for="r in rows" :key="r.key" class="fleet-server" :class="{ here: !r.node }">
               <td class="fleet-server-name">
                 <span class="dot" :class="r.dot" aria-hidden="true"></span>
-                <router-link v-if="r.node" :to="`/fleet/${r.node.id}`">{{ r.name }}</router-link>
-                <span v-else>{{ r.name }}</span>
+                <router-link :to="`/fleet/${r.node ? r.node.id : 'here'}`">{{ r.name }}</router-link>
               </td>
               <td>
                 <span class="chip" :class="r.state.color">{{ r.state.text }}</span>
@@ -92,7 +91,6 @@
                   :title="`Deploy ${r.name}'s own panel project (${r.panel.info.name}): the latest commit of ${r.panel.info.branch}`"
                   @click="updateOne(r)"
                 >{{ updating(r) ? 'Updating…' : 'Update panel' }}</button>
-                <router-link v-if="!r.node" to="/system" class="small-link">Engine room</router-link>
               </td>
             </tr>
           </tbody>

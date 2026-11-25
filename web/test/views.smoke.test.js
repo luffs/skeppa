@@ -2099,7 +2099,7 @@ test('the fleet lists the servers — this panel first — and pairs a new one',
     steps: async wrapper => {
       const rows = wrapper.findAll('.fleet-server')
       expect(rows.map(r => r.find('.fleet-server-name').text())).toEqual(['this panel', 'hemma-2', 'jobb-1'])
-      expect(rows[0].find('.fleet-server-name a').exists()).toBe(false) // this panel has its own pages in the masthead
+      expect(rows[0].find('.fleet-server-name a').attributes('href')).toBe('/fleet/here') // this panel's own server page
       expect(rows[2].find('.fleet-server-name a').attributes('href')).toBe('/fleet/1')
       expect(rows[1].text()).toContain('not paired')
       // its vessels are in the harbor, filtered by server
@@ -2450,7 +2450,8 @@ describe('Shipyard across the fleet', () => {
 describe('a fleet server that is offline', () => {
   function seedOffline() {
     seedStore('admin')
-    store.live.nodes[1] = { ...store.live.nodes[1], online: false, lastSeenAt: new Date(NOW - 12 * 60_000).toISOString() }
+    // 12 minutes before the store's own clock (what timeAgo reads), not the file's load
+    store.live.nodes[1] = { ...store.live.nodes[1], online: false, lastSeenAt: new Date(store.now - 12 * 60_000 - 5_000).toISOString() }
     store.live.nodeStates[1].images = { ...store.live.images }
   }
   const views = () => [
@@ -2744,4 +2745,76 @@ test("the fleet page shows each server's disk, and warns when it fills", async (
   const page = await expectCleanRender(ServerView, { props: { node: '1' } })
   expect(page.problems.join(' | ')).toBe('')
   expect(page.html).toMatch(/class="chip red"[^>]*>disk 93%/)
+})
+
+// One block of facts for a server — over this panel's Engine room, on every
+// server's Overview — and this panel has a server page of its own too.
+describe('server facts and this panel as a server', () => {
+  test("the Engine room opens with the facts; as a server page's tab it leaves them to the Overview", async () => {
+    seedStore('admin')
+    const { problems } = await expectCleanRender(SystemView, {
+      steps: async wrapper => {
+        const facts = wrapper.findComponent({ name: 'ServerFacts' })
+        // a line of what it is, then three gauges read the same way
+        expect(facts.find('.facts-meta').text().replace(/\s+/g, ' ')).toContain('gate apps.example.com')
+        const gauges = facts.findAll('.gauge').map(g => ({
+          label: g.find('.gauge-label').text(),
+          percent: g.find('.gauge-percent').exists() ? g.find('.gauge-percent').text() : '',
+          sub: g.find('.gauge-sub').text(),
+        }))
+        expect(gauges.map(g => g.label)).toEqual(['Load', 'Memory', 'Disk'])
+        expect(gauges[0]).toMatchObject({ percent: '3%', sub: 'of 4 cores · 0.2 · 0.3' }) // load 0.1 of 4 cores
+        expect(gauges[1].percent).toBe('50%') // 4 of 8 GB
+        expect(gauges[2].percent).toBe('50%')
+        expect(gauges[2].sub).toMatch(/^of [\d.]+ GB · apps [\d.]+ [kMG]B$/) // the apps dir by size, not by path
+        expect(facts.find('.gauge.warn, .gauge.crit').exists()).toBe(false)
+      },
+    })
+    expect(problems.join(' | ')).toBe('')
+    const tab = await expectCleanRender(SystemView, { props: { node: '1', embedded: true } })
+    expect(tab.problems.join(' | ')).toBe('')
+    expect(tab.html).not.toContain('facts-meta')
+  })
+
+  test('a gauge filling up turns amber, then red', async () => {
+    seedStore('admin')
+    store.live.system.disk = { total: 100e9, free: 5e9, appsDirBytes: 1e9 }
+    store.live.system.memory = { total: 8e9, free: 1.2e9 }
+    const { problems } = await expectCleanRender(SystemView, {
+      steps: async wrapper => {
+        const [, memory, disk] = wrapper.findAll('.gauge')
+        expect(memory.classes()).toContain('warn') // 85 %
+        expect(disk.classes()).toContain('crit') // 95 %
+        expect(disk.find('.gauge-sub').attributes('title')).toBe('apps dir: /home/skeppa/apps')
+      },
+    })
+    expect(problems.join(' | ')).toBe('')
+  })
+
+  test('this panel has a server page: its facts and vessels, no log, no pairing', async () => {
+    seedStore('admin')
+    const { problems, html } = await expectCleanRender(ServerView, {
+      props: { node: 'here' },
+      steps: async wrapper => {
+        expect(wrapper.find('h1').text()).toBe('this panel')
+        expect(wrapper.findAll('.tabs button').map(b => b.text())).toEqual(['Overview', 'Engine room', 'Shipyard', 'Rigging'])
+        expect(wrapper.findAll('a.vessel-name').map(a => a.attributes('href'))).toEqual(['/projects/1', '/projects/2'])
+        expect(wrapper.text()).not.toContain('Update panel')
+        await wrapper.findAll('.tabs button').find(b => b.text() === 'Rigging').trigger('click')
+        await settle()
+        expect(wrapper.findComponent({ name: 'SettingsView' }).props()).toMatchObject({ node: 0, embedded: true })
+        expect(wrapper.text()).toContain('Crew') // its own Rigging, all of it
+      },
+    })
+    expect(problems.join(' | ')).toBe('')
+    expect(html).toContain('apps.example.com')
+  })
+
+  test("an offline server's facts say when it was last seen and show nothing stale as current", async () => {
+    seedStore('admin')
+    store.live.nodes[1] = { ...store.live.nodes[1], online: false, lastSeenAt: new Date(store.now - 3 * 60_000 - 5_000).toISOString() }
+    const { problems, html } = await expectCleanRender(ServerView, { props: { node: '1' } })
+    expect(problems.join(' | ')).toBe('')
+    expect(html).toContain('last seen 3m ago')
+  })
 })
