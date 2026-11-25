@@ -76,7 +76,8 @@ function master({ db = null, ...linkOptions } = {}) {
     onAsk: (nodeId, method, params) => answers.answer(nodeId, method, params),
     ...linkOptions,
   })
-  answers = createFleetAnswers({ github, links })
+  const notified = []
+  answers = createFleetAnswers({ github, links, db, notifyFn: async (_db, _key, event, text, opts) => (notified.push({ event, text, ...opts }), true) })
   const app = new Hono()
   app.route('/api/nodes/join', nodeJoinRoutes({ db, links }))
   app.use('/api/nodes/*', (c, next) => {
@@ -96,7 +97,7 @@ function master({ db = null, ...linkOptions } = {}) {
     links.dispose()
     server.stop(true)
   })
-  return { db, liveState, links, url, api, errors, github, minted }
+  return { db, liveState, links, url, api, errors, github, minted, notified }
 }
 
 function agent() {
@@ -862,4 +863,25 @@ test('a subject is the project, pier or image a path names; the log keeps the ne
   for (let i = 0; i < 12; i++) recordEvent(db, { nodeId: 1, action: `a${i}` })
   prune(db, 5)
   expect(listEvents(db, { limit: 100 }).map(e => e.action)).toEqual(['a11', 'a10', 'a9', 'a8', 'a7'])
+})
+
+// One webhook for the fleet: an agent without its own sends its
+// notifications to the master, which sends them under the agent's name, by
+// its own per-event settings — and never more than its share.
+test("an agent's notification goes out through the master, under its name, and only so many", async () => {
+  const { NOTIFY_BURST } = await import('../src/nodes/answers.js')
+  const m = master()
+  const a = agent()
+  const { id, key } = await pair(m)
+  const uplink = connect(m, a, key)
+  await until(() => m.links.isOnline(id))
+  expect(await uplink.ask('notify', { event: 'deploy_failed', text: '✖ Deploy of web failed', url: 'https://web.jobb.example.com' })).toEqual({ sent: true })
+  expect(m.notified).toEqual([{ event: 'deploy_failed', text: 'hemma-2: ✖ Deploy of web failed', url: 'https://web.jobb.example.com' }])
+  await expect(uplink.ask('notify', { event: 'anything', text: 'x' })).rejects.toMatchObject({ code: 'bad-request' })
+  await expect(uplink.ask('notify', { event: 'deploy_failed', text: '  ' })).rejects.toMatchObject({ code: 'bad-request' })
+  await uplink.ask('notify', { event: 'deploy_failed', text: 'x', url: 'javascript:alert(1)' })
+  expect(m.notified.at(-1).url).toBe('') // only an http(s) address goes along
+  for (let i = m.notified.length; i < NOTIFY_BURST; i++) await uplink.ask('notify', { event: 'restart_burst', text: `loop ${i}` })
+  await expect(uplink.ask('notify', { event: 'restart_burst', text: 'one too many' })).rejects.toMatchObject({ code: 'rate-limited' })
+  expect(m.notified).toHaveLength(NOTIFY_BURST)
 })

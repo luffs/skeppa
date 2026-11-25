@@ -9,7 +9,7 @@ import { createLiveState, initLiveState } from './live/state.js'
 import { createLiveStores } from './live/stores.js'
 import { createLiveTransport } from './live/transport.js'
 import { createPoller } from './live/poller.js'
-import { notifyEvent, upgradeNotifyUrl } from './lib/notify.js'
+import { notifyEvent, notifyUrl, upgradeNotifyUrl } from './lib/notify.js'
 import { createProxy, proxySettings, projectPublicUrl } from './proxy/index.js'
 import { GitHubApp } from './github/appClient.js'
 import { DeployRunner, recoverInterrupted } from './deploy/runner.js'
@@ -19,6 +19,7 @@ import { createNodeLinks } from './nodes/links.js'
 import { sqliteStorage } from 'lazy-storage/server/sqlite'
 import { createFleetAnswers } from './nodes/answers.js'
 import { recordEvent } from './nodes/events.js'
+import { createDiskWatch } from './lib/diskwatch.js'
 import { createUplink, readAgentKey, checkoutVersion } from './agent/uplink.js'
 import { FleetGitHub } from './agent/github.js'
 
@@ -62,10 +63,24 @@ const urlOfProject = projectId => {
 // The commit this checkout is at: in the system record (the Fleet page compares
 // it) and in an agent's hello to its master.
 const panelVersion = checkoutVersion(rootDir)
+// Every notification this panel sends goes through here. A Fleet agent with
+// no webhook of its own sends its notifications to the master, which sends
+// them through its own under this server's name (nodes/answers.js notify):
+// one webhook for the whole fleet. `uplink` is made further down.
+const sendEvent = (event, text, { url = '' } = {}) => {
+  if (config.masterUrl && !notifyUrl(db, config.masterKey)) {
+    const asked = uplink ? uplink.ask('notify', { event, text, url }) : Promise.reject(new Error('not connected to the master'))
+    return asked.then(r => Boolean(r?.sent), err => {
+      console.error(`[notify] through the master: ${err.message}`)
+      return false
+    })
+  }
+  return notifyEvent(db, config.masterKey, event, text, { url })
+}
 const poller = createPoller({
   db, config, liveState, version: panelVersion,
   onCrashAlert: (label, count, projectId) =>
-    notifyEvent(db, config.masterKey, 'restart_burst', `⚠ ${label} restarted ${count} times in the last 10 minutes — check the Engine room`, { url: urlOfProject(projectId) }),
+    sendEvent('restart_burst', `⚠ ${label} restarted ${count} times in the last 10 minutes — check the Engine room`, { url: urlOfProject(projectId) }),
 })
 // A webhook URL saved by an older version sits in plaintext — encrypt it
 // before this boot writes anything else, so the next backup is clean.
@@ -113,22 +128,28 @@ const links = createNodeLinks({
   // as notifications.
   onNodeDown: (row, lastSeen) => {
     recordEvent(db, { nodeId: row.id, nodeName: row.name, action: 'offline', subject: lastSeen ? `last seen ${lastSeen}` : '' })
-    return notifyEvent(db, config.masterKey, 'node_offline',
+    return sendEvent('node_offline',
       `⚠ ${row.name} has not reported for ${minutes(NODE_ALERT_MS)} minutes${lastSeen ? ` — last seen ${lastSeen.replace('T', ' ').slice(0, 16)} UTC` : ''}. Its apps keep running; it just cannot be reached from here.`)
   },
   onNodeUp: (row, awayMs) => {
     if (row) recordEvent(db, { nodeId: row.id, nodeName: row.name, action: 'back', subject: `after about ${minutes(awayMs)} min` })
-    return notifyEvent(db, config.masterKey, 'node_offline',
+    return sendEvent('node_offline',
       `✔ ${row?.name ?? 'A fleet server'} reports again, after about ${minutes(awayMs)} minutes away.`)
   },
 })
-answers = createFleetAnswers({ github, links })
+answers = createFleetAnswers({ github, links, db, masterKey: config.masterKey })
 // Always on: the crash watch must run with nobody looking. Clients connecting
 // only switch the cadence from idle to live.
 poller.start()
+// This panel's disk, once a minute: nearly full is a notification (lib/diskwatch.js).
+const diskWatch = createDiskWatch({
+  read: () => liveState.system?.disk,
+  notify: text => sendEvent('disk_full', text),
+})
+setInterval(() => diskWatch.check(), 60_000).unref?.()
 const runner = new DeployRunner({
   db, config, liveState, logs: liveStores, github, poller,
-  notify: (event, text, { projectId } = {}) => notifyEvent(db, config.masterKey, event, text, { url: urlOfProject(projectId) }),
+  notify: (event, text, { projectId } = {}) => sendEvent(event, text, { url: urlOfProject(projectId) }),
   // A deploy that changes what a project is served as moves its route
   // (`proxy` is created just below; this only runs once a deploy finishes).
   applyProxy: () => proxy.apply(),

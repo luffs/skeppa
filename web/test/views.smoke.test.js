@@ -14,7 +14,7 @@ vi.mock('../src/api.js', () => {
   const answer = url => {
     if (url.startsWith('/api/settings')) {
       return { github_app_id: null, has_private_key: false, has_webhook_secret: false, firebase_config: null, has_notify_url: false, notify_url_host: '',
-        notify_events: { deploy_success: { send: false, ping: false }, deploy_failed: { send: true, ping: false }, restart_burst: { send: true, ping: true }, node_offline: { send: true, ping: false } }, notify_mention: '@channel' }
+        notify_events: { deploy_success: { send: false, ping: false }, deploy_failed: { send: true, ping: false }, restart_burst: { send: true, ping: true }, node_offline: { send: true, ping: false }, disk_full: { send: true, ping: false } }, notify_mention: '@channel' }
     }
     if (url.startsWith('/api/proxy')) {
       return { base_domain: '', http_port: 8100, admin_port: 2020, routes: [], caddy_available: false, process_status: '', last_error: null }
@@ -2540,17 +2540,35 @@ describe('the harbor across the fleet', () => {
     expect(problems.join(' | ')).toBe('')
   })
 
-  test('a tenant sees no fleet, and the map says it is this server only', async () => {
+  test('a tenant sees no fleet', async () => {
     seedStore('tenant')
     const tenant = await expectCleanRender(DashboardView)
     expect(tenant.problems.join(' | ')).toBe('')
     expect(tenant.html).not.toContain('server-section')
     expect(tenant.html).not.toContain('across')
+  })
 
+  // The map: a harbor per server, this one first, each server's under its
+  // name; the last carries the legend; its ships link to their pages there.
+  test('the map draws a harbor per server', async () => {
     seedStore('admin')
-    const map = await expectCleanRender(DashboardView, { route: { query: { view: 'map' } } })
-    expect(map.problems.join(' | ')).toBe('')
-    expect(map.html).toContain("The map shows this server's harbor")
+    const { problems } = await expectCleanRender(DashboardView, {
+      route: { query: { view: 'map' } },
+      steps: async wrapper => {
+        const maps = wrapper.findAllComponents({ name: 'HarborMap' })
+        expect(maps).toHaveLength(2)
+        expect(maps.map(m => m.props('ship').node)).toEqual([0, 1])
+        expect(maps.map(m => m.props('legend'))).toEqual([false, true])
+        expect(wrapper.findAll('.server-head .section-label').map(h => h.text())).toEqual(['This server', 'jobb-1'])
+        expect(maps[1].find('[data-ship="5"]').attributes('href')).toBe('/fleet/1/projects/5')
+        // a search dims what it does not reach, on every map
+        wrapper.vm.query = 'remote'
+        await settle()
+        expect(maps[1].props('matches')).toEqual(new Set([5]))
+        expect(maps[0].props('matches')).toEqual(new Set())
+      },
+    })
+    expect(problems.join(' | ')).toBe('')
   })
 })
 
@@ -2610,4 +2628,47 @@ test('the fleet page shows the fleet log', async () => {
   get.mockRestore()
   expect(problems.join(' | ')).toBe('')
   expect(asked).toEqual(['/api/nodes/events?limit=30', '/api/nodes/events?limit=30&node=1'])
+})
+
+// Everything with new commits, on every server, in one go — not the panels.
+test('the harbor deploys everything with new commits, across the fleet', async () => {
+  seedStore('admin')
+  // a fleet server's own panel is ahead too: it is left out (the Fleet page updates panels)
+  const panel = project(6, 'skeppa', ADMIN)
+  panel.info.runtime = 'pm2'
+  panel.info.pm2_name = 'skeppa'
+  store.live.nodeStates[1].projects[6] = panel
+  store.live.nodeStates[1].system = { ...store.live.nodeStates[1].system, selfPm2Name: 'skeppa' }
+  const post = vi.spyOn(api, 'post').mockImplementation(async () => ({ id: 1 }))
+  const { problems } = await expectCleanRender(DashboardView, {
+    steps: async wrapper => {
+      const button = wrapper.findAll('.page-head button').find(b => b.text().startsWith('Deploy '))
+      expect(button.text()).toBe('Deploy 3 with new commits')
+      await button.trigger('click')
+      await settle()
+      expect(dialogState.message).toContain('3 vessels: adm, bobapp, remote on jobb-1')
+      settleDialog(true)
+      await settle()
+    },
+  })
+  const posted = post.mock.calls.map(c => c[0]).sort()
+  post.mockRestore()
+  expect(problems.join(' | ')).toBe('')
+  expect(posted).toEqual(['/api/nodes/1/api/projects/5/deploy', '/api/projects/1/deploy', '/api/projects/2/deploy'])
+})
+
+// A fleet server's disk on the Fleet page: in its line while there is room,
+// a chip once it fills (amber from 80 %, red from 90 %).
+test("the fleet page shows each server's disk, and warns when it fills", async () => {
+  seedStore('admin')
+  store.live.nodeStates[1].system = { ...store.live.nodeStates[1].system, disk: { total: 100e9, free: 40e9 } }
+  const roomy = await expectCleanRender(FleetView)
+  expect(roomy.problems.join(' | ')).toBe('')
+  expect(roomy.html).toContain('disk 60%')
+  expect(roomy.html).not.toMatch(/chip[^"]*red[^>]*>disk/)
+
+  store.live.nodeStates[1].system.disk = { total: 100e9, free: 7e9 }
+  const full = await expectCleanRender(FleetView)
+  expect(full.problems.join(' | ')).toBe('')
+  expect(full.html).toMatch(/class="chip red"[^>]*>disk 93%/)
 })

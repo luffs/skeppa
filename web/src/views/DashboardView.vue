@@ -25,6 +25,14 @@
         </div>
       </div>
       <div class="row">
+        <!-- Everything with commits not yet deployed, on every server, in one go. -->
+        <button
+          v-if="ahead.length"
+          class="secondary"
+          :disabled="deployingAhead"
+          :title="ahead.map(a => (a.server ? `${a.server}: ` : '') + a.info.name).join(', ')"
+          @click="deployAhead"
+        >{{ deployingAhead ? 'Setting sail…' : `Deploy ${ahead.length} with new commits` }}</button>
         <button v-if="projects.length" class="secondary" @click="startPier">+ New pier</button>
         <router-link to="/projects/new"><button>+ Moor a project</button></router-link>
       </div>
@@ -89,15 +97,24 @@
           No vessel matches<template v-if="query"> “{{ query }}”</template><template v-if="stateFilter"> among those that {{ STATE_FILTERS[stateFilter].that }}</template><template v-if="view === 'map'"> — the rest of the harbor is dimmed</template>.
           <button type="button" class="link-button" @click="clearFilters">Clear</button>
         </p>
-        <!-- With a fleet, this panel's own vessels are headed as such; the map
-             draws this panel's harbor only, and says so. -->
-        <div v-if="servers.length && view === 'list' && fleets.some(f => f.projects.length || f.piers.length)" class="fleet-head server-head">
+        <!-- With a fleet, this panel's own vessels are headed as such — in the
+             list, and over this panel's own map. -->
+        <div
+          v-if="view === 'list' ? servers.length && fleets.some(f => f.projects.length || f.piers.length) : mapServers.length && projects.length"
+          class="fleet-head server-head"
+        >
           <span class="section-label">This server</span>
         </div>
-        <p v-if="servers.length && view === 'map'" class="hint" style="margin: 0 0 8px">
-          The map shows this server's harbor; the fleet's {{ servers.length === 1 ? 'server is' : `${servers.length} servers are` }} in the list.
-        </p>
-        <HarborMap v-if="view === 'map'" :fleets="allFleets" :matches="matchIds" :state-filter="stateFilter" :counts="counts" @toggle-state="toggleState" />
+        <HarborMap
+          v-if="view === 'map'"
+          v-show="projects.length || !mapServers.length"
+          :fleets="allFleets"
+          :matches="matchIds"
+          :state-filter="stateFilter"
+          :counts="counts"
+          :legend="!mapServers.length"
+          @toggle-state="toggleState"
+        />
         <template v-for="f in fleets" v-else :key="f.key">
           <!-- One fleet is the whole harbor: headings only once there is more than one. -->
           <div v-if="fleets.length > 1" class="fleet-head">
@@ -157,6 +174,28 @@
             <div v-if="s.loose.length" class="vessel-rows">
               <ProjectRow v-for="p in s.loose" :key="p.id" :project="p" :ship="s.ship" />
             </div>
+          </section>
+        </template>
+        <!-- On the map, a harbor per fleet server under its name, the whole of
+             it, dimmed where the search and filter do not reach; the last one
+             carries the legend, whose counts are the whole fleet's. -->
+        <template v-else>
+          <section v-for="(s, i) in mapServers" :key="'map-' + s.key" class="server-section">
+            <div class="fleet-head server-head">
+              <router-link to="/fleet" class="section-label server-name">{{ s.label }}</router-link>
+              <span class="chip" :class="s.online ? 'green' : 'red'">{{ s.online ? 'online' : 'offline' }}</span>
+              <span class="spacer"></span>
+              <span class="fleet-detail">{{ s.count }} vessel{{ s.count === 1 ? '' : 's' }}</span>
+            </div>
+            <HarborMap
+              :fleets="s.fleets"
+              :matches="s.matches"
+              :state-filter="stateFilter"
+              :counts="counts"
+              :ship="s.ship"
+              :legend="i === mapServers.length - 1"
+              @toggle-state="toggleState"
+            />
           </section>
         </template>
       </div>
@@ -274,7 +313,9 @@ import { store, liveProject } from '../store.js'
 import { STATE_FILTERS, filterWords, matchesSearch, matchesState, stateCounts } from '../lib/harborFilter.js'
 import { api } from '../api.js'
 import { logEntries, byDay } from '../lib/shiplog.js'
-import { nodeShip } from '../lib/ship.js'
+import { nodeShip, localShip } from '../lib/ship.js'
+import { vesselState } from '../lib/vessels.js'
+import { confirmDialog, alertDialog } from '../lib/dialog.js'
 
 // The log opens on the latest few; Show more reveals what LiveState already
 // holds, a step at a time.
@@ -337,6 +378,7 @@ export default {
       pierBusy: false,
       pierError: '',
       collapsed: loadCollapsed(),
+      deployingAhead: false,
       feedShown: FEED_FIRST,
       // Whether the window is wide enough for the log as a table (WIDE_LOG).
       wide: true,
@@ -405,6 +447,48 @@ export default {
           piers: this.filtering ? piers.filter(x => x.projects.length) : piers, loose,
         }
       }).filter(s => !this.filtering || s.shown)
+    },
+    // The map's: each fleet server with vessels, as one fleet of its own
+    // (HarborMap's shape), unfiltered — the map dims instead — with the ids
+    // the filter lets through, or null when nothing filters.
+    mapServers() {
+      const words = filterWords(this.query)
+      return this.nodeShips.map(({ n, ship }) => {
+        const all = this.projectsOn(ship)
+        const piers = Object.values(ship.live.groups ?? {})
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .map(pier => ({ pier, projects: [] }))
+        const byId = new Map(piers.map(x => [x.pier.id, x]))
+        const loose = []
+        for (const p of all) (byId.get(p.group_id)?.projects ?? loose).push(p)
+        const matches = this.filtering
+          ? new Set(all.filter(p =>
+            matchesState(ship.live.projects[p.id], this.stateFilter) &&
+            matchesSearch(p, words, { pierName: ship.live.groups?.[p.group_id]?.name ?? '', ownerName: n.name })).map(p => p.id))
+          : null
+        return {
+          key: `n${n.id}`, label: n.name, online: n.online, ship, count: all.length, matches,
+          fleets: [{ key: `n${n.id}`, label: n.name, detail: '', mine: false, projects: all, piers, loose }],
+        }
+      }).filter(s => s.count)
+    },
+    // The vessels with new commits, here and on every fleet server that is
+    // online — not the panels themselves (a self-deploy restarts the panel;
+    // that is the Fleet page's Update, and a pier's deploy leaves it out too).
+    ahead() {
+      const out = []
+      const take = (ship, server, infos) => {
+        const self = ship.live.system?.selfPm2Name
+        for (const info of infos) {
+          const live = ship.live.projects?.[info.id]
+          if (vesselState(live) !== 'ahead') continue
+          if (self && info.runtime === 'pm2' && info.pm2_name === self) continue
+          out.push({ ship, server, info })
+        }
+      }
+      take(localShip, '', this.projects)
+      for (const { n, ship } of this.nodeShips) if (n.online) take(ship, n.name, this.projectsOn(ship))
+      return out
     },
     // Vessels across every server, and how many the filter lets through.
     harborCount() {
@@ -606,6 +690,25 @@ export default {
     // A pier made here is the signed-in user's own; an admin sorts someone
     // else's projects from that project's Rigging, which makes the pier in
     // the owner's fleet.
+    // Deploy everything `ahead` lists, each on its own server, after saying
+    // what; what failed is said once, together.
+    async deployAhead() {
+      const list = this.ahead
+      const names = list.map(a => (a.server ? `${a.info.name} on ${a.server}` : a.info.name))
+      const shown = names.length > 8 ? `${names.slice(0, 8).join(', ')} and ${names.length - 8} more` : names.join(', ')
+      if (!(await confirmDialog(`Deploy the newest commit of ${list.length === 1 ? shown : `${list.length} vessels: ${shown}`}?`, { confirmLabel: 'Set sail' }))) return
+      this.deployingAhead = true
+      const failed = []
+      await Promise.all(list.map(async a => {
+        try {
+          await a.ship.api.post(`/api/projects/${a.info.id}/deploy`)
+        } catch (err) {
+          failed.push(`${a.server ? `${a.info.name} on ${a.server}` : a.info.name}: ${err.message}`)
+        }
+      }))
+      this.deployingAhead = false
+      if (failed.length) alertDialog(`${failed.length} could not set sail — ${failed.join('; ')}`)
+    },
     async createPier() {
       if (!this.pierName.trim() || this.pierBusy) return
       this.pierBusy = true

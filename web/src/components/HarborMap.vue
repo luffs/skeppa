@@ -110,7 +110,7 @@
           <a
             v-for="(s, i) in f.ships"
             :key="s.id"
-            :href="`/projects/${s.id}`"
+            :href="ship.link(s.id)"
             :tabindex="s.id === tabStop ? 0 : -1"
             :data-ship="s.id"
             class="hm-ship"
@@ -286,7 +286,7 @@
         @focusout="hideSoon"
         @keydown="onCardKey"
       >
-        <div class="vessel-rows"><ProjectRow :project="card.project" /></div>
+        <div class="vessel-rows"><ProjectRow :project="card.project" :ship="ship" /></div>
         <!-- the ship's instruments: what its drawing stands for, that the row does not say -->
         <div v-if="cardGauges.length" class="hm-gauges" aria-hidden="true">
           <div v-for="g in cardGauges" :key="g.key" class="hm-gauge" :class="[`g-${g.key}`, g.tone && `tone-${g.tone}`]">
@@ -300,7 +300,7 @@
 
     <!-- What the map's colours and ships mean. The colours are the state
          filter too: a click shows just those vessels, a second one all again. -->
-    <div class="hm-legend">
+    <div v-if="legend" class="hm-legend">
       <div class="hm-keys" role="group" aria-label="Show only the vessels that">
         <button
           v-for="k in stateKeys"
@@ -330,7 +330,8 @@
 <script>
 import ProjectRow from './ProjectRow.vue'
 import HarborShip from './HarborShip.vue'
-import { store, liveProject } from '../store.js'
+import { store } from '../store.js'
+import { localShip } from '../lib/ship.js'
 import { vesselState, statusWord, voyage, usualVoyage } from '../lib/vessels.js'
 import { STATE_FILTERS, LEGEND_FILTERS } from '../lib/harborFilter.js'
 import { bytes } from '../lib/format.js'
@@ -452,6 +453,11 @@ export default {
     // filter would show (lib/harborFilter.js stateCounts).
     stateFilter: { type: String, default: '' },
     counts: { type: Object, default: () => ({}) },
+    // The server this harbor is (lib/ship.js): this panel, or a fleet
+    // server's, one map each — its ships' state, links and moves are there.
+    ship: { type: Object, default: () => localShip },
+    // Whether this map carries the legend (the last of several does).
+    legend: { type: Boolean, default: true },
   },
   emits: ['toggle-state'],
   data() {
@@ -743,7 +749,7 @@ export default {
       if (w) this.width = w
     },
     live(s) {
-      return liveProject(s.id)
+      return this.ship.live.projects?.[s.id] ?? null
     },
     stateOf(s) {
       return vesselState(this.live(s))
@@ -875,7 +881,7 @@ export default {
       return Math.max(58, Math.round(this.pierLabel(j).length * 7.6 + 24))
     },
     openProject(s) {
-      this.$router.push(`/projects/${s.id}`)
+      this.$router.push(this.ship.link(s.id))
     },
     // A click opens the project — except the one that ends a drag, and a
     // finger's first tap, which brings up the card instead.
@@ -1028,7 +1034,7 @@ export default {
     // attention or are under way.
     summaryOf(f) {
       const fleet = this.fleets.find(x => x.key === f.key)
-      const states = (fleet ? this.projectsOf(fleet) : []).map(p => vesselState(liveProject(p.id)))
+      const states = (fleet ? this.projectsOf(fleet) : []).map(p => vesselState(this.ship.live.projects?.[p.id] ?? null))
       const n = states.length
       const attention = states.filter(st => ATTENTION.has(st)).length
       const underway = states.filter(st => st === 'underway').length
@@ -1141,7 +1147,7 @@ export default {
     async moveTo(ship, pierId) {
       this.moving = ship.id
       try {
-        await performAction(ship.project, `pier:${pierId ?? ''}`)
+        await performAction(ship.project, `pier:${pierId ?? ''}`, this.ship)
       } finally {
         this.moving = null
       }

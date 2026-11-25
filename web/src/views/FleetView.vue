@@ -79,6 +79,8 @@
         <h2 v-else class="fleet-node-name">{{ n.name }}</h2>
         <span class="chip" :class="stateChip(n).color">{{ stateChip(n).text }}</span>
         <span v-if="versionChip(n)" class="chip" :class="versionChip(n).color" :title="versionChip(n).title">{{ versionChip(n).text }}</span>
+        <!-- A disk nearly full is the thing that most often stops a deploy server (lib/diskwatch.js on the server warns at 90 %). -->
+        <span v-if="diskOf(n) && diskOf(n).percent >= 80" class="chip" :class="diskOf(n).percent >= 90 ? 'red' : 'amber'" :title="diskOf(n).title">disk {{ diskOf(n).percent }}%</span>
         <span class="spacer"></span>
         <span class="fleet-meta">{{ meta(n) }}</span>
         <button
@@ -310,6 +312,8 @@ export default {
       if (!n.online && n.lastSeenAt) parts.push(`seen ${timeAgo(n.lastSeenAt)}`)
       if (n.online && Array.isArray(sys.loadavg)) parts.push(`load ${sys.loadavg[0]}${sys.cpuCount ? ` / ${sys.cpuCount} cores` : ''}`)
       if (n.online && sys.memory?.total) parts.push(`${bytes(sys.memory.total - sys.memory.free)} of ${bytes(sys.memory.total)}`)
+      const disk = this.diskOf(n)
+      if (disk && disk.percent < 80) parts.push(`disk ${disk.percent}%`)
       const domain = this.stateOf(n)?.proxy?.baseDomain
       if (domain) parts.push(domain)
       return parts.join(' · ')
@@ -349,6 +353,14 @@ export default {
     shipOf(n) {
       if (!SHIPS.has(n.id)) SHIPS.set(n.id, nodeShip(n.id))
       return SHIPS.get(n.id)
+    },
+    // Its disk as it last reported (the poller's system.disk): how full, and
+    // what that is in bytes; null when it has not said.
+    diskOf(n) {
+      const d = this.stateOf(n)?.system?.disk
+      if (!Number.isFinite(d?.total) || !Number.isFinite(d?.free) || d.total <= 0) return null
+      const percent = Math.round(((d.total - d.free) / d.total) * 100)
+      return { percent, title: `${bytes(d.free)} free of ${bytes(d.total)}` }
     },
     // A server's own panel project: the pm2 project named as its panel
     // (system.selfPm2Name). A server installed without one has none, and is

@@ -411,6 +411,19 @@
         receives plain text; Discord and Slack webhook URLs are recognized and
         get their JSON shape.
       </p>
+      <!-- One webhook for the whole fleet (server nodes/answers.js notify). -->
+      <p v-if="ship.node" class="hint" style="font-size: 13.5px">
+        <template v-if="status?.has_notify_url">This server sends its notifications to the webhook set here.</template>
+        <template v-else>
+          With no webhook here, {{ ship.name }}'s notifications go out through this panel's own, named
+          <span class="mono">{{ ship.name }}:</span>, by the events ticked on this panel's Rigging — the ticks below
+          only matter once it has a webhook of its own.
+        </template>
+      </p>
+      <p v-else-if="fleetNames.length" class="hint" style="font-size: 13.5px">
+        Servers of the fleet without a webhook of their own ({{ fleetNames.join(', ') }}) send theirs through this one,
+        named, by the events ticked here.
+      </p>
 
       <label>Webhook URL</label>
       <input
@@ -490,6 +503,7 @@ const NOTIFY_EVENT_LIST = [
   { key: 'deploy_failed', label: 'Deploy failed', sample: '✖ Deploy of blog @ cafebab failed (exit 1)' },
   { key: 'restart_burst', label: 'Restart burst', sample: '⚠ blog restarted 3 times in the last 10 minutes' },
   { key: 'node_offline', label: 'Fleet server offline', sample: '⚠ jobb-ci has not reported for 5 minutes' },
+  { key: 'disk_full', label: 'Disk nearly full', sample: '⚠ Disk 92% full — 8.1 GB free of 100.0 GB' },
 ]
 // A fresh, editable copy of the server's per-event flags (all off until loaded).
 const notifyEventsFrom = events => Object.fromEntries(NOTIFY_EVENT_LIST.map(({ key }) => [key, {
@@ -547,6 +561,10 @@ export default {
   computed: {
     me() {
       return store.user
+    },
+    // The fleet's paired servers, by name, for the notifications hint.
+    fleetNames() {
+      return Object.values(store.live.nodes ?? {}).filter(n => n.paired).map(n => n.name).sort((a, b) => a.localeCompare(b))
     },
     webhookUrl() {
       return `${location.origin}/api/webhooks/github`
