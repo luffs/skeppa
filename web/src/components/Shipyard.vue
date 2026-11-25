@@ -41,6 +41,10 @@
             <button class="secondary" :disabled="building === img.id" @click="build(img)">
               {{ building === img.id ? 'Building…' : 'Build' }}
             </button>
+            <!-- The same definition onto other servers of the fleet (copyTo). -->
+            <button v-if="copyTargets.length" class="secondary" @click="toggleCopy(img)">
+              {{ copying === img.id ? 'Close' : 'Copy to…' }}
+            </button>
             <button
               class="danger"
               :disabled="img.used_by.length > 0"
@@ -62,6 +66,26 @@
             <label style="margin-top: 14px">Build log</label>
             <div class="logview" style="max-height: 260px">{{ buildLogs[img.id] }}</div>
           </template>
+        </div>
+        <div v-if="copying === img.id" class="copy-panel">
+          <p class="hint" style="margin: 0 0 8px">
+            Copies the saved Containerfile of <span class="mono">{{ img.name }}</span>. Where an image of that name
+            exists its Containerfile is replaced; each server builds its own.
+          </p>
+          <label v-for="t in copyTargets" :key="t.key" class="check-label" style="margin-top: 4px">
+            <input v-model="copyPicked" type="checkbox" :value="t.key" :disabled="!t.online" />
+            {{ t.label }}<span v-if="!t.online" class="hint"> — offline</span>
+            <span v-if="copyResults[t.key]" class="copy-result" :class="copyResults[t.key].tone">{{ copyResults[t.key].text }}</span>
+          </label>
+          <label class="check-label" style="margin-top: 10px">
+            <input v-model="copyBuild" type="checkbox" />
+            Build it there afterwards
+          </label>
+          <div class="row" style="margin-top: 10px">
+            <button :disabled="copyBusy || !copyPicked.length" @click="copyTo(img)">
+              {{ copyBusy ? 'Copying…' : `Copy to ${copyPicked.length || ''} server${copyPicked.length === 1 ? '' : 's'}`.replace('  ', ' ') }}
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -167,11 +191,31 @@
 import StatusBadge from './StatusBadge.vue'
 import ImageUsers from './ImageUsers.vue'
 import UsedBySummary from './UsedBySummary.vue'
-import { api } from '../api.js'
+import { shipInject, localShip, nodeShip } from '../lib/ship.js'
 import { confirmDialog } from '../lib/dialog.js'
 import { store } from '../store.js'
 import { managedWithStore, suggestedImages, imageUserCounts } from '../lib/images.js'
 import { bytes, timeAgo } from '../lib/format.js'
+
+// POST …/build on a ship (lib/ship.js — this panel, or a fleet server through
+// the relay), its log handed to `onText` as it streams in. Through the relay
+// it arrives whole when the build is done, and a build longer than the
+// relay's wait goes on over there while this says so.
+async function runBuild(ship, imageId, onText) {
+  const res = await fetch(ship.url(`/api/images/${imageId}/build`), { method: 'POST', credentials: 'include' })
+  if (res.status === 504) throw new Error('still building over there — the status shows here when it is done')
+  if (!res.ok || !res.body) {
+    const data = await res.json().catch(() => null)
+    throw new Error(data?.error || `${res.status} ${res.statusText}`)
+  }
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    onText(decoder.decode(value, { stream: true }))
+  }
+}
 
 const TEMPLATE = `FROM docker.io/oven/bun:1
 # RUN apt-get update && apt-get install -y ...
@@ -179,6 +223,7 @@ const TEMPLATE = `FROM docker.io/oven/bun:1
 
 export default {
   name: 'Shipyard',
+  inject: shipInject, // which server (lib/ship.js)
   components: { StatusBadge, ImageUsers, UsedBySummary },
   data() {
     return {
@@ -197,6 +242,11 @@ export default {
       pulling: null,
       removing: null,
       storeNote: '',
+      copying: null, // the image whose Copy to… is open
+      copyPicked: [], // target keys
+      copyBuild: false,
+      copyBusy: false,
+      copyResults: {}, // target key -> { text, tone }
     }
   },
   computed: {
@@ -205,7 +255,7 @@ export default {
     // an image, whoever made the change. The server republishes this section
     // after every mutation below, so none of them refetch anything.
     images() {
-      return store.ready ? (store.live.images ?? null) : null
+      return store.ready ? (this.ship.live.images ?? null) : null
     },
     // LiveState keeps the definitions and the engine's store apart; the join is
     // shared with the image picker in the project forms.
@@ -220,6 +270,18 @@ export default {
     suggestions() {
       return suggestedImages(this.images, this.localImages.flatMap(img => img.tags))
     },
+    // Where a definition can be copied: this panel and every server of the
+    // fleet, but not the one this Shipyard is about. Admins only have a fleet.
+    copyTargets() {
+      if (store.user?.role !== 'admin') return []
+      const targets = []
+      if (this.ship.node) targets.push({ key: 'local', label: 'this panel', online: true, ship: localShip })
+      for (const n of Object.values(store.live.nodes ?? {})) {
+        if (n.id === this.ship.node || !n.paired) continue
+        targets.push({ key: `n${n.id}`, label: n.name, online: n.online, ship: nodeShip(n.id) })
+      }
+      return targets.sort((a, b) => (a.key === 'local' ? -1 : b.key === 'local' ? 1 : a.label.localeCompare(b.label)))
+    },
     localSummary() {
       const list = this.localImages
       if (!list.length) return ''
@@ -231,7 +293,7 @@ export default {
     bytes,
     timeAgo,
     counts(refs, slugs) {
-      return imageUserCounts(store.live, refs, slugs)
+      return imageUserCounts(this.ship.live, refs, slugs)
     },
     // One list open at a time: two of them push the rows around more than
     // either is worth.
@@ -259,7 +321,7 @@ export default {
       this.saving = img.id
       this.savedId = null
       try {
-        await api.patch(`/api/images/${img.id}`, { containerfile: this.drafts[img.id] })
+        await this.ship.api.patch(`/api/images/${img.id}`, { containerfile: this.drafts[img.id] })
         this.savedId = img.id
       } catch (err) {
         this.error = `Save failed: ${err.message}`
@@ -268,33 +330,64 @@ export default {
       }
     },
     // The build endpoint streams plain text — read it chunk by chunk into the
-    // log box so long builds show progress.
+    // log box so long builds show progress (on a fleet server the relay hands
+    // the log over when the build is done).
     async build(img) {
       if (this.opened !== img.id) this.toggle(img)
       this.building = img.id
       this.buildLogs[img.id] = ''
       try {
-        const res = await fetch(`/api/images/${img.id}/build`, { method: 'POST', credentials: 'include' })
-        if (!res.ok || !res.body) {
-          const data = await res.json().catch(() => null)
-          throw new Error(data?.error || `${res.status} ${res.statusText}`)
-        }
-        const reader = res.body.getReader()
-        const decoder = new TextDecoder()
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
-          this.buildLogs[img.id] += decoder.decode(value, { stream: true })
-        }
+        await runBuild(this.ship, img.id, text => { this.buildLogs[img.id] += text })
       } catch (err) {
         this.buildLogs[img.id] += `\n✖ ${err.message}`
       } finally {
         this.building = null
       }
     },
+    toggleCopy(img) {
+      this.copying = this.copying === img.id ? null : img.id
+      this.copyPicked = []
+      this.copyResults = {}
+    },
+    // The saved Containerfile onto each picked server: created where it has no
+    // image of that name, replaced where it does, left alone where it already
+    // says the same — then built there, if asked. One server failing does not
+    // stop the others; each says how it went.
+    async copyTo(img) {
+      this.copyBusy = true
+      const picked = this.copyTargets.filter(t => this.copyPicked.includes(t.key))
+      const say = (t, text, tone = '') => { this.copyResults = { ...this.copyResults, [t.key]: { text, tone } } }
+      await Promise.all(picked.map(async t => {
+        say(t, 'copying…')
+        try {
+          const there = (t.ship.live.images?.managed ?? []).find(i => i.name === img.name)
+          let id = there?.id
+          let what
+          if (!there) {
+            id = (await t.ship.api.post('/api/images', { name: img.name, containerfile: img.containerfile })).id
+            what = 'created'
+          } else if (there.containerfile !== img.containerfile) {
+            await t.ship.api.patch(`/api/images/${there.id}`, { containerfile: img.containerfile })
+            what = 'updated'
+          } else {
+            what = 'already the same'
+          }
+          if (!this.copyBuild) return say(t, `${what} ✔${what === 'updated' ? ' — build it there to use it' : ''}`, 'ok')
+          say(t, `${what} — building…`)
+          let log = ''
+          await runBuild(t.ship, id, text => { log += text })
+          const ok = log.includes('✔ build finished')
+          say(t, ok ? `${what}, built ✔` : `${what}, build failed — the log is in its Shipyard`, ok ? 'ok' : 'bad')
+        } catch (err) {
+          const fields = err.fields ? ` — ${Object.values(err.fields).join(', ')}` : ''
+          say(t, `✖ ${err.message}${fields}`, 'bad')
+        }
+      }))
+      this.copyBusy = false
+    },
     async create() {
       try {
-        const created = await api.post('/api/images', { name: this.newName, containerfile: TEMPLATE })
+        const created = await this.ship.api.post('/api/images', { name: this.newName, containerfile: TEMPLATE })
         this.newName = ''
         this.toggle({ id: created.id, containerfile: created.containerfile })
       } catch (err) {
@@ -305,7 +398,7 @@ export default {
     async remove(img) {
       if (!(await confirmDialog(`Remove image "${img.name}" (definition and built image)?`, { confirmLabel: 'Remove', danger: true }))) return
       try {
-        await api.del(`/api/images/${img.id}`)
+        await this.ship.api.del(`/api/images/${img.id}`)
       } catch (err) {
         this.error = `Remove failed: ${err.message}`
       }
@@ -320,7 +413,7 @@ export default {
       this.error = ''
       this.storeNote = ''
       try {
-        await api.post('/api/images/pull', { ref })
+        await this.ship.api.post('/api/images/pull', { ref })
         this.newRef = ''
         this.storeNote = `Pulled ${ref}.`
       } catch (err) {
@@ -335,7 +428,7 @@ export default {
       this.pulling = img.id
       this.storeNote = ''
       try {
-        for (const ref of img.tags) await api.post('/api/images/pull', { ref })
+        for (const ref of img.tags) await this.ship.api.post('/api/images/pull', { ref })
         this.storeNote = `Pulled ${img.tags.join(', ')} — restart or deploy the apps using it to pick the new version up.`
       } catch (err) {
         this.error = `Pull failed: ${err.message}`
@@ -349,7 +442,7 @@ export default {
       this.removing = img.id
       this.storeNote = ''
       try {
-        for (const ref of img.tags) await api.post('/api/images/remove', { ref })
+        for (const ref of img.tags) await this.ship.api.post('/api/images/remove', { ref })
         this.storeNote = `Removed ${img.tags.join(', ')}.`
       } catch (err) {
         this.error = `Remove failed: ${err.message}`
@@ -361,7 +454,7 @@ export default {
       this.pruning = true
       this.storeNote = ''
       try {
-        const result = await api.post('/api/images/prune')
+        const result = await this.ship.api.post('/api/images/prune')
         this.storeNote = `Removed ${result.deleted} dangling layer(s), reclaimed ${bytes(result.reclaimed)}.`
       } catch (err) {
         this.error = `Prune failed: ${err.message}`
@@ -386,6 +479,19 @@ export default {
   padding-top: 10px;
   border-top: 1px solid var(--line-soft);
 }
+
+/* Copy to…: the servers to copy a definition onto, each with how it went. */
+.copy-panel {
+  padding: 10px 14px 14px;
+  border-top: 1px solid var(--line-soft);
+}
+.copy-result {
+  margin-left: 10px;
+  font-size: 12.5px;
+  color: var(--dim);
+}
+.copy-result.ok { color: var(--green, #3fb950); }
+.copy-result.bad { color: var(--red, #f85149); }
 
 /* A dim second line inside the image cell: facts about the image itself,
    subordinate to the reference above them. */

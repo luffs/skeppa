@@ -33,7 +33,8 @@
       <span v-if="status.chip" class="chip" :class="status.chip.tone">{{ status.chip.text }}</span>
       <span class="mono" style="font-size: 12.5px">{{ resolved }}</span>
       <span>{{ status.text }}</span>
-      <router-link v-if="status.shipyard" to="/shipyard">Shipyard ↗</router-link>
+      <!-- The Shipyard and the pull of the server this form is about (lib/ship.js). -->
+      <router-link v-if="status.shipyard" :to="ship.page('shipyard')">Shipyard ↗</router-link>
       <button
         v-if="status.canPull"
         class="secondary small"
@@ -47,7 +48,7 @@
 </template>
 
 <script>
-import { api } from '../api.js'
+import { shipInject } from '../lib/ship.js'
 import { liveImages, managedWithStore, registryImages, suggestedImages, isManagedRef } from '../lib/images.js'
 import { bytes, timeAgo } from '../lib/format.js'
 
@@ -66,6 +67,7 @@ const CUSTOM = ' custom'
 // saying "not built" then would be a lie about every image.
 export default {
   name: 'ImagePicker',
+  inject: shipInject, // which server (lib/ship.js)
   props: {
     modelValue: { type: String, default: '' },
     // What an empty value resolves to. Empty means the panel default, which is
@@ -80,7 +82,7 @@ export default {
   },
   computed: {
     images() {
-      return liveImages()
+      return liveImages(this.ship)
     },
     shipyard() {
       return managedWithStore(this.images)
@@ -204,7 +206,7 @@ export default {
       this.pulling = true
       this.pullError = ''
       try {
-        await api.post('/api/images/pull', { ref: this.resolved })
+        await this.ship.api.post('/api/images/pull', { ref: this.resolved })
       } catch (err) {
         this.pullError = `Pull failed: ${err.message}`
       } finally {

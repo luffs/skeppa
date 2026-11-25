@@ -89,3 +89,22 @@ test('branch deletion pushes are ignored', async () => {
   expect(db.query('SELECT head_sha FROM projects WHERE id = 1').get().head_sha).toBeNull()
   expect(enqueued).toEqual([])
 })
+
+// The Fleet: a verified push goes on to the agents that run the repo
+// (nodes/links.js forwardPush), as a slice — never the whole payload.
+test('a verified push is handed on to the fleet, sliced; a bad signature is not', async () => {
+  const { db, liveState } = setup()
+  const forwarded = []
+  const runner = { enqueue: () => {} }
+  const app = webhookRoutes({ db, config: { masterKey: MASTER_KEY }, runner, liveState, onPush: slice => (forwarded.push(slice), 2) })
+  const res = await push(app, { ...PAYLOAD, repository: { full_name: 'ops/web' }, sender: { login: 'x' } })
+  expect(await res.json()).toEqual({ matched: 0, queued: 0, forwarded: 2 })
+  expect(forwarded).toEqual([{
+    repository: { full_name: 'ops/web' }, ref: 'refs/heads/main', after: PAYLOAD.after, deleted: false,
+    head_commit: { message: 'fix: the bug', timestamp: PAYLOAD.head_commit.timestamp },
+  }])
+  const raw = JSON.stringify(PAYLOAD)
+  const forged = await app.request('/github', { method: 'POST', body: raw, headers: { 'x-hub-signature-256': 'sha256=' + '0'.repeat(64), 'x-github-event': 'push' } })
+  expect(forged.status).toBe(401)
+  expect(forwarded).toHaveLength(1)
+})

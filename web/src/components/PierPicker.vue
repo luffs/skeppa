@@ -26,14 +26,14 @@
 </template>
 
 <script>
-import { store } from '../store.js'
-import { api } from '../api.js'
+import { shipInject } from '../lib/ship.js'
 
 // Which pier (project group) a project is listed at. Only the owner's piers
 // are offered — the server refuses any other — and "New pier…" makes one in
 // the owner's fleet on the spot. v-model is the pier id, '' for none.
 export default {
   name: 'PierPicker',
+  inject: shipInject, // which server (lib/ship.js)
   props: {
     modelValue: { type: [Number, String], default: '' },
     ownerId: { type: Number, default: null },
@@ -45,7 +45,7 @@ export default {
   computed: {
     // The one just made is offered until the live store brings it in.
     piers() {
-      const all = { ...(store.live.groups ?? {}) }
+      const all = { ...(this.ship.live.groups ?? {}) }
       if (this.made && !all[this.made.id]) all[this.made.id] = this.made
       return Object.values(all)
         .filter(g => g.owner_id === this.ownerId)
@@ -77,7 +77,7 @@ export default {
       this.busy = true
       this.error = ''
       try {
-        const pier = await api.post('/api/groups', { name: this.newName, owner_id: this.ownerId })
+        const pier = await this.ship.api.post('/api/groups', { name: this.newName, owner_id: this.ownerId })
         this.made = pier
         this.$emit('update:modelValue', pier.id)
         this.creating = false

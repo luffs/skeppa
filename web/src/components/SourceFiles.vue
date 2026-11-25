@@ -82,7 +82,7 @@
 </template>
 
 <script>
-import { api } from '../api.js'
+import { shipInject } from '../lib/ship.js'
 import { bytes } from '../lib/format.js'
 import { renderMarkdown } from '../lib/markdown.js'
 import { highlight, languageFor } from '../lib/highlight.js'
@@ -98,6 +98,7 @@ const README = /^readme(\.(md|markdown|txt))?$/i
 // character they are given.
 export default {
   name: 'SourceFiles',
+  inject: shipInject, // which server (lib/ship.js)
   props: { projectId: { type: [Number, String], required: true } },
   data() {
     return { path: '', dir: null, file: null, readme: null, missing: false, showSource: false, busy: false, error: '' }
@@ -135,7 +136,7 @@ export default {
       this.busy = true
       this.error = ''
       try {
-        const found = await api.get(this.url(path))
+        const found = await this.ship.api.get(this.url(path))
         this.missing = found.type === 'missing'
         this.showSource = false
         this.readme = null
@@ -160,7 +161,7 @@ export default {
       const entry = dir.entries.find(e => e.type === 'file' && README.test(e.name))
       if (!entry) return
       try {
-        const found = await api.get(this.url(this.join(dir.path, entry.name)))
+        const found = await this.ship.api.get(this.url(this.join(dir.path, entry.name)))
         // still the folder on screen? (this.dir is a reactive proxy — compare by path)
         if (this.dir?.path === dir.path && !this.file && found.type === 'file' && !found.binary && !found.tooLarge) this.readme = found
       } catch {
@@ -178,7 +179,7 @@ export default {
     // every file as an attachment, whatever it is.
     download(path) {
       const link = document.createElement('a')
-      link.href = this.url(path, true)
+      link.href = this.ship.url(this.url(path, true))
       link.download = path.split('/').pop()
       document.body.appendChild(link)
       link.click()

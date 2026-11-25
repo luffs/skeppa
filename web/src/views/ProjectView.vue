@@ -1,11 +1,14 @@
 <template>
   <div class="container" v-if="project">
-    <router-link to="/" class="mono" style="font-size: 12px; color: var(--dim)">← back to harbor</router-link>
+    <router-link :to="ship.home" class="mono" style="font-size: 12px; color: var(--dim)">{{ ship.node ? '← back to the fleet' : '← back to harbor' }}</router-link>
+    <ShipOffline />
     <div class="project-head">
       <div class="project-title">
         <div class="project-title-line">
           <h1 style="margin: 0">{{ project.name }}</h1>
           <StatusBadge :status="statusWord" />
+          <!-- Another server's project, run from here through the fleet. -->
+          <span v-if="ship.node" class="chip blue" :title="`On ${ship.name} — run through the fleet`">on {{ ship.name }}</span>
           <!-- Where it is listed in the harbor; the pier is changed in Rigging, so that is where it leads. -->
           <button
             v-if="pierName"
@@ -37,7 +40,7 @@
              One button either way, labelled for both, so it never resizes. -->
         <button
           class="secondary"
-          :disabled="checking || (needsClone && !!live?.currentDeployment)"
+          :disabled="offline || checking || (needsClone && !!live?.currentDeployment)"
           :title="needsClone
             ? 'Fetch the code onto the server without deploying it — then read it under Freight'
             : 'Ask the remote for the latest commit on the branch'"
@@ -46,7 +49,7 @@
           <StableLabel :text="headLabel" :variants="headLabels" />
         </button>
         <!-- The same action the harbor row offers, and the rest in ⋮ (lib/vesselActions.js). -->
-        <button :disabled="busy || primary.disabled" @click="run(primary.key)">
+        <button :disabled="offline || busy || primary.disabled" @click="run(primary.key)">
           <StableLabel :text="primary.label" :variants="PRIMARY_LABELS" />
         </button>
         <ActionMenu label="Project actions" :items="menu" @select="run" />
@@ -112,7 +115,7 @@
                     v-if="canRedeploy(d)"
                     type="button"
                     class="small secondary"
-                    :disabled="busy || !!live?.currentDeployment"
+                    :disabled="offline || busy || !!live?.currentDeployment"
                     :title="`Deploy ${d.commit_sha.slice(0, 7)} again`"
                     @click.stop="redeploy(d)"
                   >Redeploy</button>
@@ -124,7 +127,7 @@
         </div>
       </div>
       <div style="margin-top: 20px" v-if="selectedId">
-        <DeployLog :deployment-id="selectedId" :active="selectedId === live?.currentDeployment?.id" />
+        <DeployLog :deployment-id="selectedId" :node="ship.node" :active="selectedId === live?.currentDeployment?.id" />
       </div>
     </div>
 
@@ -175,10 +178,10 @@
         </span>
         <span class="spacer"></span>
         <button type="button" class="small secondary" :disabled="!!saving" @click="discard">Discard</button>
-        <button type="button" class="small" :class="{ secondary: deployFields.length }" :disabled="!!saving" @click="save()">
+        <button type="button" class="small" :class="{ secondary: deployFields.length }" :disabled="offline || !!saving" @click="save()">
           <StableLabel :text="saving === 'save' ? 'Saving…' : 'Save'" :variants="['Saving…', 'Save']" />
         </button>
-        <button v-if="deployFields.length" type="button" class="small" :disabled="!!saving || !!live?.currentDeployment" @click="save({ deploy: true })">
+        <button v-if="deployFields.length" type="button" class="small" :disabled="offline || !!saving || !!live?.currentDeployment" @click="save({ deploy: true })">
           <StableLabel :text="saving === 'deploy' ? 'Setting sail…' : 'Save and deploy'" :variants="['Setting sail…', 'Save and deploy']" />
         </button>
       </div>
@@ -197,7 +200,7 @@
           </p>
           <div class="row inline-action">
             <input aria-label="New slug" v-model.trim="slugInput" class="code" :placeholder="project.slug" @keydown.enter="renameSlug" />
-            <button class="secondary" :disabled="slugBusy || !slugInput || slugInput === project.slug" @click="renameSlug">
+            <button class="secondary" :disabled="offline || slugBusy || !slugInput || slugInput === project.slug" @click="renameSlug">
               <StableLabel :text="slugBusy ? 'Changing…' : 'Change slug'" :variants="['Changing…', 'Change slug']" />
             </button>
           </div>
@@ -212,7 +215,7 @@
               Removes the project from the panel and its process or container from the server. The files under
               its apps directory are kept.
             </p>
-            <button class="danger" @click="remove">Scuttle project</button>
+            <button class="danger" :disabled="offline" @click="remove">Scuttle project</button>
           </div>
         </section>
       </CollapseSection>
@@ -231,9 +234,10 @@ import StableLabel from '../components/StableLabel.vue'
 import ActionMenu from '../components/ActionMenu.vue'
 import CollapseSection from '../components/CollapseSection.vue'
 import ProjectFields from '../components/ProjectFields.vue'
-import { api } from '../api.js'
+import ShipOffline from '../components/ShipOffline.vue'
 import { confirmDialog } from '../lib/dialog.js'
-import { store, liveProject, appUrlFor } from '../store.js'
+import { store, appUrlFor } from '../store.js'
+import { localShip, nodeShip } from '../lib/ship.js'
 import { statusWord, vesselState } from '../lib/vessels.js'
 import { primaryAction, actionMenu, performAction } from '../lib/vesselActions.js'
 import { timeAgo, duration, uptimeSince, bytes } from '../lib/format.js'
@@ -264,9 +268,17 @@ export default {
   name: 'ProjectView',
   components: {
     StatusBadge, DeployLog, CommitMessage, EnvEditor, Pm2Logs, SourceFiles,
-    StableLabel, ActionMenu, CollapseSection, ProjectFields,
+    StableLabel, ActionMenu, CollapseSection, ProjectFields, ShipOffline,
   },
-  props: { id: { type: String, required: true } },
+  props: {
+    id: { type: String, required: true },
+    // Another server's project (the Fleet): its id there. 0 = this panel.
+    node: { type: [String, Number], default: 0 },
+  },
+  // Which server this page is about, for everything under it (lib/ship.js).
+  provide() {
+    return { ship: this.ship }
+  },
   // Leaving the page (another route, or the browser) with unsaved Rigging asks first.
   async beforeRouteLeave() {
     if (this.dirtyFields.length) return confirmDialog(DISCARD, { confirmLabel: 'Leave', danger: true })
@@ -319,7 +331,7 @@ export default {
     },
     // The panel's own project (only an admin ever sees it).
     isPanel() {
-      const self = store.live.system?.selfPm2Name
+      const self = this.ship.live.system?.selfPm2Name
       return Boolean(self) && this.project?.pm2_name === self
     },
     // What the project is being served as right now: the runtime of its
@@ -335,8 +347,12 @@ export default {
       const p = this.project
       return p?.deployed_runtime && p.deployed_runtime !== p.runtime ? RUNTIME_LABEL[p.runtime] ?? p.runtime : ''
     },
+    // Fixed for the page's life: the router keys the page by server and id.
+    ship() {
+      return Number(this.node) ? nodeShip(this.node) : localShip
+    },
     live() {
-      return liveProject(Number(this.id))
+      return this.ship.live.projects?.[Number(this.id)] ?? null
     },
     // No checkout on the server yet (false, not merely unknown): offer Clone.
     needsClone() {
@@ -360,16 +376,22 @@ export default {
     // on its own page, setting sail is always the main verb.
     primary() {
       if (vesselState(this.live) === 'underway') return { key: 'deploy', label: 'Under way…', disabled: true }
-      return primaryAction(this.project, this.live) ?? { key: 'deploy', label: 'Set sail — deploy' }
+      return primaryAction(this.project, this.live, this.ship) ?? { key: 'deploy', label: 'Set sail — deploy' }
     },
     // Everything else, without repeating the button next to it.
     menu() {
-      return actionMenu(this.project, this.live, { exclude: this.primary.key })
+      const items = actionMenu(this.project, this.live, { exclude: this.primary.key, ship: this.ship })
+      return this.offline ? items.map(i => (i.key ? { ...i, disabled: true } : i)) : items
+    },
+    // A fleet server not reporting: its page shows what it last said, and
+    // what would ask it anything is off (ShipOffline says why).
+    offline() {
+      return !this.ship.online
     },
     // '' at no pier, or while the pier has not reached the store yet.
     pierName() {
       const id = this.project?.group_id
-      return id == null ? '' : store.live.groups?.[id]?.name ?? ''
+      return id == null ? '' : this.ship.live.groups?.[id]?.name ?? ''
     },
     // pm2 counts every restart, the container engine counts only the ones its
     // own on-failure policy performed — a crash counter. Restarting a
@@ -382,7 +404,7 @@ export default {
     // The saved routing (what is actually live); RoutingFields previews
     // whatever is currently typed in the form.
     appUrl() {
-      return appUrlFor(this.project)
+      return appUrlFor(this.project, this.ship.live.proxy?.baseDomain)
     },
     appHost() {
       return this.appUrl.replace(/^https?:\/\//, '')
@@ -429,6 +451,10 @@ export default {
     },
   },
   watch: {
+    // A fleet server back: the full history again.
+    'ship.online'(online) {
+      if (online) this.loadDeployments()
+    },
     // On a phone the tab line scrolls sideways: keep the open tab in sight.
     tab() {
       this.$nextTick(this.showActiveTab)
@@ -522,8 +548,19 @@ export default {
       const text = message ?? ''
       return text.length > 140 ? `${text.slice(0, 140).trimEnd()}…` : text
     },
+    // The full history from the API; with a fleet server away, the tail it
+    // last reported (LiveState's recentDeployments), so the page still has
+    // its voyages — without commit messages, which only the API carries.
     async loadDeployments() {
-      this.deployments = await api.get(`/api/projects/${this.id}/deployments`)
+      try {
+        this.deployments = await this.ship.api.get(`/api/projects/${this.id}/deployments`)
+      } catch (err) {
+        if (!this.ship.node) throw err
+        this.deployments = (this.live?.recentDeployments ?? []).map(d => ({
+          id: d.id, status: d.status, trigger: d.trigger, commit_sha: d.commitSha ?? null, commit_message: null,
+          started_at: d.startedAt ?? null, finished_at: d.finishedAt ?? null, created_at: d.createdAt ?? null,
+        }))
+      }
     },
     liveStatusFor(d) {
       if (d.id === this.currentDeploymentId) return this.live.currentDeployment.status
@@ -545,7 +582,7 @@ export default {
       if (!ok) return
       this.busy = true
       try {
-        const { id } = await api.post(`/api/projects/${this.id}/deploy`, { sha: d.commit_sha })
+        const { id } = await this.ship.api.post(`/api/projects/${this.id}/deploy`, { sha: d.commit_sha })
         this.selectedId = id
         await this.loadDeployments()
       } catch (err) {
@@ -559,7 +596,7 @@ export default {
       this.checkResult = ''
       this.checkError = ''
       try {
-        const head = await api.post(`/api/projects/${this.id}/refresh-head`)
+        const head = await this.ship.api.post(`/api/projects/${this.id}/refresh-head`)
         // If there are new commits, the badge appears via the LiveState diff;
         // only "nothing new" needs saying out loud.
         if (head.sha && head.sha === this.live?.deployedSha) {
@@ -579,7 +616,7 @@ export default {
       this.cloneResult = ''
       this.checkError = ''
       try {
-        const { sha, message } = await api.post(`/api/projects/${this.id}/clone`)
+        const { sha, message } = await this.ship.api.post(`/api/projects/${this.id}/clone`)
         this.cloneResult = `Cloned ${sha.slice(0, 7)} — ${message}. Nothing is deployed; the code is under Freight.`
       } catch (err) {
         this.checkError = `Clone failed: ${err.message}`
@@ -591,7 +628,7 @@ export default {
     async run(key) {
       this.busy = true
       try {
-        const result = await performAction(this.project, key)
+        const result = await performAction(this.project, key, this.ship)
         if (key === 'deploy' && result?.id) {
           this.selectedId = result.id
           await this.loadDeployments()
@@ -644,7 +681,7 @@ export default {
       this.fieldErrors = {}
       this.saved = false
       try {
-        const updated = await api.patch(`/api/projects/${this.id}`, {
+        const updated = await this.ship.api.patch(`/api/projects/${this.id}`, {
           ...this.edit,
           cwd: this.edit.cwd || null,
           build_image: this.edit.build_image || null,
@@ -665,7 +702,7 @@ export default {
         return
       }
       if (deploy) {
-        const result = await performAction(this.project, 'deploy')
+        const result = await performAction(this.project, 'deploy', this.ship)
         if (result?.id) {
           await this.setTab('deploys')
           this.selectedId = result.id
@@ -684,7 +721,7 @@ export default {
       this.slugError = ''
       this.slugNote = ''
       try {
-        const { warning } = await api.post(`/api/projects/${this.id}/slug`, { slug })
+        const { warning } = await this.ship.api.post(`/api/projects/${this.id}/slug`, { slug })
         this.slugInput = ''
         this.slugNote = warning ? `Moved to ${slug} — but ${warning}. Start it from the top of the page.` : `Moved to ${slug}.`
       } catch (err) {
@@ -696,8 +733,8 @@ export default {
     async remove() {
       if (!(await confirmDialog(`Delete project "${this.project.name}"? The pm2 process is removed; files on disk are kept.`, { confirmLabel: 'Delete', danger: true }))) return
       this.pristine = { ...this.edit } // nothing left to lose: no leave prompt
-      await api.del(`/api/projects/${this.id}`)
-      this.$router.push('/')
+      await this.ship.api.del(`/api/projects/${this.id}`)
+      this.$router.push(this.ship.home)
     },
   },
 }

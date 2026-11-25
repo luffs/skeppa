@@ -20,6 +20,10 @@ import { api } from './api.js'
 //
 // A running deployment's log is a store of its own, deploy-<id>, on the same
 // socket (subscribeLogs below).
+//
+// An admin also opens node-<id> for every server in `panel.nodes` (other
+// Skeppa panels reporting here); they surface as store.live.nodes and
+// store.live.nodeStates, never merged into `projects` — another database's ids.
 
 // The store shapes, declared exactly as the server declares them
 // (server/src/live/stores.js STORE_SHAPES, where a test pins them): a client
@@ -28,15 +32,19 @@ import { api } from './api.js'
 // records keyed by id; the rest are one record each, `lines` necessarily so —
 // its values are strings.
 export const SHAPES = {
-  panel: { initial: { system: {}, users: {}, images: {} }, singletons: ['system', 'images'] },
+  panel: { initial: { system: {}, users: {}, images: {}, nodes: {} }, singletons: ['system', 'images'] },
   harbor: { initial: { proxy: {} }, singletons: ['proxy'] },
   fleet: { initial: { projects: {}, groups: {} }, singletons: [] },
   deploy: { initial: { lines: {} }, singletons: ['lines'] },
+  // Another Skeppa server reporting to this one (the Fleet page): every
+  // project and pier there, its proxy, system record and images. Admins only.
+  node: { initial: { projects: {}, groups: {}, proxy: {}, system: {}, images: {} }, singletons: ['proxy', 'system', 'images'] },
 }
 
-const panel = reactive({ system: {}, users: {}, images: {} })
+const panel = reactive({ system: {}, users: {}, images: {}, nodes: {} })
 const harbor = reactive({ proxy: {} })
 const fleets = reactive({}) // owner id -> { projects, groups }
+const nodeMirrors = reactive({}) // node id -> { projects, groups, proxy, system }
 
 store.live = reactive({
   // The members are the mirrors' own reactive project objects, so a field
@@ -57,6 +65,10 @@ store.live = reactive({
   users: computed(() => panel.users),
   images: computed(() => panel.images),
   proxy: computed(() => harbor.proxy),
+  // The servers reporting here (panel.nodes), and what each one reports —
+  // kept apart from `projects`: their ids are another database's.
+  nodes: computed(() => panel.nodes),
+  nodeStates: computed(() => nodeMirrors),
 })
 
 let connection = null
@@ -117,25 +129,43 @@ function syncFleets(ids) {
   refreshReady()
 }
 
+// The same for nodes: a store per server the panel lists.
+function syncNodes(ids) {
+  const wanted = new Set(ids.map(String))
+  for (const id of Object.keys(nodeMirrors)) {
+    if (wanted.has(id)) continue
+    close(`node-${id}`)
+    delete nodeMirrors[id]
+  }
+  for (const id of wanted) {
+    if (nodeMirrors[id]) continue
+    nodeMirrors[id] = reactive({ projects: {}, groups: {}, proxy: {}, system: {}, images: {} })
+    open(`node-${id}`, SHAPES.node, nodeMirrors[id])
+  }
+  refreshReady()
+}
+
 // --- deploy logs -------------------------------------------------------------
 // deploy-<id> holds one leaf per line, keyed by a zero-padded sequence
 // number. Opening it delivers the backlog as the snapshot, lines then arrive
 // as patches, and the server evicts the store when the deploy finishes — the
 // component swaps to the stored log from the API at that point.
-const logClients = new Map() // deploymentId -> { db, listeners, seen, synced }
+const logClients = new Map() // store id -> { db, listeners, seen, synced }
 
 // Returns an unsubscribe function. Events: { type: 'backlog', log } once for
 // the lines present when the store opened, then { type: 'line', line } each.
-export function subscribeLogs(deploymentId, fn) {
-  let entry = logClients.get(deploymentId)
+// With `node`, the deployment is on that server: node-<id>-deploy-<id>.
+export function subscribeLogs(deploymentId, fn, { node = 0 } = {}) {
+  const storeId = node ? `node-${node}-deploy-${deploymentId}` : `deploy-${deploymentId}`
+  let entry = logClients.get(storeId)
   if (!entry) {
     if (!connection) {
-      console.warn(`live: not connected — no log stream for deployment ${deploymentId}`)
+      console.warn(`live: not connected — no log stream for ${storeId}`)
       return () => {}
     }
-    const db = createClient({ connection, store: `deploy-${deploymentId}`, ...SHAPES.deploy, mirror: true })
+    const db = createClient({ connection, store: storeId, ...SHAPES.deploy, mirror: true })
     entry = { db, listeners: new Set(), seen: new Set(), synced: false }
-    logClients.set(deploymentId, entry)
+    logClients.set(storeId, entry)
     const emit = event => {
       for (const listener of entry.listeners) listener(event)
     }
@@ -155,7 +185,7 @@ export function subscribeLogs(deploymentId, fn) {
     })
     db.on('closed', closed => {
       // 'evicted' is the deploy finishing; anything else is worth a look
-      if (closed?.code !== 'evicted') console.warn(`live: deploy-${deploymentId} closed — ${closed?.code}: ${closed?.message}`)
+      if (closed?.code !== 'evicted') console.warn(`live: ${storeId} closed — ${closed?.code}: ${closed?.message}`)
     })
     db.connect()
   }
@@ -163,7 +193,7 @@ export function subscribeLogs(deploymentId, fn) {
   return () => {
     entry.listeners.delete(fn)
     if (entry.listeners.size) return
-    logClients.delete(deploymentId)
+    logClients.delete(storeId)
     entry.db.disconnect()
   }
 }
@@ -182,7 +212,10 @@ export function connectLive() {
   })
   open('harbor', SHAPES.harbor, harbor)
   if (store.user.role === 'admin') {
-    open('panel', SHAPES.panel, panel, db => syncFleets(Object.keys(db.state.users ?? {})))
+    open('panel', SHAPES.panel, panel, db => {
+      syncFleets(Object.keys(db.state.users ?? {}))
+      syncNodes(Object.keys(db.state.nodes ?? {}))
+    })
   } else {
     syncFleets([store.user.id])
   }
@@ -199,6 +232,8 @@ export function disconnectLive() {
   panel.system = {}
   panel.users = {}
   panel.images = {}
+  panel.nodes = {}
+  for (const id of Object.keys(nodeMirrors)) delete nodeMirrors[id]
   harbor.proxy = {}
   store.ready = false
   store.connected = false

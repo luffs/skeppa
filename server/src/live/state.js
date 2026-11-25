@@ -15,8 +15,29 @@ export function createLiveState() {
     users: {},
     groups: {},
     proxy: {},
-    images: imagesDefaults()
+    images: imagesDefaults(),
+    nodes: {},
   })
+}
+
+// A node (another Skeppa server reporting here) as the Fleet page renders
+// it. `online` is this process's word on its link (nodes/links.js keeps it
+// current); the rest is the row. Never the hashes. '' for "none"/"never",
+// per the LiveState string convention. `adminId` is who the master acts as
+// over there (the agent's hello; 0 until it said): a project moored there is
+// theirs, and so are the piers it may moor at.
+export function nodeInfo(row, online = false, { adminId = 0 } = {}) {
+  return {
+    id: row.id,
+    name: row.name,
+    online,
+    paired: Boolean(row.key_hash),
+    joinExpiresAt: row.join_hash ? row.join_expires_at : '',
+    lastSeenAt: row.last_seen_at,
+    version: row.agent_version,
+    adminId,
+    createdAt: row.created_at,
+  }
 }
 
 // The routing facts the frontend needs to build "open the app" links. The
@@ -117,6 +138,9 @@ export function initLiveState(liveState, db, config = {}) {
   }
   for (const group of db.query(`SELECT ${GROUP_INFO_COLUMNS} FROM project_groups`).all()) {
     liveState.groups[group.id] = group
+  }
+  for (const row of db.query('SELECT * FROM nodes').all()) {
+    liveState.nodes[row.id] = nodeInfo(row)
   }
   const projects = db.query(
     `${PROJECT_INFO_SELECT.replace(' FROM projects', ', p.head_sha, p.head_message, p.head_pushed_at FROM projects')}`

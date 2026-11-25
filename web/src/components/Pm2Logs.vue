@@ -27,7 +27,7 @@
 </template>
 
 <script>
-import { api } from '../api.js'
+import { shipInject } from '../lib/ship.js'
 
 const EMPTY = { text: '', path: null, truncated: false, missing: false }
 const REFRESH_MS = 5000
@@ -37,6 +37,7 @@ const REFRESH_MS = 5000
 // wholesale and keeps the view pinned to the bottom unless the user scrolled up.
 export default {
   name: 'Pm2Logs',
+  inject: shipInject, // which server (lib/ship.js)
   props: {
     name: { type: String, default: '' },
     // Overrides the Engine-room pm2 endpoint — the project log route serves
@@ -121,7 +122,7 @@ export default {
       this.busy = true
       try {
         const target = this.url || `/api/system/pm2/${encodeURIComponent(this.name)}/logs`
-        this.data = await api.get(`${target}?lines=${this.lines}`)
+        this.data = await this.ship.api.get(`${target}?lines=${this.lines}`)
         this.error = ''
       } catch (err) {
         this.error = `Could not read logs: ${err.message}`
@@ -141,7 +142,7 @@ export default {
       if (this.prevBusy || (this.prevData && !force)) return
       this.prevBusy = true
       try {
-        this.prevData = (await api.get(`${this.prevUrl}?lines=${this.lines}`)).prev
+        this.prevData = (await this.ship.api.get(`${this.prevUrl}?lines=${this.lines}`)).prev
         this.error = ''
       } catch (err) {
         // Failing to read it must not stop the live tabs from polling.

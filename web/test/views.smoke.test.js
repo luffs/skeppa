@@ -14,7 +14,7 @@ vi.mock('../src/api.js', () => {
   const answer = url => {
     if (url.startsWith('/api/settings')) {
       return { github_app_id: null, has_private_key: false, has_webhook_secret: false, firebase_config: null, has_notify_url: false, notify_url_host: '',
-        notify_events: { deploy_success: { send: false, ping: false }, deploy_failed: { send: true, ping: false }, restart_burst: { send: true, ping: true } }, notify_mention: '@channel' }
+        notify_events: { deploy_success: { send: false, ping: false }, deploy_failed: { send: true, ping: false }, restart_burst: { send: true, ping: true }, node_offline: { send: true, ping: false } }, notify_mention: '@channel' }
     }
     if (url.startsWith('/api/proxy')) {
       return { base_domain: '', http_port: 8100, admin_port: 2020, routes: [], caddy_available: false, process_status: '', last_error: null }
@@ -73,6 +73,7 @@ import SystemView from '../src/views/SystemView.vue'
 import ShipyardView from '../src/views/ShipyardView.vue'
 import AccountView from '../src/views/AccountView.vue'
 import LoginView from '../src/views/LoginView.vue'
+import FleetView from '../src/views/FleetView.vue'
 
 // --- a LiveState the way the server would send it ----------------------------
 const NOW = Date.now()
@@ -129,6 +130,15 @@ function seedStore(role) {
     users: { 1: { ...ADMIN, created_at: ISO }, 2: { ...TENANT, created_at: ISO } },
     proxy: { baseDomain: 'apps.example.com' },
     images: { managedPrefix: 'localhost/skeppa/', managed: [], local: [], storeListed: false, engineError: '', defaultImage: 'docker.io/oven/bun:1' },
+    // Servers reporting here (the Fleet page): one online with a project, one never paired.
+    nodes: {
+      1: { id: 1, name: 'jobb-1', online: true, paired: true, joinExpiresAt: '', lastSeenAt: ISO, version: 'abc1234', createdAt: ISO },
+      2: { id: 2, name: 'hemma-2', online: false, paired: false, joinExpiresAt: '', lastSeenAt: '', version: '', createdAt: ISO },
+    },
+    nodeStates: {
+      1: { projects: { 5: project(5, 'remote', ADMIN) }, groups: {}, proxy: { baseDomain: 'jobb.example.com' }, system: { loadavg: [0.5, 0.4, 0.3], cpuCount: 2, memory: { total: 8e9, free: 2e9 } } },
+      2: { projects: {}, groups: {}, proxy: {}, system: {} },
+    },
   }
 }
 
@@ -193,6 +203,7 @@ const VIEWS = [
   ['ShipyardView', ShipyardView],
   ['AccountView', AccountView],
   ['LoginView', LoginView],
+  ['FleetView', FleetView],
 ]
 
 for (const role of ['admin', 'tenant']) {
@@ -2047,4 +2058,404 @@ test('a container app can let the gate serve its build, which asks for a publish
     },
   })
   expect(problems.join(' | ')).toBe('')
+})
+
+// The fleet: other servers reporting here, read-only. A row opens its
+// voyages, a voyage its log from that server; adding one shows the command.
+test('the fleet lists the servers, opens a remote voyage, and pairs a new one', async () => {
+  seedStore('admin')
+  const post = vi.spyOn(api, 'post').mockImplementation(async url =>
+    url === '/api/nodes' ? { node: { id: 3, name: 'ny' }, code: 'skj_3_' + 'a'.repeat(32), expiresAt: new Date(NOW + 6e5).toISOString() } : {})
+  const { problems } = await expectCleanRender(FleetView, {
+    steps: async wrapper => {
+      const text = wrapper.text()
+      expect(text).toContain('jobb-1')
+      expect(text).toContain('hemma-2')
+      expect(text).toContain('not paired')
+      expect(text).toContain('jobb.example.com')
+      expect(wrapper.find('a.vessel-addr').attributes('href')).toBe('https://app.jobb.example.com')
+      await wrapper.find('.fleet-row').trigger('click')
+      await wrapper.find('.fleet-voyage').trigger('click')
+      await settle()
+      expect(wrapper.findComponent({ name: 'DeployLog' }).props()).toMatchObject({ deploymentId: 5, node: 1, active: false })
+      await wrapper.findAll('button').find(b => b.text().includes('Add a server')).trigger('click')
+      await wrapper.find('.fleet-add input').setValue('ny')
+      await wrapper.findAll('.fleet-add button').find(b => b.text() === 'Add').trigger('click')
+      await settle()
+      expect(wrapper.find('.fleet-command code').text()).toContain('bun scripts/join.js')
+      expect(wrapper.find('.fleet-command code').text()).toContain('skj_3_')
+    },
+  })
+  post.mockRestore()
+  expect(problems.join(' | ')).toBe('')
+})
+
+// Phase 2: another server's project is the same page, run through the fleet.
+// Every call it and the components under it make goes to that server; what
+// it reads is that server's live state, never this panel's.
+test("another server's project page reads that server and sends every call there", async () => {
+  seedStore('admin')
+  // The node's project has an id this panel also has, with other contents.
+  const remote = project(1, 'remote-app', ADMIN)
+  remote.info.group_id = 3
+  store.live.nodeStates[1].projects = { 1: remote }
+  store.live.nodeStates[1].groups = { 3: { id: 3, owner_id: ADMIN.id, name: 'Jobbpiren', created_at: ISO } }
+  const get = vi.spyOn(api, 'get')
+  const post = vi.spyOn(api, 'post').mockImplementation(async () => ({ id: 77 }))
+  const { problems } = await expectCleanRender(ProjectView, {
+    props: { id: '1', node: '1' },
+    route: { path: '/fleet/1/projects/1' },
+    steps: async wrapper => {
+      expect(wrapper.find('h1').text()).toBe('remote-app')
+      expect(wrapper.text()).toContain('on jobb-1')
+      expect(wrapper.text()).toContain('Jobbpiren') // that server's pier
+      expect(wrapper.find('.vessel-addr').attributes('href')).toBe('https://app.jobb.example.com')
+      expect(wrapper.find('a[href="/fleet"]').text()).toContain('back to the fleet')
+      for (const tab of ['deploys', 'logs', 'env', 'files', 'settings']) {
+        wrapper.vm.tab = tab
+        await settle()
+      }
+      wrapper.vm.tab = 'deploys'
+      await settle()
+      await wrapper.vm.run('deploy')
+      await settle()
+    },
+  })
+  const urls = get.mock.calls.map(c => c[0])
+  get.mockRestore()
+  const posted = post.mock.calls.map(c => c[0])
+  post.mockRestore()
+  expect(problems.join(' | ')).toBe('')
+  expect(urls.length).toBeGreaterThan(3)
+  // the relay, or the stored log asked of that server (DeployLog's own route)
+  for (const url of urls) expect(url).toMatch(/^\/api\/nodes\/1\/(api\/|deployments\/\d+$)/)
+  expect(urls).toContain('/api/nodes/1/api/projects/1/deployments')
+  expect(urls.some(u => u.startsWith('/api/nodes/1/api/projects/1/env'))).toBe(true)
+  expect(urls.some(u => u.startsWith('/api/nodes/1/api/projects/1/files'))).toBe(true)
+  expect(posted).toEqual(['/api/nodes/1/api/projects/1/deploy'])
+})
+
+test("this panel's own project page still talks to this panel", async () => {
+  seedStore('admin')
+  const get = vi.spyOn(api, 'get')
+  const { problems } = await expectCleanRender(ProjectView, { props: { id: '1' } })
+  const urls = get.mock.calls.map(c => c[0])
+  get.mockRestore()
+  expect(problems.join(' | ')).toBe('')
+  expect(urls).toContain('/api/projects/1/deployments')
+  expect(urls.every(u => !u.startsWith('/api/nodes'))).toBe(true)
+})
+
+test('a fleet row runs its action on that server', async () => {
+  seedStore('admin')
+  store.live.nodeStates[1].projects[5].headCommit = { sha: 'c'.repeat(40), message: 'new', pushedAt: ISO } // ahead → Deploy latest
+  const post = vi.spyOn(api, 'post').mockImplementation(async () => ({ id: 9 }))
+  const { problems } = await expectCleanRender(FleetView, {
+    steps: async wrapper => {
+      const button = wrapper.findAll('.fleet-row button').find(b => b.text() === 'Deploy latest')
+      await button.trigger('click')
+      await settle()
+      expect(wrapper.find('.fleet-row a.fleet-name').attributes('href')).toBe('/fleet/1/projects/5')
+    },
+  })
+  const posted = post.mock.calls.map(c => c[0])
+  post.mockRestore()
+  expect(problems.join(' | ')).toBe('')
+  expect(posted).toEqual(['/api/nodes/1/api/projects/5/deploy'])
+})
+
+// Phase 4: a fleet server's admin pages are this panel's own views, about
+// that server — its live state, and every call to it.
+describe("a fleet server's admin pages", () => {
+  function seedNode() {
+    seedStore('admin')
+    const sys = store.live.system
+    store.live.nodeStates[1].system = {
+      ...sys,
+      selfPm2Name: 'skeppa', loadavg: [1, 1, 1],
+      pm2: { skeppa: { ...stats }, 'skeppa-proxy': { ...stats }, 'remote-tool': { ...stats } },
+      containers: { 'skeppa-app-remote': { ...stats, image: 'docker.io/oven/bun:1', ports: [], slug: 'remote', createdAt: ISO, state: 'running' } },
+    }
+    store.live.nodeStates[1].images = { ...store.live.images, managed: [{ id: 4, name: 'remote-base', ref: 'localhost/skeppa/remote-base:latest', containerfile: 'FROM x', updated_at: ISO, used_by: [] }] }
+  }
+  async function urlsOf(View, steps) {
+    const get = vi.spyOn(api, 'get')
+    const page = await expectCleanRender(View, { props: { node: '1' }, steps })
+    const urls = get.mock.calls.map(c => c[0])
+    get.mockRestore()
+    return { ...page, urls }
+  }
+
+  test('the Engine room shows that server\'s processes and links its projects there', async () => {
+    seedNode()
+    const { problems, html } = await urlsOf(SystemView)
+    expect(problems.join(' | ')).toBe('')
+    expect(html).toContain('remote-tool')
+    expect(html).not.toContain('postgres') // this panel's own container
+    expect(html).toContain('on jobb-1')
+    expect(html).toContain('href="/fleet/1/projects/5"')
+  })
+
+  test("the Shipyard lists that server's images", async () => {
+    seedNode()
+    const { problems, html } = await urlsOf(ShipyardView)
+    expect(problems.join(' | ')).toBe('')
+    expect(html).toContain('remote-base')
+  })
+
+  test('Rigging there is its harbor gate and notifications, asked of it', async () => {
+    seedNode()
+    const { problems, html, urls } = await urlsOf(SettingsView)
+    expect(problems.join(' | ')).toBe('')
+    expect(urls.sort()).toEqual(['/api/nodes/1/api/proxy', '/api/nodes/1/api/settings'])
+    expect(html).toContain('Harbor gate')
+    expect(html).toContain('Notifications')
+    for (const hidden of ['Crew', 'Google sign-in', 'Your account']) expect(html).not.toContain(`>${hidden}<`)
+    expect(html).toContain('back to the fleet')
+  })
+
+  test('the fleet card leads to them', async () => {
+    seedNode()
+    const pushed = []
+    const { problems } = await expectCleanRender(FleetView, {
+      router: { push: to => pushed.push(to) },
+      steps: async wrapper => {
+        await wrapper.findAll('.fleet-node-head .action-menu-toggle')[1].trigger('click') // jobb-1 (sorted after hemma-2)
+        await settle()
+        const item = wrapper.findAll('[role="menuitem"]').find(b => b.text() === 'Engine room')
+        await item.trigger('click')
+        await settle()
+      },
+    })
+    expect(problems.join(' | ')).toBe('')
+    expect(pushed).toEqual(['/fleet/1/system'])
+  })
+})
+
+// Mooring on a fleet server: the same form, its repo list and suggestions
+// asked of that server, the project posted there, owned by the admin this
+// panel acts as there, and the page it lands on is that server's.
+test('mooring a project on a fleet server', async () => {
+  seedStore('admin')
+  store.live.nodes[1].adminId = 7
+  store.live.nodeStates[1].groups = { 3: { id: 3, owner_id: 7, name: 'Jobbpiren', created_at: ISO } }
+  const repos = [{ full_name: 'ops/remote', name: 'remote', owner: 'ops', default_branch: 'main', private: true, pushed_at: ISO, archived: false, mine: true }]
+  const get = vi.spyOn(api, 'get').mockImplementation(async url => (url.includes('/github/repos?') || url.endsWith('/github/repos') ? repos : {}))
+  const post = vi.spyOn(api, 'post').mockImplementation(async () => ({ id: 42 }))
+  const pushed = []
+  const { problems, html } = await expectCleanRender(ProjectNewView, {
+    props: { node: '1' },
+    router: { push: to => pushed.push(to) },
+    steps: async wrapper => {
+      expect(wrapper.text()).toContain('on jobb-1')
+      // 'remote' is moored on that server already (nodeStates[1].projects[5]); not here
+      expect(wrapper.vm.myId).toBe(7)
+      wrapper.vm.form.repo_full_name = 'ops/remote'
+      wrapper.vm.onRepoPicked()
+      await settle()
+      wrapper.vm.form.name = 'remote-two'
+      await settle()
+      await wrapper.vm.submit()
+      await settle()
+    },
+  })
+  const urls = get.mock.calls.map(c => c[0])
+  const posts = post.mock.calls
+  get.mockRestore()
+  post.mockRestore()
+  expect(problems.join(' | ')).toBe('')
+  expect(html).toContain('back to the fleet')
+  for (const url of urls) expect(url).toMatch(/^\/api\/nodes\/1\/api\//)
+  expect(urls).toContain('/api/nodes/1/api/github/repos')
+  expect(urls.some(u => u.startsWith('/api/nodes/1/api/github/repos/suggest?'))).toBe(true)
+  expect(posts.map(c => c[0])).toEqual(['/api/nodes/1/api/projects'])
+  expect(posts[0][1]).toMatchObject({ repo_full_name: 'ops/remote', name: 'remote-two' })
+  expect(pushed).toEqual(['/fleet/1/projects/42'])
+})
+
+// Copy to…: a Shipyard definition onto other servers of the fleet —
+// replaced where that name exists and differs, created where it does not,
+// built there if asked; and Build on a fleet server's Shipyard builds there.
+describe('Shipyard across the fleet', () => {
+  const managed = (id, name, containerfile) => ({ id, name, ref: `localhost/skeppa/${name}:latest`, containerfile, updated_at: ISO, used_by: [] })
+  function seedFleet() {
+    seedStore('admin')
+    store.live.images = { ...store.live.images, managed: [managed(1, 'base', 'FROM docker.io/oven/bun:1\nRUN apk add git\n')] }
+    store.live.nodes[2] = { ...store.live.nodes[2], paired: true, online: true }
+    store.live.nodeStates[1].images = { ...store.live.images, managed: [managed(9, 'base', 'FROM old')] }
+    store.live.nodeStates[2].images = { ...store.live.images, managed: [] }
+  }
+
+  test('copies onto the picked servers and builds there', async () => {
+    seedFleet()
+    const patch = vi.spyOn(api, 'patch').mockImplementation(async () => ({}))
+    const post = vi.spyOn(api, 'post').mockImplementation(async () => ({ id: 12 }))
+    const builds = []
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async url => {
+      builds.push(url)
+      return new Response('step 1\n✔ build finished\n')
+    })
+    const { problems, html } = await expectCleanRender(ShipyardView, {
+      steps: async wrapper => {
+        await wrapper.findAll('.proc-actions button').find(b => b.text() === 'Copy to…').trigger('click')
+        const boxes = wrapper.findAll('.copy-panel input[type="checkbox"]')
+        expect(wrapper.find('.copy-panel').text()).toContain('hemma-2')
+        expect(wrapper.find('.copy-panel').text()).toContain('jobb-1')
+        expect(wrapper.find('.copy-panel').text()).not.toContain('this panel') // it is this panel's Shipyard
+        for (const box of boxes) await box.setValue(true) // both servers, and build afterwards
+        await wrapper.findAll('.copy-panel button').find(b => b.text().startsWith('Copy to')).trigger('click')
+        await settle()
+      },
+    })
+    const patched = patch.mock.calls
+    const posted = post.mock.calls
+    patch.mockRestore()
+    post.mockRestore()
+    fetchSpy.mockRestore()
+    expect(problems.join(' | ')).toBe('')
+    expect(patched).toEqual([['/api/nodes/1/api/images/9', { containerfile: 'FROM docker.io/oven/bun:1\nRUN apk add git\n' }]])
+    expect(posted).toEqual([['/api/nodes/2/api/images', { name: 'base', containerfile: 'FROM docker.io/oven/bun:1\nRUN apk add git\n' }]])
+    expect(builds.sort()).toEqual(['/api/nodes/1/api/images/9/build', '/api/nodes/2/api/images/12/build'])
+    expect(html).toContain('updated, built ✔')
+    expect(html).toContain('created, built ✔')
+  })
+
+  test("a fleet server's Shipyard builds over there, and offers this panel as a copy target", async () => {
+    seedFleet()
+    const builds = []
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async url => (builds.push(url), new Response('✔ build finished\n')))
+    const { problems } = await expectCleanRender(ShipyardView, {
+      props: { node: '1' },
+      steps: async wrapper => {
+        await wrapper.findAll('.proc-actions button').find(b => b.text() === 'Build').trigger('click')
+        await settle()
+        await wrapper.findAll('.proc-actions button').find(b => b.text() === 'Copy to…').trigger('click')
+        expect(wrapper.find('.copy-panel').text()).toContain('this panel')
+        expect(wrapper.find('.copy-panel').text()).not.toContain('jobb-1')
+      },
+    })
+    fetchSpy.mockRestore()
+    expect(problems.join(' | ')).toBe('')
+    expect(builds).toEqual(['/api/nodes/1/api/images/9/build'])
+  })
+
+  test('without a fleet there is nothing to copy to', async () => {
+    seedStore('admin')
+    store.live.images = { ...store.live.images, managed: [managed(1, 'base', 'FROM x')] }
+    store.live.nodes = {}
+    const { problems, html } = await expectCleanRender(ShipyardView)
+    expect(problems.join(' | ')).toBe('')
+    expect(html).not.toContain('Copy to…')
+  })
+})
+
+// A fleet server not reporting: its pages say so, show what it last reported,
+// keep what would ask it anything off, and ask it nothing.
+describe('a fleet server that is offline', () => {
+  function seedOffline() {
+    seedStore('admin')
+    store.live.nodes[1] = { ...store.live.nodes[1], online: false, lastSeenAt: new Date(NOW - 12 * 60_000).toISOString() }
+    store.live.nodeStates[1].images = { ...store.live.images }
+  }
+  const views = () => [
+    ['ProjectView', ProjectView, { id: '5', node: '1' }],
+    ['SystemView', SystemView, { node: '1' }],
+    ['ShipyardView', ShipyardView, { node: '1' }],
+    ['SettingsView', SettingsView, { node: '1' }],
+    ['ProjectNewView', ProjectNewView, { node: '1' }],
+  ]
+  for (const [name, View, props] of views()) {
+    test(`${name} says so and asks it nothing`, async () => {
+      seedOffline()
+      const get = vi.spyOn(api, 'get')
+      const { problems, html } = await expectCleanRender(View, { props })
+      const asked = get.mock.calls.map(c => c[0]).filter(u => u.startsWith('/api/nodes/1/api/'))
+      get.mockRestore()
+      expect(problems.join(' | ')).toBe('')
+      expect(html).toContain('jobb-1 is not reporting')
+      expect(html).toContain('12m ago')
+      expect(asked).toEqual([])
+    })
+  }
+
+  test('the project page shows the voyages it last reported, with its buttons off', async () => {
+    seedOffline()
+    const { problems, html } = await expectCleanRender(ProjectView, {
+      props: { id: '5', node: '1' },
+      steps: async wrapper => {
+        const head = wrapper.findAll('.project-head button').filter(b => !b.classes('action-menu-toggle'))
+        expect(head.length).toBeGreaterThan(0)
+        for (const b of head) expect(b.attributes('disabled')).toBeDefined()
+        expect(wrapper.vm.menu.filter(i => i.key).every(i => i.disabled)).toBe(true)
+        expect(wrapper.vm.deployments.map(d => d.id)).toEqual([5])
+      },
+    })
+    expect(problems.join(' | ')).toBe('')
+    expect(html).toContain('#5')
+  })
+
+  test('the mooring form waits for it', async () => {
+    seedOffline()
+    const { problems } = await expectCleanRender(ProjectNewView, {
+      props: { node: '1' },
+      steps: async wrapper => {
+        expect(wrapper.vm.missing).toContain('jobb-1 is offline')
+        expect(wrapper.find('.moor-bar button').attributes('disabled')).toBeDefined()
+      },
+    })
+    expect(problems.join(' | ')).toBe('')
+  })
+})
+
+// The fleet's panels: which run another commit than this one, and one button
+// that deploys each server's own panel project.
+describe('updating the fleet', () => {
+  function seedPanels() {
+    seedStore('admin')
+    store.live.system.version = 'aaaaaaa'
+    store.live.nodes[1] = { ...store.live.nodes[1], version: 'abc1234' }
+    store.live.nodes[2] = { ...store.live.nodes[2], paired: true, online: true, version: 'aaaaaaa' }
+    const panel = (id, owner) => {
+      const p = project(id, 'skeppa', owner)
+      p.info.runtime = 'pm2'
+      p.info.pm2_name = 'skeppa'
+      p.info.branch = 'main'
+      return p
+    }
+    store.live.nodeStates[1].system = { ...store.live.nodeStates[1].system, selfPm2Name: 'skeppa' }
+    store.live.nodeStates[1].projects[8] = panel(8, ADMIN)
+    store.live.nodeStates[2].system = { selfPm2Name: 'skeppa' }
+    store.live.nodeStates[2].projects = { 3: panel(3, ADMIN) }
+  }
+
+  test('says which run another version, and updates them all', async () => {
+    seedPanels()
+    const post = vi.spyOn(api, 'post').mockImplementation(async () => ({ id: 1 }))
+    const { problems } = await expectCleanRender(FleetView, {
+      steps: async wrapper => {
+        expect(wrapper.text()).toContain('1 on another version than this panel (aaaaaaa)')
+        expect(wrapper.text()).toContain('abc1234 ≠ aaaaaaa')
+        expect(wrapper.findAll('.fleet-node-head button').filter(b => b.text() === 'Update panel')).toHaveLength(2)
+        await wrapper.findAll('.page-head button').find(b => b.text() === 'Update all 2 panels').trigger('click')
+        await settle()
+        expect(dialogState.message).toContain('2 servers (hemma-2, jobb-1)')
+        settleDialog(true)
+        await settle()
+      },
+    })
+    const posted = post.mock.calls.map(c => c[0]).sort()
+    post.mockRestore()
+    expect(problems.join(' | ')).toBe('')
+    expect(posted).toEqual(['/api/nodes/1/api/projects/8/deploy', '/api/nodes/2/api/projects/3/deploy'])
+  })
+
+  test('a server without a panel project, or offline, or mid-update, is not offered', async () => {
+    seedPanels()
+    delete store.live.nodeStates[2].projects[3]
+    store.live.nodeStates[1].projects[8].currentDeployment = { id: 9, status: 'running' }
+    const { problems, html } = await expectCleanRender(FleetView)
+    expect(problems.join(' | ')).toBe('')
+    expect(html).not.toContain('Update all')
+    expect(html).toContain('Updating…') // jobb-1's own button, while its panel deploys
+  })
 })

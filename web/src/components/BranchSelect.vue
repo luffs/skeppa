@@ -21,7 +21,7 @@
 </template>
 
 <script>
-import { api } from '../api.js'
+import { shipInject } from '../lib/ship.js'
 
 const REPO_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/
 const WAIT_MS = 300 // a repository typed by hand: asked about once the typing stops
@@ -37,6 +37,7 @@ let ids = 0
 // v-model is the branch name; an empty one becomes the default branch.
 export default {
   name: 'BranchSelect',
+  inject: shipInject, // which server (lib/ship.js)
   props: {
     modelValue: { type: String, default: '' },
     // owner/repo, '' for none
@@ -77,7 +78,7 @@ export default {
       this.loading = true
       try {
         const q = new URLSearchParams({ repo })
-        const got = await api.get(`/api/github/repos/branches?${q}`)
+        const got = await this.ship.api.get(`/api/github/repos/branches?${q}`)
         const found = {
           default_branch: typeof got?.default_branch === 'string' ? got.default_branch : '',
           branches: Array.isArray(got?.branches) ? got.branches.filter(b => typeof b === 'string') : [],

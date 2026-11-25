@@ -139,7 +139,7 @@ import FieldError from './FieldError.vue'
 import RuntimeChoice from './RuntimeChoice.vue'
 import PublishDirField from './PublishDirField.vue'
 import CopyButton from './CopyButton.vue'
-import { store } from '../store.js'
+import { shipInject } from '../lib/ship.js'
 
 // The Runtime section's body: the runtime (RuntimeChoice) and what runs —
 // the start command and image, the pm2 process name, or a static site's
@@ -149,6 +149,7 @@ import { store } from '../store.js'
 // rhythm and the rule between parts.
 export default {
   name: 'RuntimeFields',
+  inject: shipInject, // which server (lib/ship.js)
   components: { ImagePicker, FieldError, RuntimeChoice, PublishDirField, CopyButton },
   props: {
     runtime: { type: String, default: 'container' },
@@ -187,7 +188,7 @@ export default {
   computed: {
     // Where the panel allows host mounts from (MOUNT_ROOTS) — admins see the panel store.
     mountRoots() {
-      const roots = store.live?.system?.mountRoots
+      const roots = this.ship.live?.system?.mountRoots
       return Array.isArray(roots) ? roots : []
     },
     // A field to write mounts in: the panel allows some, or the project has some to edit.
@@ -206,7 +207,7 @@ export default {
     // side only for an admin (the panel store's appsDir) — a tenant can do
     // nothing with it — and the project's directory once it has a slug.
     containerPaths() {
-      const appsDir = this.tenant ? '' : (store.live?.system?.appsDir ?? '').replace(/[\\/]+$/, '')
+      const appsDir = this.tenant ? '' : (this.ship.live?.system?.appsDir ?? '').replace(/[\\/]+$/, '')
       // Shown from the apps directory's own name down (apps/api/source) — the
       // part that says which project; the whole path is the tooltip.
       const own = sub => {

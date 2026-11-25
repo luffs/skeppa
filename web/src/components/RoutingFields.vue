@@ -53,13 +53,14 @@
 
 <script>
 import FieldError from './FieldError.vue'
-import { store } from '../store.js'
+import { shipInject } from '../lib/ship.js'
 
 // Subdomain + port with the harbor gate preview. Shared by the new-project
 // form and the Rigging tab; the base domain rides along in LiveState, so the
 // preview needs no request of its own.
 export default {
   name: 'RoutingFields',
+  inject: shipInject, // which server (lib/ship.js)
   components: { FieldError },
   props: {
     // The server's field errors, each shown under its field (FieldError).
@@ -80,7 +81,7 @@ export default {
   emits: ['update:subdomain', 'update:port'],
   computed: {
     baseDomain() {
-      return store.live.proxy?.baseDomain ?? ''
+      return this.ship.live.proxy?.baseDomain ?? ''
     },
     routedUrl() {
       if (!this.subdomain || !this.baseDomain) return ''

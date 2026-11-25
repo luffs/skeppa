@@ -4,7 +4,7 @@
          builds in it says nothing about what is running, and listing every one
          of them buried the few lines that did. -->
     <div class="user" v-for="u in runners" :key="u.slug" :class="{ off: !u.restartable }">
-      <router-link :to="u.id ? `/projects/${u.id}` : '/'" class="name mono">{{ u.slug }} ↗</router-link>
+      <router-link :to="u.id ? ship.link(u.id) : ship.home" class="name mono">{{ u.slug }} ↗</router-link>
       <span class="state" :class="{ stale: u.imageState === 'stale' }">{{ stateOf(u) }}</span>
       <span class="reason">{{ u.reason }}</span>
     </div>
@@ -29,13 +29,13 @@
 </template>
 
 <script>
-import { api } from '../api.js'
+import { shipInject } from '../lib/ship.js'
 import { confirmDialog } from '../lib/dialog.js'
-import { store } from '../store.js'
 import { imageUsers } from '../lib/images.js'
 
 export default {
   name: 'ImageUsers',
+  inject: shipInject, // which server (lib/ship.js)
   // `ref` is a reserved attribute in templates, so the image's references
   // cannot be a prop by that name. Plural because one entry in the engine's
   // store can wear several tags, any of which a project may name.
@@ -48,7 +48,7 @@ export default {
   },
   computed: {
     users() {
-      return imageUsers(store.live, this.imageRefs, this.slugs)
+      return imageUsers(this.ship.live, this.imageRefs, this.slugs)
     },
     runners() {
       return this.users.filter(u => u.runs)
@@ -97,7 +97,7 @@ export default {
       const failed = []
       for (const u of list) {
         try {
-          await api.post(`/api/projects/${u.id}/pm2/restart`)
+          await this.ship.api.post(`/api/projects/${u.id}/pm2/restart`)
         } catch (err) {
           failed.push(`${u.slug}: ${err.message}`)
         }

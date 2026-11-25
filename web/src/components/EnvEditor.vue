@@ -98,7 +98,7 @@
 </template>
 
 <script>
-import { api } from '../api.js'
+import { shipInject } from '../lib/ship.js'
 import { parseDotenv, serializeDotenv, diffVars } from '../lib/dotenv.js'
 
 const list = keys => keys.join(', ')
@@ -116,6 +116,7 @@ function describeParse(parsed) {
 
 export default {
   name: 'EnvEditor',
+  inject: shipInject, // which server (lib/ship.js)
   props: { projectId: { type: [Number, String], required: true } },
   data() {
     return {
@@ -170,7 +171,7 @@ export default {
   },
   methods: {
     async load(reveal) {
-      const vars = await api.get(`/api/projects/${this.projectId}/env${reveal ? '?reveal=1' : ''}`)
+      const vars = await this.ship.api.get(`/api/projects/${this.projectId}/env${reveal ? '?reveal=1' : ''}`)
       this.rows = vars.map(v => ({ key: v.key, value: v.value ?? '', masked: v.masked }))
       this.revealed = reveal
     },
@@ -192,7 +193,7 @@ export default {
     // the user hasn't edited before saving or revealing.
     async fillMasked() {
       if (!this.rows.some(r => r.masked)) return
-      const revealed = await api.get(`/api/projects/${this.projectId}/env?reveal=1`)
+      const revealed = await this.ship.api.get(`/api/projects/${this.projectId}/env?reveal=1`)
       const byKey = new Map(revealed.map(v => [v.key, v.value]))
       for (const row of this.rows) {
         if (row.masked && byKey.has(row.key)) {
@@ -208,7 +209,7 @@ export default {
       this.notice = ''
       try {
         await this.fillMasked()
-        const stored = await api.get(`/api/projects/${this.projectId}/env?reveal=1`)
+        const stored = await this.ship.api.get(`/api/projects/${this.projectId}/env?reveal=1`)
         this.saved = new Map(stored.map(v => [v.key, v.value]))
         this.revealed = true
         this.text = serializeDotenv(this.rows.filter(r => r.key.trim()).map(r => ({ key: r.key.trim(), value: r.value })))
@@ -267,7 +268,7 @@ export default {
             .filter(r => r.key.trim())
             .map(r => ({ key: r.key.trim(), value: r.value }))
         }
-        await api.put(`/api/projects/${this.projectId}/env`, payload)
+        await this.ship.api.put(`/api/projects/${this.projectId}/env`, payload)
         if (this.mode === 'text') {
           // Back as stored: sorted, comments gone — what the panel now holds.
           await this.load(true)

@@ -22,6 +22,9 @@ export default {
   props: {
     deploymentId: { type: Number, required: true },
     active: { type: Boolean, default: false },
+    // A deployment on another server reporting here (the Fleet page): its
+    // live log comes through that node's store, the stored one is asked of it.
+    node: { type: Number, default: 0 },
   },
   data() {
     return { text: '', paused: false, unsubscribe: null }
@@ -48,9 +51,10 @@ export default {
         this.unsubscribe = subscribeLogs(this.deploymentId, evt => {
           if (evt.type === 'backlog') this.text = evt.log
           else this.text += evt.line + '\n'
-        })
+        }, { node: this.node })
       } else {
-        const dep = await api.get(`/api/deployments/${this.deploymentId}`).catch(() => null)
+        const path = this.node ? `/api/nodes/${this.node}/deployments/${this.deploymentId}` : `/api/deployments/${this.deploymentId}`
+        const dep = await api.get(path).catch(err => ({ log: `(${err?.message ?? 'could not load the log'})` }))
         this.text = dep?.log ?? ''
       }
     },

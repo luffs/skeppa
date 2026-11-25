@@ -27,7 +27,7 @@
 </template>
 
 <script>
-import { store } from '../store.js'
+import { shipInject } from '../lib/ship.js'
 
 // The runtime switch, placed early in the project forms because it decides
 // which fields follow (a static site has no start command, a container its
@@ -37,6 +37,7 @@ import { store } from '../store.js'
 // see it (the server refuses it for them too).
 export default {
   name: 'RuntimeChoice',
+  inject: shipInject, // which server (lib/ship.js)
   props: {
     runtime: { type: String, default: 'container' },
     tenant: { type: Boolean, default: false },
@@ -54,7 +55,7 @@ export default {
     // Only an admin's store carries the system facts; '' means the panel was
     // started with no engine at all. Not loaded yet is not missing.
     engineMissing() {
-      const system = store.live?.system
+      const system = this.ship.live?.system
       return Boolean(system?.appsDir) && !system.containerSocket
     },
   },

@@ -1,8 +1,16 @@
 <template>
   <div class="container narrow">
-    <h1 style="margin-bottom: 22px">Rigging</h1>
+    <!-- Another server's page, run through the fleet (lib/ship.js). -->
+    <router-link v-if="ship.node" to="/fleet" class="mono" style="font-size: 12px; color: var(--dim)">← back to the fleet</router-link>
+    <ShipOffline />
+    <h1 style="margin-bottom: 22px">Rigging <span v-if="ship.node" class="chip blue">on {{ ship.name }}</span></h1>
+    <p v-if="ship.node" class="hint" style="margin-top: -12px">
+      That server's harbor gate and notifications. It deploys from GitHub with this panel's GitHub App, lent one
+      repository at a time; its crew, Google sign-in and a GitHub App of its own are set on its own panel
+      (<span class="mono">AGENT_LOCAL_UI=true</span> in its config).
+    </p>
 
-    <CollapseSection title="Crew">
+    <CollapseSection v-if="!ship.node" title="Crew">
       <template #meta>
         <span class="chip">{{ users.length }} aboard</span>
       </template>
@@ -174,7 +182,7 @@
       <p v-if="crewMessage" class="hint">{{ crewMessage }}</p>
     </CollapseSection>
 
-    <CollapseSection title="GitHub App">
+    <CollapseSection v-if="!ship.node" title="GitHub App">
       <template #meta>
         <span v-if="status.has_private_key && status.has_webhook_secret" class="chip green">configured</span>
       </template>
@@ -272,7 +280,7 @@
       </template>
     </CollapseSection>
 
-    <CollapseSection title="Google sign-in">
+    <CollapseSection v-if="!ship.node" title="Google sign-in">
       <template #meta>
         <span v-if="status.firebase_config" class="chip green">configured</span>
       </template>
@@ -460,7 +468,7 @@
     </CollapseSection>
 
     <!-- An admin's own account: a tenant has an Account page for it instead. -->
-    <CollapseSection title="Your account">
+    <CollapseSection v-if="!ship.node" title="Your account">
       <template #meta><span class="mono">{{ me?.username }}</span></template>
       <AccountFields :identity="false" />
     </CollapseSection>
@@ -468,18 +476,20 @@
 </template>
 
 <script>
-import { api } from '../api.js'
+import { shipProvider } from '../lib/ship.js'
 import { confirmDialog } from '../lib/dialog.js'
 import { store } from '../store.js'
 import { timeAgo } from '../lib/format.js'
 import CollapseSection from '../components/CollapseSection.vue'
 import AccountFields from '../components/AccountFields.vue'
+import ShipOffline from '../components/ShipOffline.vue'
 
 // The events the server knows (lib/notify.js NOTIFY_EVENTS), in form order.
 const NOTIFY_EVENT_LIST = [
   { key: 'deploy_success', label: 'Deploy succeeded', sample: '✔ Deployed blog @ cafebab — Add a contact page' },
   { key: 'deploy_failed', label: 'Deploy failed', sample: '✖ Deploy of blog @ cafebab failed (exit 1)' },
   { key: 'restart_burst', label: 'Restart burst', sample: '⚠ blog restarted 3 times in the last 10 minutes' },
+  { key: 'node_offline', label: 'Fleet server offline', sample: '⚠ jobb-ci has not reported for 5 minutes' },
 ]
 // A fresh, editable copy of the server's per-event flags (all off until loaded).
 const notifyEventsFrom = events => Object.fromEntries(NOTIFY_EVENT_LIST.map(({ key }) => [key, {
@@ -489,7 +499,8 @@ const notifyEventsFrom = events => Object.fromEntries(NOTIFY_EVENT_LIST.map(({ k
 
 export default {
   name: 'SettingsView',
-  components: { CollapseSection, AccountFields },
+  mixins: [shipProvider], // this panel's Rigging, or a fleet server's
+  components: { CollapseSection, AccountFields, ShipOffline },
   data() {
     return {
       status: { github_app_id: null, has_private_key: false, has_webhook_secret: false },
@@ -551,7 +562,7 @@ export default {
       // One extra one-label wildcard per tenant namespace that actually
       // routes something — each block gets its own DNS-01 cert. A tenant's
       // own domain is its wildcard, plus the apex when a project sits there.
-      const routed = Object.values(store.live.projects ?? {})
+      const routed = Object.values(this.ship.live.projects ?? {})
         .map(p => p.info)
         .filter(i => i?.subdomain && i.owner_role === 'tenant')
       const handles = [...new Set(routed.filter(i => !i.owner_domain && i.owner_handle).map(i => i.owner_handle))].sort()
@@ -562,19 +573,28 @@ export default {
         .join('\n')
     },
   },
+  watch: {
+    'ship.online'(online) {
+      if (online) Promise.all([this.load(), this.loadGate()]).catch(() => {})
+    },
+  },
   async created() {
     // Returning from GitHub: app created (?code=&state=) or app installed
     // (?setup_action=). Strip the query first so a refresh can't replay it.
-    const { code, state, setup_action: setupAction } = this.$route.query
+    // (Never on a fleet server's Rigging: GitHub returns to this panel's own.)
+    const { code, state, setup_action: setupAction } = this.ship.node ? {} : this.$route.query
     if (code || setupAction) this.$router.replace({ path: '/settings' })
     if (code && state) await this.completeManifest(String(code), String(state))
+    // A fleet server away has nothing to answer: its sections wait for it
+    // (ShipOffline says so), and load when it is back.
+    if (!this.ship.online) return
     await Promise.all([this.load(), this.loadGate()])
-    if (this.status.has_private_key) this.loadDeliveries()
+    if (this.status.has_private_key && !this.ship.node) this.loadDeliveries()
     if (setupAction) await this.test()
   },
   methods: {
     async load() {
-      this.status = await api.get('/api/settings')
+      this.status = await this.ship.api.get('/api/settings')
       // the webhook URL is write-only — the form never holds the stored value
       this.form.github_app_id = this.status.github_app_id ?? ''
       this.fbText = this.status.firebase_config ? JSON.stringify(this.status.firebase_config, null, 2) : ''
@@ -589,7 +609,7 @@ export default {
         const payload = { github_app_id: this.form.github_app_id }
         if (this.form.github_private_key.trim()) payload.github_private_key = this.form.github_private_key
         if (this.form.github_webhook_secret.trim()) payload.github_webhook_secret = this.form.github_webhook_secret
-        await api.put('/api/settings', payload)
+        await this.ship.api.put('/api/settings', payload)
         this.form.github_private_key = ''
         this.form.github_webhook_secret = ''
         await this.load()
@@ -605,7 +625,7 @@ export default {
       this.error = ''
       this.message = ''
       try {
-        const repos = await api.get('/api/github/repos')
+        const repos = await this.ship.api.get('/api/github/repos')
         this.message = `Connection OK — the app can access ${repos.length} repositori${repos.length === 1 ? 'y' : 'es'}.`
       } catch (err) {
         this.error = err.message
@@ -625,7 +645,7 @@ export default {
       this.error = ''
       this.message = ''
       try {
-        const { action, manifest } = await api.post('/api/github/manifest', {
+        const { action, manifest } = await this.ship.api.post('/api/github/manifest', {
           origin: location.origin,
           organization: this.manifestOrg.trim() || undefined,
         })
@@ -651,7 +671,7 @@ export default {
       this.error = ''
       this.message = ''
       try {
-        const res = await api.post('/api/github/manifest/convert', { code, state })
+        const res = await this.ship.api.post('/api/github/manifest/convert', { code, state })
         this.installUrl = res.install_url
         this.message = `GitHub App created and credentials saved ✔ (app id ${res.app_id})`
       } catch (err) {
@@ -669,7 +689,7 @@ export default {
       this.deliveriesBusy = true
       this.deliveriesError = ''
       try {
-        this.deliveries = await api.get('/api/github/webhook-deliveries')
+        this.deliveries = await this.ship.api.get('/api/github/webhook-deliveries')
       } catch (err) {
         this.deliveries = []
         this.deliveriesError = err.message
@@ -681,7 +701,7 @@ export default {
       this.redelivering = d.id
       this.deliveriesError = ''
       try {
-        await api.post(`/api/github/webhook-deliveries/${d.id}/redeliver`)
+        await this.ship.api.post(`/api/github/webhook-deliveries/${d.id}/redeliver`)
         this.message = 'Redelivery requested ✔ — give GitHub a few seconds, then refresh the list.'
         await this.loadDeliveries()
       } catch (err) {
@@ -705,10 +725,10 @@ export default {
         // never holds it, and saving the events must not need it pasted again.
         const body = { notify_events: this.notifyForm.events, notify_mention: this.notifyForm.mention }
         if (url) body.notify_url = url
-        await api.put('/api/settings', body)
+        await this.ship.api.put('/api/settings', body)
         // Mirror what the server stored rather than refetching every unrelated
         // setting — the mention comes back normalized, so read it back.
-        const fresh = await api.get('/api/settings')
+        const fresh = await this.ship.api.get('/api/settings')
         this.status.has_notify_url = fresh.has_notify_url
         this.status.notify_url_host = fresh.notify_url_host
         this.notifyForm.events = notifyEventsFrom(fresh.notify_events)
@@ -726,7 +746,7 @@ export default {
       this.notifyError = ''
       this.notifyMessage = ''
       try {
-        await api.put('/api/settings', { notify_url: null })
+        await this.ship.api.put('/api/settings', { notify_url: null })
         this.status.has_notify_url = false
         this.status.notify_url_host = ''
         this.notifyMessage = 'Notifications off.'
@@ -741,7 +761,7 @@ export default {
       this.notifyError = ''
       this.notifyMessage = ''
       try {
-        await api.post('/api/settings/notify/test')
+        await this.ship.api.post('/api/settings/notify/test')
         this.notifyMessage = 'Test sent — check the other end.'
       } catch (err) {
         this.notifyError = `Test failed: ${err.message}`
@@ -750,7 +770,7 @@ export default {
       }
     },
     async loadGate() {
-      this.gate = await api.get('/api/proxy')
+      this.gate = await this.ship.api.get('/api/proxy')
       this.gateForm = {
         base_domain: this.gate.base_domain ?? '',
         http_port: String(this.gate.http_port),
@@ -762,7 +782,7 @@ export default {
       this.gateError = ''
       this.gateMessage = ''
       try {
-        this.gate = await api.put('/api/proxy', {
+        this.gate = await this.ship.api.put('/api/proxy', {
           base_domain: this.gateForm.base_domain,
           http_port: Number(this.gateForm.http_port),
           admin_port: Number(this.gateForm.admin_port),
@@ -783,7 +803,7 @@ export default {
       this.gateError = ''
       this.gateMessage = ''
       try {
-        this.gate = await api.post('/api/proxy/apply')
+        this.gate = await this.ship.api.post('/api/proxy/apply')
         this.gateMessage = 'Applied ✔'
       } catch (err) {
         this.gateError = err.message
@@ -819,7 +839,7 @@ export default {
       this.fbMessage = ''
       try {
         const firebase_config = this.parseFirebaseConfig(this.fbText)
-        await api.put('/api/settings', { firebase_config })
+        await this.ship.api.put('/api/settings', { firebase_config })
         await this.load()
         this.fbMessage = 'Saved ✔ — Google sign-in is available on the login page.'
       } catch (err) {
@@ -833,7 +853,7 @@ export default {
       this.fbError = ''
       this.fbMessage = ''
       try {
-        await api.put('/api/settings', { firebase_config: null })
+        await this.ship.api.put('/api/settings', { firebase_config: null })
         await this.load()
         this.fbMessage = 'Google sign-in disabled.'
       } catch (err) {
@@ -860,7 +880,7 @@ export default {
       this.crewError = ''
       this.crewMessage = ''
       try {
-        const user = await api.post('/api/users', this.newUser)
+        const user = await this.ship.api.post('/api/users', this.newUser)
         this.newUser = { username: '', password: '', role: 'tenant', handle: '', domain: '', github_login: '' }
         this.crewMessage = `Welcome aboard, ${user.username} ✔`
       } catch (err) {
@@ -880,7 +900,7 @@ export default {
       this.crewError = ''
       this.crewMessage = ''
       try {
-        await api.put(`/api/users/${user.id}`, this.editUser)
+        await this.ship.api.put(`/api/users/${user.id}`, this.editUser)
         this.editFor = null
         this.crewMessage = `${user.username} updated ✔`
       } catch (err) {
@@ -900,7 +920,7 @@ export default {
       this.crewError = ''
       this.crewMessage = ''
       try {
-        await api.put(`/api/users/${user.id}/password`, { password: this.newPassword })
+        await this.ship.api.put(`/api/users/${user.id}/password`, { password: this.newPassword })
         this.passwordFor = null
         this.newPassword = ''
         this.crewMessage = `Password changed for ${user.username} ✔`
@@ -912,7 +932,7 @@ export default {
     },
     // From the live mirror: an admin sees every fleet.
     ownedBy(user) {
-      return Object.values(store.live.projects ?? {}).map(p => p.info).filter(i => i?.owner_id === user.id)
+      return Object.values(this.ship.live.projects ?? {}).map(p => p.info).filter(i => i?.owner_id === user.id)
     },
     async loadMovePlan(user) {
       this.movePlan = null
@@ -921,7 +941,7 @@ export default {
       this.movePlanBusy = true
       const asked = this.moveTo
       try {
-        const plan = await api.get(`/api/users/${user.id}/reassign?to=${asked}`)
+        const plan = await this.ship.api.get(`/api/users/${user.id}/reassign?to=${asked}`)
         if (this.moveFor === user.id && this.moveTo === asked) this.movePlan = plan // not a stale answer
       } catch (err) {
         this.movePlanError = this.describeError(err)
@@ -935,8 +955,8 @@ export default {
       this.crewMessage = ''
       const target = this.users.find(t => t.id === this.moveTo)
       try {
-        const { moved } = await api.post(`/api/users/${user.id}/reassign`, { to: this.moveTo })
-        await api.del(`/api/users/${user.id}`)
+        const { moved } = await this.ship.api.post(`/api/users/${user.id}/reassign`, { to: this.moveTo })
+        await this.ship.api.del(`/api/users/${user.id}`)
         this.moveFor = null
         this.crewMessage = `${moved} project${moved === 1 ? '' : 's'} moved to ${target?.username ?? 'their new owner'} — ${user.username} has gone ashore.`
       } catch (err) {
@@ -971,7 +991,7 @@ export default {
       this.crewError = ''
       this.crewMessage = ''
       try {
-        await api.del(`/api/users/${user.id}`)
+        await this.ship.api.del(`/api/users/${user.id}`)
         this.crewMessage = `${user.username} has gone ashore.`
       } catch (err) {
         this.crewError = this.describeError(err)

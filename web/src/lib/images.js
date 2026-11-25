@@ -5,8 +5,10 @@ import { store } from '../store.js'
 // effort, and a diff cannot carry a null inside an array) — so the join lives
 // here, once, for everyone who has to answer "does this image exist?".
 
-export function liveImages() {
-  return store.ready ? (store.live.images ?? null) : null
+// `ship` (lib/ship.js): whose Shipyard — this panel's unless said otherwise.
+export function liveImages(ship = null) {
+  if (!store.ready) return null
+  return (ship ? ship.live.images : store.live.images) ?? null
 }
 
 // `exists` stays null until a listing actually succeeded: an unreachable

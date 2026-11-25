@@ -54,6 +54,7 @@ export class GitHubApp {
     this._repos.clear()
     this._installations = null
     this._appOwner = null
+    this._scoped?.clear()
   }
 
   // Exchange a one-time code from GitHub's app-manifest creation flow for the
@@ -76,7 +77,7 @@ export class GitHubApp {
     return res.json()
   }
 
-  async _fetch(path, { token, jwt, method = 'GET' } = {}) {
+  async _fetch(path, { token, jwt, method = 'GET', body } = {}) {
     const res = await this._fetchFn(`${API}${path}`, {
       method,
       headers: {
@@ -84,7 +85,9 @@ export class GitHubApp {
         'user-agent': 'skeppa',
         'x-github-api-version': '2022-11-28',
         authorization: token ? `token ${token}` : `Bearer ${jwt}`,
+        ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
       },
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     })
     if (!res.ok) {
       const body = await res.text().catch(() => '')
@@ -157,6 +160,24 @@ export class GitHubApp {
       ? await this.getInstallationIdForRepo(repoFullName)
       : await this.getInstallationId()
     return this._tokenForInstallation(id)
+  }
+
+  // A token for one repository and nothing else, read-only — what a Fleet
+  // agent is given (nodes/answers.js) instead of the installation's own,
+  // which reaches every repo the installation holds. Cached per repo.
+  async getScopedToken(repoFullName) {
+    const id = await this.getInstallationIdForRepo(repoFullName)
+    const key = `${id}:${repoFullName}`
+    const cached = this._scoped?.get(key)
+    if (cached && cached.expiresAt - Date.now() > 5 * 60_000) return { ...cached }
+    const data = await this._fetch(`/app/installations/${id}/access_tokens`, {
+      jwt: await this._appJwt(),
+      method: 'POST',
+      body: { repositories: [repoFullName.split('/')[1]], permissions: { contents: 'read' } },
+    })
+    const entry = { token: data.token, expiresAt: new Date(data.expires_at).getTime() }
+    ;(this._scoped ??= new Map()).set(key, entry)
+    return { ...entry }
   }
 
   // App metadata (name, slug, html_url) — the slug builds the install link.

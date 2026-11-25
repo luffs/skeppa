@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { loadConfig } from './config.js'
+import { loadConfig, rootDir } from './config.js'
 import { openDb } from './db/index.js'
 import { migrate } from './db/migrate.js'
 import { pruneSessions } from './auth/sessions.js'
@@ -14,7 +14,12 @@ import { createProxy, proxySettings, projectPublicUrl } from './proxy/index.js'
 import { GitHubApp } from './github/appClient.js'
 import { DeployRunner, recoverInterrupted } from './deploy/runner.js'
 import { resurrectApps } from './deploy/resurrect.js'
-import { createApp } from './app.js'
+import { createApp, createFleetApiApp, hasLocalUi } from './app.js'
+import { createNodeLinks } from './nodes/links.js'
+import { sqliteStorage } from 'lazy-storage/server/sqlite'
+import { createFleetAnswers } from './nodes/answers.js'
+import { createUplink, readAgentKey, checkoutVersion } from './agent/uplink.js'
+import { FleetGitHub } from './agent/github.js'
 
 const config = loadConfig()
 mkdirSync(config.dataDir, { recursive: true })
@@ -35,7 +40,15 @@ if (!db.query('SELECT 1 FROM users LIMIT 1').get()) {
 const liveState = createLiveState()
 initLiveState(liveState, db, config)
 
-const github = new GitHubApp({ db, config })
+// Agent mode: the master's GitHub App, lent over the uplink, unless this
+// panel has one of its own (agent/github.js). `uplink` is made further down.
+let uplink = null
+const github = config.masterUrl
+  ? new FleetGitHub({
+    db, config,
+    ask: (method, params) => (uplink ? uplink.ask(method, params) : Promise.reject(new Error('not connected to the master'))),
+  })
+  : new GitHubApp({ db, config })
 // Where a notification links to: the project's routed address, or nothing.
 // Never throws — a notification must not break the deploy or the poll.
 const urlOfProject = projectId => {
@@ -45,8 +58,11 @@ const urlOfProject = projectId => {
     return ''
   }
 }
+// The commit this checkout is at: in the system record (the Fleet page compares
+// it) and in an agent's hello to its master.
+const panelVersion = checkoutVersion(rootDir)
 const poller = createPoller({
-  db, config, liveState,
+  db, config, liveState, version: panelVersion,
   onCrashAlert: (label, count, projectId) =>
     notifyEvent(db, config.masterKey, 'restart_burst', `⚠ ${label} restarted ${count} times in the last 10 minutes — check the Engine room`, { url: urlOfProject(projectId) }),
 })
@@ -55,8 +71,13 @@ const poller = createPoller({
 if (upgradeNotifyUrl(db, config.masterKey)) console.log('notify_url: legacy plaintext value now stored encrypted')
 
 // Live state and deploy logs reach browsers as lazy-storage stores at /live.
-// The poller polls fast while anyone is looking.
+// The poller polls fast while anyone is looking — here, or on the master
+// this panel reports to (agent mode).
+const looking = { here: false, master: false }
+const cadence = () => poller.setFast(looking.here || looking.master)
 const liveStores = createLiveStores({
+  // Agent mode: one more store, everything for the master (agent/uplink.js).
+  uplink: Boolean(config.masterUrl),
   liveState,
   // Deploy logs echo env values: a tenant may only follow their own
   // deployments. Admins pass.
@@ -67,8 +88,32 @@ const liveStores = createLiveStores({
     ).get(deploymentId)
     return row?.owner_id === user.id
   },
-  onSessionsChange: n => poller.setFast(n > 0),
+  onSessionsChange: n => {
+    looking.here = n > 0
+    cadence()
+  },
 })
+// Other Skeppa servers reporting to this one: their sockets at /agent, and
+// what they report as stores next to the panel's own (nodes/links.js).
+// What agents ask of this panel: its GitHub App, lent one repo at a time.
+let answers = null
+const minutes = ms => Math.max(1, Math.round(ms / 60_000))
+const NODE_ALERT_MS = 5 * 60_000 // a fleet server away this long is worth a notification
+const links = createNodeLinks({
+  db, liveState,
+  onAsk: (nodeId, method, params) => answers.answer(nodeId, method, params),
+  // What each server last reported survives a restart here: the Fleet page
+  // has something to show, and pushes for its repos are kept for it, before
+  // it dials in again. A cache — rebuilt from the agent, so no lease (a
+  // self-deploy's overlap may share it) and not in the backups.
+  storage: sqliteStorage(join(config.dataDir, 'fleet-mirror.sqlite'), { lease: false }),
+  offlineAlertMs: NODE_ALERT_MS,
+  onNodeDown: (row, lastSeen) => notifyEvent(db, config.masterKey, 'node_offline',
+    `⚠ ${row.name} has not reported for ${minutes(NODE_ALERT_MS)} minutes${lastSeen ? ` — last seen ${lastSeen.replace('T', ' ').slice(0, 16)} UTC` : ''}. Its apps keep running; it just cannot be reached from here.`),
+  onNodeUp: (row, awayMs) => notifyEvent(db, config.masterKey, 'node_offline',
+    `✔ ${row?.name ?? 'A fleet server'} reports again, after about ${minutes(awayMs)} minutes away.`),
+})
+answers = createFleetAnswers({ github, links })
 // Always on: the crash watch must run with nobody looking. Clients connecting
 // only switch the cadence from idle to live.
 poller.start()
@@ -91,8 +136,44 @@ if (proxySettings(db).baseDomain) {
 // would write their decrypted env to disk) — the panel starts them itself.
 resurrectApps({ db, config }).catch(err => console.error('[resurrect] failed:', err.message))
 
-const app = createApp({ db, config, liveState, runner, github, poller, proxy })
-const live = createLiveTransport({ db, liveStores })
+const app = createApp({ db, config, liveState, runner, github, poller, proxy, links })
+// One /live socket for both: the panel's own stores, and its nodes'.
+const live = createLiveTransport({
+  db,
+  liveStores: {
+    get: id => (links.owns(id) ? links.get(id) : liveStores.get(id)),
+    canOpen: (user, id) => (links.owns(id) ? links.canOpen(user, id) : liveStores.canOpen(user, id)),
+  },
+})
+// Bun has one websocket handler per server: the agents' sockets carry
+// `skeppaNode` in their data, everything else is lazy-storage's.
+const websocket = { ...live.websocket }
+for (const [name, handler] of Object.entries(live.websocket)) {
+  if (typeof handler !== 'function') continue
+  const own = links.websocket[name]
+  websocket[name] = (ws, ...rest) => (links.isNodeSocket(ws) ? own?.(ws, ...rest) : handler(ws, ...rest))
+}
+
+// Agent mode: report to the master named in the config.
+if (config.masterUrl) {
+  try {
+    uplink = createUplink({
+      masterUrl: config.masterUrl,
+      key: readAgentKey(config.agentKeyFile),
+      db, runner, liveStores, liveState, github,
+      fleetApi: createFleetApiApp({ db, config, liveState, runner, github, poller, proxy }),
+      version: panelVersion,
+      onWatch: on => {
+        looking.master = on
+        cadence()
+      },
+    })
+    if (config.masterUrl.startsWith('http:')) console.warn(`warning: MASTER_URL is plain http — the agent key and everything this server reports travel unencrypted`)
+    uplink.start()
+  } catch (err) {
+    console.error(`[uplink] not reporting to ${config.masterUrl}: ${err.message}`)
+  }
+}
 
 const server = Bun.serve({
   hostname: config.host,
@@ -104,10 +185,13 @@ const server = Bun.serve({
   // Bun's ceiling.
   idleTimeout: 255,
   async fetch(req, server) {
-    const res = await live.upgrade(req, server) // the /live socket and its snapshot route
+    const agent = links.upgrade(req, server) // the agents' sockets at /agent
+    if (agent !== null) return agent
+    // the /live socket and its snapshot route — not on an agent without its own UI
+    const res = hasLocalUi(config) ? await live.upgrade(req, server) : null
     return res === null ? app.fetch(req, server) : res
   },
-  websocket: live.websocket,
+  websocket,
 })
 console.log(`Skeppa listening on http://${config.host}:${server.port} (${config.isProd ? 'production' : 'development'})` +
   (config.host === '127.0.0.1' ? ' — loopback only; set HOST=0.0.0.0 in the panel config for direct LAN access' : ''))

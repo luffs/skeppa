@@ -187,11 +187,43 @@ test('who may open what', () => {
 // are strings.
 test('the declared store shapes are the ones the client mirrors', () => {
   expect(STORE_SHAPES).toEqual({
-    panel: { initial: { system: {}, users: {}, images: {} }, singletons: ['system', 'images'] },
+    panel: { initial: { system: {}, users: {}, images: {}, nodes: {} }, singletons: ['system', 'images'] },
     harbor: { initial: { proxy: {} }, singletons: ['proxy'] },
     fleet: { initial: { projects: {}, groups: {} }, singletons: [] },
     deploy: { initial: { lines: {} }, singletons: ['lines'] },
+    node: { initial: { projects: {}, groups: {}, proxy: {}, system: {}, images: {} }, singletons: ['proxy', 'system', 'images'] },
   })
+})
+
+// Agent mode: one more store with everything, whoever owns it — for the
+// master's link only, never a browser, and not counted as someone looking.
+test('an agent feeds the uplink everything; no browser may open it', async () => {
+  const sessions = []
+  const { liveState, live, admin, bob } = setup({ uplink: true, onSessionsChange: n => sessions.push(n) })
+  const up = live.get('uplink').state
+  expect(Object.keys(up.projects).sort()).toEqual(['1', '2'])
+  expect(up.system.loadavg).toEqual([0.1, 0.2, 0.3])
+  expect(up.proxy).toEqual({ baseDomain: '' })
+  liveState.projects[2].pm2 = { status: 'online' }
+  liveState.system.loadavg = [1, 2, 3]
+  delete liveState.projects[1]
+  await tick()
+  expect(up.projects[2].pm2.status).toBe('online')
+  expect(up.system.loadavg).toEqual([1, 2, 3])
+  expect(up.projects[1]).toBeUndefined()
+  expect(live.canOpen(admin, 'uplink')).toBe(false)
+  expect(live.canOpen(bob, 'uplink')).toBe(false)
+
+  const net = createNetwork({ session: ({ send, user }) => createHub(id => live.get(id), { send, user }) })
+  const master = net.client({ store: 'uplink', ...STORE_SHAPES.node, undo: false, presence: false }, { user: { role: 'master' } })
+  await net.settle()
+  expect(Object.keys(master.state.projects)).toEqual(['2'])
+  expect(sessions).toEqual([]) // the master reading is not someone looking
+})
+
+test('a panel without uplink has no such store', () => {
+  const { live } = setup()
+  expect(live.get('uplink')).toBeNull()
 })
 
 // Through lazy-storage's own hub and an in-memory network: what a browser

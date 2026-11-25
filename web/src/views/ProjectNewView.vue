@@ -1,8 +1,12 @@
 <template>
   <div class="container narrow">
-    <h1 style="margin-bottom: 0">Moor a new project</h1>
+    <!-- Mooring on another server, through the fleet (lib/ship.js). -->
+    <router-link v-if="ship.node" to="/fleet" class="mono" style="font-size: 12px; color: var(--dim)">← back to the fleet</router-link>
+    <ShipOffline />
+    <h1 style="margin-bottom: 0">Moor a new project <span v-if="ship.node" class="chip blue">on {{ ship.name }}</span></h1>
     <p class="hint" style="font-size: 14px; margin: 6px 0 22px">
-      Pick a repository, tell Skeppa how to build and start it.
+      Pick a repository, tell Skeppa how to build and start it.<template v-if="ship.node">
+        It is moored on {{ ship.name }} and deploys there, from GitHub with this panel's GitHub App.</template>
     </p>
     <!-- The same sections, in the same order, as the project's Rigging tab (ProjectFields). -->
     <ProjectFields
@@ -66,18 +70,20 @@
 </template>
 
 <script>
-import { api } from '../api.js'
+import { shipProvider } from '../lib/ship.js'
 import { store } from '../store.js'
 import ProjectFields from '../components/ProjectFields.vue'
 import FieldError from '../components/FieldError.vue'
 import RepoPicker from '../components/RepoPicker.vue'
 import StableLabel from '../components/StableLabel.vue'
+import ShipOffline from '../components/ShipOffline.vue'
 
 const GENERIC_SUGGESTED = { deploy: 'bun install && bun run build', start: 'bun run start' }
 
 export default {
   name: 'ProjectNewView',
-  components: { ProjectFields, FieldError, RepoPicker, StableLabel },
+  mixins: [shipProvider], // moored here, or on a fleet server
+  components: { ProjectFields, FieldError, RepoPicker, StableLabel, ShipOffline },
   data() {
     return {
       repos: [],
@@ -91,7 +97,6 @@ export default {
       runtimeTouched: false,
       externalRepo: false,
       isTenant: store.user?.role === 'tenant',
-      myId: store.user?.id ?? null, // a new project is the mooring user's, and so is its pier
       myHandle: store.user?.handle ?? '',
       // Shown as placeholders and offered as one-click values — one source, so
       // the hint and what the button fills in can never drift apart. Replaced
@@ -137,8 +142,15 @@ export default {
     await this.loadRepos()
   },
   computed: {
+    // A new project is the mooring user's, and so is its pier — on a fleet
+    // server, the admin this panel acts as there (its hello says who).
+    myId() {
+      if (this.ship.node) return store.live.nodes?.[this.ship.node]?.adminId || null
+      return store.user?.id ?? null
+    },
     // Why Moor is not ready yet, or '' when it is.
     missing() {
+      if (!this.ship.online) return `${this.ship.name} is offline — mooring waits until it reports again.`
       const repo = this.externalRepo ? this.form.git_url.trim() : this.form.repo_full_name
       if (!repo && !this.form.name.trim()) return this.externalRepo ? 'Give it a git URL and a name.' : 'Pick a repository and give it a name.'
       if (!repo) return this.externalRepo ? 'Give it a git URL.' : 'Pick a repository.'
@@ -148,7 +160,7 @@ export default {
     // An admin's panel started without a container socket: a container
     // default would only fail the first deploy, so pm2 is the default there.
     noEngine() {
-      const system = store.live?.system
+      const system = this.ship.live?.system
       return !this.isTenant && Boolean(system?.appsDir) && !system.containerSocket
     },
   },
@@ -159,7 +171,7 @@ export default {
       if (fresh) this.reposRefreshing = true
       this.repoError = ''
       try {
-        this.repos = await api.get(fresh ? '/api/github/repos?fresh=1' : '/api/github/repos')
+        this.repos = await this.ship.api.get(fresh ? '/api/github/repos?fresh=1' : '/api/github/repos')
       } catch (err) {
         this.repoError = err.message
       } finally {
@@ -194,7 +206,7 @@ export default {
       this.suggested = { ...GENERIC_SUGGESTED }
       try {
         const q = new URLSearchParams({ repo, branch })
-        const found = await api.get(`/api/github/repos/suggest?${q}`)
+        const found = await this.ship.api.get(`/api/github/repos/suggest?${q}`)
         if (this.suggestionFor !== key || !found) return
         this.suggestion = found
         if (found.found) this.suggested = { deploy: found.deploy, start: found.start }
@@ -215,7 +227,7 @@ export default {
       this.error = ''
       this.fieldErrors = {}
       try {
-        const created = await api.post('/api/projects', {
+        const created = await this.ship.api.post('/api/projects', {
           ...this.form,
           cwd: this.form.cwd || null,
           build_image: this.form.build_image || null,
@@ -226,7 +238,7 @@ export default {
           subdomain: this.form.subdomain || null,
           port: String(this.form.port ?? '').trim() || null,
         })
-        this.$router.push(`/projects/${created.id}`)
+        this.$router.push(this.ship.link(created.id))
       } catch (err) {
         this.fieldErrors = err.fields ?? {}
         this.error = err.fields ? 'Some fields need a look — they are marked above.' : err.message

@@ -61,7 +61,23 @@ function readConfigFile(path, explicit) {
 // Config files are hand-written, so `~/` deserves to work in path values —
 // readFileSync/resolve treat it literally (tilde is shell syntax).
 const expandHome = p => (p === '~' || p?.startsWith('~/') ? join(homedir(), p.slice(1)) : p)
-const PATH_KEYS = ['MASTER_KEY_FILE', 'DATA_DIR', 'APPS_DIR', 'CONTAINER_SOCKET']
+const PATH_KEYS = ['MASTER_KEY_FILE', 'DATA_DIR', 'APPS_DIR', 'CONTAINER_SOCKET', 'AGENT_KEY_FILE']
+
+// MASTER_URL makes this panel an agent of another (agent/uplink.js): an
+// http(s) URL of the master's panel, trailing slashes dropped. Anything else
+// is fatal — a typo must not quietly mean "not an agent".
+export function parseMasterUrl(value) {
+  if (!value) return ''
+  let url
+  try {
+    url = new URL(value)
+  } catch {
+    return null
+  }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return null
+  if (url.username || url.password || url.search || url.hash) return null
+  return url.href.replace(/\/+$/, '')
+}
 
 // The master key preferably comes from MASTER_KEY_FILE — a chmod-600 file
 // holding 64 hex chars, living outside the repo, DATA_DIR and APPS_DIR so no
@@ -134,6 +150,12 @@ export function loadConfig({ requireMasterKey = true } = {}) {
     process.exit(1)
   }
 
+  const masterUrl = parseMasterUrl(env.MASTER_URL)
+  if (masterUrl === null) {
+    console.error(`FATAL: MASTER_URL must be an http(s) URL of the master panel, without credentials or query (got "${env.MASTER_URL}"). Refusing to start.`)
+    process.exit(1)
+  }
+
   const dataDir = resolve(env.DATA_DIR || join(rootDir, 'data'))
   // Under HOME so a non-root panel user can create it without sudo.
   const appsDir = resolve(env.APPS_DIR || join(homedir(), 'apps'))
@@ -159,6 +181,7 @@ export function loadConfig({ requireMasterKey = true } = {}) {
     mountGuarded: [...new Set([
       dataDir, appsDir, rootDir, dirname(configPath),
       ...(env.MASTER_KEY_FILE ? [dirname(resolve(env.MASTER_KEY_FILE))] : []),
+      ...(env.AGENT_KEY_FILE ? [dirname(resolve(env.AGENT_KEY_FILE))] : []),
     ])],
     webDist: join(rootDir, 'web', 'dist'),
     deployTimeoutMs: Number(env.DEPLOY_TIMEOUT_MS || 10 * 60 * 1000),
@@ -169,5 +192,13 @@ export function loadConfig({ requireMasterKey = true } = {}) {
     selfPm2Name: env.SKEPPA_PM2_NAME || 'skeppa',
     isSecureCookie: env.SKEPPA_SECURE_COOKIE !== 'false',
     skeppaApi: env.SKEPPA_API,
+    // An agent's own panel (UI, sign-in, /live): off unless asked for — it is run
+    // from its master (app.js hasLocalUi).
+    agentLocalUi: env.AGENT_LOCAL_UI === 'true',
+    // Agent mode: the master to report to ('' = none) and the key to dial it
+    // with, next to the config file unless said otherwise (scripts/join.js
+    // writes both).
+    masterUrl,
+    agentKeyFile: env.AGENT_KEY_FILE || join(dirname(configPath), 'agent.key'),
   }
 }

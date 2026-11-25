@@ -68,7 +68,10 @@ const EMPTY_STATS = { status: 'not started', uptime: null, memory: null, cpu: nu
 const projectStats = ({ status, uptime, memory, cpu, restarts, pid }) =>
   ({ status, uptime, memory, cpu, restarts, pid })
 
-export function createPoller({ db, config, liveState, intervalMs = 5000, idleIntervalMs = 60_000, containerClient = null, onCrashAlert = null }) {
+// `version`: the commit this panel runs (agent/uplink.js checkoutVersion), sent
+// along in the system record so the Fleet page can tell servers apart that run
+// another; '' when unknown.
+export function createPoller({ db, config, liveState, intervalMs = 5000, idleIntervalMs = 60_000, containerClient = null, onCrashAlert = null, version = '' }) {
   let timer = null
   let timerMs = null
   let ticking = false
@@ -172,6 +175,7 @@ export function createPoller({ db, config, liveState, intervalMs = 5000, idleInt
         hostBootAt,
         panelStartedAt,
         selfPm2Name,
+        version,
         // Like images.managedPrefix: sent along so the client can recognize
         // the panel's own proxy process without hardcoding its name.
         proxyPm2Name: PROXY_PROCESS,

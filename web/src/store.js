@@ -54,8 +54,9 @@ export function noteServerDate(header, sentAt, receivedAt = Date.now()) {
 // The app's public address, or '' when the project is not routed. The base
 // domain rides along in LiveState, so links appear (and follow edits) without
 // any request of their own.
-export function appUrlFor(project) {
-  const domain = store.live.proxy?.baseDomain
+// `domain` is this panel's base domain unless given — a project on another
+// server reporting here (the Fleet page) routes under that server's.
+export function appUrlFor(project, domain = store.live.proxy?.baseDomain) {
   if (!project?.subdomain || !domain) return ''
   // A tenant with a domain of their own routes there ('@' is the apex);
   // other tenant projects are routed under their owner's handle.

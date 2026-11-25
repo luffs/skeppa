@@ -13,6 +13,13 @@ import { valueAt } from 'lazy-storage/core'
 //                  and piers (groups)
 //   harbor         proxy (the base domain)  any signed-in user
 //
+// The panel's nodes (other Skeppa servers reporting here, nodes/links.js)
+// ride in `panel` as a collection; what each one reports is a store of its
+// own, `node-<id>`, kept by the node links, not by this bridge. On an agent
+// the bridge feeds one more store, `uplink` — every project, pier, the proxy
+// and the system record, unfiltered — which no browser may open: only the
+// master's link reads it (agent/uplink.js).
+//
 // Nothing here writes LiveState. The poller, the runner and the routes keep
 // writing the LiveState proxy; the bridge below forwards each lazy-watch
 // batch to the stores it belongs to, so the writers never learn that stores
@@ -38,11 +45,17 @@ import { valueAt } from 'lazy-storage/core'
 // same (web/src/live.js) — arrays need no declaration of their own, an array
 // being a leaf written whole.
 export const STORE_SHAPES = {
-  panel: { initial: { system: {}, users: {}, images: {} }, singletons: ['system', 'images'] },
+  panel: { initial: { system: {}, users: {}, images: {}, nodes: {} }, singletons: ['system', 'images'] },
   harbor: { initial: { proxy: {} }, singletons: ['proxy'] },
   fleet: { initial: { projects: {}, groups: {} }, singletons: [] },
   deploy: { initial: { lines: {} }, singletons: ['lines'] },
+  // What an agent reports (its `uplink`), and the same again as the
+  // master's `node-<id>`: every project and pier on that server, its proxy,
+  // its system record and its images (the Shipyard's, for the project form).
+  node: { initial: { projects: {}, groups: {}, proxy: {}, system: {}, images: {} }, singletons: ['proxy', 'system', 'images'] },
 }
+
+export const UPLINK_ID = 'uplink'
 
 const FLEET_ID = /^fleet-\d+$/
 const DEPLOY_ID = /^deploy-(\d+)$/
@@ -57,9 +70,29 @@ export function canOpenStore(user, id) {
   return id === fleetId(user.id)
 }
 
-function mirrorStore(shape) {
+// lazy-watch records an array edit as a fragment (a `$splice`, a length, a
+// handful of indices) and a store takes an array whole, so every array goes
+// in as it stands: a store's tree is a subtree of `root` at the same paths,
+// so wherever the live value is an array it replaces what the diff holds
+// there, and how the source edited it stops mattering at the wire. `root` is
+// LiveState here, and an upstream mirror's state in nodes/links.js.
+export function wholeArraysOf(root, diff, path = []) {
+  if (diff === null || typeof diff !== 'object') return diff
+  const live = valueAt(root, path)
+  if (Array.isArray(live)) return LazyWatch.isProxy(live) ? LazyWatch.snapshot(live) : structuredClone(live)
+  if (Array.isArray(diff)) return diff // already whole, with nothing live behind it
+  const out = {}
+  for (const [key, value] of Object.entries(diff)) out[key] = wholeArraysOf(root, value, [...path, key])
+  return out
+}
+
+// `storage`: a lazy-storage adapter (sqliteStorage(file).store(id)) for a
+// mirror that should outlive the process — a Fleet node's (nodes/links.js);
+// in memory otherwise.
+export function mirrorStore(shape, { storage } = {}) {
   return createStore({
     ...shape,
+    ...(storage ? { storage } : {}),
     readOnly: true, // clients only read; an op a client sends is refused and it resyncs
     rateLimit: false,
   })
@@ -82,6 +115,7 @@ export function createLiveStores({
   canReadDeployment = () => false,
   onError = err => console.error('[live]', err?.message ?? err),
   onSessionsChange = () => {},
+  uplink = false,
 }) {
   const stores = new Map()
   const logs = new Map() // deploymentId -> { store, seq }
@@ -92,8 +126,10 @@ export function createLiveStores({
 
   function add(id, store) {
     store.observe('session', () => {
+      // The master reading the uplink is not someone looking: it says when
+      // someone is (agent/uplink.js `watch`), and the poller follows that.
       let total = 0
-      for (const s of stores.values()) total += s.sessions
+      for (const [sid, s] of stores) if (sid !== UPLINK_ID) total += s.sessions
       if (total !== sessions) onSessionsChange((sessions = total))
     })
     stores.set(id, store)
@@ -101,6 +137,7 @@ export function createLiveStores({
   }
   add('panel', mirrorStore(STORE_SHAPES.panel))
   add('harbor', mirrorStore(STORE_SHAPES.harbor))
+  if (uplink) add(UPLINK_ID, mirrorStore(STORE_SHAPES.node))
 
   const ensureFleet = ownerId =>
     stores.get(fleetId(ownerId)) ?? add(fleetId(ownerId), mirrorStore(STORE_SHAPES.fleet))
@@ -136,19 +173,7 @@ export function createLiveStores({
     return LazyWatch.isProxy(value) ? LazyWatch.snapshot(value) : value
   }
 
-  // lazy-watch records an array edit as a fragment (a `$splice`, a length, a
-  // handful of indices) and a store takes an array whole, so every array goes
-  // in as it stands: each store's tree is a subtree of LiveState at the same
-  // paths, so wherever the live value is an array it replaces what the diff
-  // holds there, and how LiveState edited it stops mattering at the wire.
-  function wholeArrays(node, path) {
-    if (node === null || typeof node !== 'object') return node
-    if (Array.isArray(valueAt(liveState, path))) return current(path)
-    if (Array.isArray(node)) return node // already whole, with nothing live behind it
-    const out = {}
-    for (const [key, value] of Object.entries(node)) out[key] = wholeArrays(value, [...path, key])
-    return out
-  }
+  const wholeArrays = diff => wholeArraysOf(liveState, diff)
 
   // The server's own write: stamped now and applied without checks, so a
   // record recreated under a deleted key (a container after a deploy, a pm2
@@ -158,14 +183,14 @@ export function createLiveStores({
     const store = stores.get(id)
     if (!store) return
     try {
-      store.patch(wholeArrays(diff, []))
+      store.patch(wholeArrays(diff))
     } catch (err) {
       onError(new Error(`live store ${id}: ${err.message}`, { cause: err }))
     }
   }
 
   function route(diff) {
-    const { projects, groups, system, users, images, proxy } = diff
+    const { projects, groups, system, users, images, proxy, nodes } = diff
     const fleets = new Map() // owner -> { projects?, groups? }
     const into = (owner, key) => {
       if (!fleets.has(owner)) fleets.set(owner, {})
@@ -213,8 +238,19 @@ export function createLiveStores({
     if (system !== undefined) panel.system = system
     if (users !== undefined) panel.users = users
     if (images !== undefined) panel.images = images
+    if (nodes !== undefined) panel.nodes = nodes
     if (Object.keys(panel).length) write('panel', panel)
     if (proxy !== undefined) write('harbor', { proxy })
+    if (uplink) {
+      // Everything, whoever owns it: the master is this server's admin.
+      const up = {}
+      if (projects !== undefined) up.projects = projects
+      if (groups !== undefined) up.groups = groups
+      if (proxy !== undefined) up.proxy = proxy
+      if (system !== undefined) up.system = system
+      if (images !== undefined) up.images = images
+      if (Object.keys(up).length) write(UPLINK_ID, up)
+    }
     // Fleets follow the crew: a new user has a store to open before their
     // first project; a deleted user's store closes on their sockets.
     if (users && typeof users === 'object') {

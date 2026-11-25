@@ -1,5 +1,4 @@
-import { store } from '../store.js'
-import { api } from '../api.js'
+import { localShip } from './ship.js'
 import { alertDialog, confirmDialog } from './dialog.js'
 import { vesselState } from './vessels.js'
 
@@ -7,7 +6,8 @@ import { vesselState } from './vessels.js'
 // project page alike: the one action its state calls for, and the rest for a
 // ⋮ menu. `perform` carries an action out, confirmations included; the
 // navigating ones (open the app, Rigging) stay with the caller, which knows
-// its router.
+// its router. `ship` is the server the project is on (lib/ship.js): this
+// panel unless said otherwise.
 
 const isStatic = project => (project.deployed_runtime || project.runtime) === 'static'
 
@@ -22,8 +22,8 @@ export function primaryAction(project, live) {
 }
 
 // The owner's piers, A–Z; a project only ever moors at its owner's.
-export function ownerPiers(project) {
-  return Object.values(store.live.groups ?? {})
+export function ownerPiers(project, ship = localShip) {
+  return Object.values(ship.live.groups ?? {})
     .filter(g => g.owner_id === project.owner_id)
     .sort((a, b) => a.name.localeCompare(b.name))
 }
@@ -38,7 +38,7 @@ export const lastVoyageId = live => live?.currentDeployment?.id ?? live?.lastDep
 // end, Stop, the one thing that takes the app down. `exclude` is the key of
 // the button next to the menu, which the menu does not repeat; the app's
 // address is a link of its own on the row and the page, so it is not here.
-export function actionMenu(project, live, { exclude = '', goto = false, piers = false } = {}) {
+export function actionMenu(project, live, { exclude = '', goto = false, piers = false, ship = localShip } = {}) {
   const underway = vesselState(live) === 'underway'
   const running = !isStatic(project) && live?.pm2?.status === 'online'
   const items = []
@@ -56,7 +56,7 @@ export function actionMenu(project, live, { exclude = '', goto = false, piers = 
   }
 
   if (piers) {
-    const all = ownerPiers(project)
+    const all = ownerPiers(project, ship)
     if (all.length) {
       items.push({ heading: 'Move to pier' })
       for (const g of all) {
@@ -82,11 +82,11 @@ const VERB = { deploy: 'Deploy', start: 'Start', stop: 'Stop', restart: 'Restart
 // Deploy, start, stop, restart, or a move between piers. Resolves to the
 // API's answer ({ id } for a deploy), or null when declined or failed — a
 // failure is already said in a dialog.
-export async function performAction(project, key) {
+export async function performAction(project, key, ship = localShip) {
   if (key.startsWith('pier:')) {
     const groupId = key.slice(5)
     try {
-      return await api.patch(`/api/projects/${project.id}`, { group_id: groupId === '' ? null : Number(groupId) })
+      return await ship.api.patch(`/api/projects/${project.id}`, { group_id: groupId === '' ? null : Number(groupId) })
     } catch (err) {
       const why = err.fields ? Object.values(err.fields).join(', ') : err.message
       alertDialog(`Could not move ${project.name}: ${why}`)
@@ -97,8 +97,8 @@ export async function performAction(project, key) {
   if (key === 'restart' && !(await confirmDialog(`Restart "${project.name}"?`, { confirmLabel: 'Restart' }))) return null
   try {
     return key === 'deploy'
-      ? await api.post(`/api/projects/${project.id}/deploy`)
-      : await api.post(`/api/projects/${project.id}/pm2/${key}`)
+      ? await ship.api.post(`/api/projects/${project.id}/deploy`)
+      : await ship.api.post(`/api/projects/${project.id}/pm2/${key}`)
   } catch (err) {
     alertDialog(`${VERB[key] ?? key} failed: ${err.message}`)
     return null

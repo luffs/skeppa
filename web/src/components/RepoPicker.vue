@@ -121,7 +121,7 @@
 
 <script>
 import StableLabel from './StableLabel.vue'
-import { store } from '../store.js'
+import { shipInject } from '../lib/ship.js'
 import { timeAgo } from '../lib/format.js'
 import { REPO_SORTS, searchWords, matchesRepo, sortRepos, groupRepos, inScope, highlight } from '../lib/repos.js'
 
@@ -160,6 +160,7 @@ let uid = 0
 // the choice shows as one card and the list folds away until Change.
 export default {
   name: 'RepoPicker',
+  inject: shipInject, // whose projects count as moored (lib/ship.js)
   components: { StableLabel },
   props: {
     repos: { type: Array, default: () => [] },
@@ -226,7 +227,7 @@ export default {
     // full name → the projects that already moor it.
     moored() {
       const out = {}
-      for (const p of Object.values(store.live.projects ?? {})) {
+      for (const p of Object.values(this.ship.live.projects ?? {})) {
         const info = p.info
         if (!info?.repo_full_name || info.git_url) continue
         ;(out[info.repo_full_name] ??= []).push(info.name)

@@ -8,6 +8,7 @@
       <div class="links">
         <router-link to="/" class="nav-link" :class="{ active: harborActive }">Harbor</router-link>
         <template v-if="store.user?.role !== 'tenant'">
+          <router-link to="/fleet" class="nav-link" :class="{ active: $route.path.startsWith('/fleet') }">Fleet</router-link>
           <router-link to="/system" class="nav-link" :class="{ active: $route.path === '/system' }">Engine room</router-link>
           <router-link to="/shipyard" class="nav-link" :class="{ active: $route.path === '/shipyard' }">Shipyard</router-link>
           <router-link to="/settings" class="nav-link" :class="{ active: $route.path === '/settings' }">Rigging</router-link>
@@ -30,7 +31,12 @@
         <button class="secondary small" @click="logout">Log out</button>
       </div>
     </nav>
-    <router-view />
+    <!-- A project page is one per server and project, and an admin page one
+         per server: another one (here, or on a server of the fleet) is a
+         fresh page, not this one reused (lib/ship.js). -->
+    <router-view v-slot="{ Component, route }">
+      <component :is="Component" :key="route.meta.project ? `${route.params.node ?? 0}:${route.params.id}` : route.meta.nodePage ? `${route.params.node}:${route.path}` : undefined" />
+    </router-view>
     <AppDialog />
   </div>
 </template>

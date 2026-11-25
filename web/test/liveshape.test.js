@@ -16,10 +16,10 @@ describe('the client declares the stores as the server does', () => {
   // The distinction that matters on the wire: a collection is records keyed
   // by id, a singleton is one record. `lines` has no choice — a deploy log's
   // values are strings, which no collection could hold.
-  test('users, projects and piers are the only collections', () => {
+  test('users, projects, piers and nodes are the only collections', () => {
     const collections = Object.values(SHAPES).flatMap(
       s => Object.keys(s.initial).filter(key => !s.singletons.includes(key))
     )
-    expect(collections.sort()).toEqual(['groups', 'projects', 'users'])
+    expect(collections.sort()).toEqual(['groups', 'groups', 'nodes', 'projects', 'projects', 'users'])
   })
 })

@@ -1,10 +1,13 @@
 import { Hono } from 'hono'
 import { getSecretSetting } from '../db/settings.js'
 import { verifySignature } from '../github/webhook.js'
+import { applyPush, pushSlice } from '../github/push.js'
 
 // No session on this route — authentication is the HMAC signature.
 // Respond quickly; the actual deploy work happens asynchronously.
-export function webhookRoutes({ db, config, runner, liveState, github = null }) {
+// `onPush(slice)` hands a verified push on to the Fleet and says to how many
+// servers it went.
+export function webhookRoutes({ db, config, runner, liveState, github = null, onPush = null }) {
   const app = new Hono()
 
   app.post('/github', async c => {
@@ -33,41 +36,10 @@ export function webhookRoutes({ db, config, runner, liveState, github = null }) 
       return c.json({ forgotten: event })
     }
     if (payload.deleted) return c.json({ ignored: 'branch deleted' })
-    if (payload.repository?.full_name && payload.head_commit?.timestamp) {
-      github?.notePush(payload.repository.full_name, new Date(payload.head_commit.timestamp).toISOString())
-    }
-
-    const repo = payload.repository?.full_name
-    const ref = payload.ref
-    const matches = db.query('SELECT id, branch, auto_deploy FROM projects WHERE repo_full_name = ?').all(repo ?? '')
-      .filter(p => ref === `refs/heads/${p.branch}`)
-
-    const commitSha = payload.after ?? null
-    const commitMessage = payload.head_commit?.message?.split('\n')[0] ?? null
-    const pushedAt = payload.head_commit?.timestamp ?? new Date().toISOString()
-
-    // Every push updates the recorded head commit, so the UI can show
-    // pushed-but-undeployed commits; a deploy only runs with auto_deploy on.
-    if (commitSha) {
-      for (const p of matches) {
-        db.query('UPDATE projects SET head_sha = ?, head_message = ?, head_pushed_at = ? WHERE id = ?')
-          .run(commitSha, commitMessage, pushedAt, p.id)
-        const live = liveState?.projects[p.id]
-        if (live) live.headCommit = { sha: commitSha, message: commitMessage, pushedAt }
-      }
-    }
-
-    const toDeploy = matches.filter(p => p.auto_deploy)
-    queueMicrotask(() => {
-      for (const p of toDeploy) {
-        try {
-          runner.enqueue(p.id, { trigger: 'webhook', commitSha, commitMessage })
-        } catch (err) {
-          console.error('webhook enqueue failed:', err)
-        }
-      }
-    })
-    return c.json({ matched: matches.length, queued: toDeploy.length }, 202)
+    const { matched, queued } = applyPush({ db, liveState, runner, github }, payload)
+    // The Fleet: agents that run this repo hear the push too (nodes/links.js).
+    const forwarded = onPush ? onPush(pushSlice(payload)) : 0
+    return c.json({ matched, queued, ...(forwarded ? { forwarded } : {}) }, 202)
   })
 
   return app

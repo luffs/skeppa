@@ -105,11 +105,14 @@ export async function sendNotification(db, masterKey, text, { fetchFn = fetch, m
 // message with the configured mention. The defaults are what the panel did
 // before the choice existed — failures and restart bursts, nobody pinged —
 // so an upgrade changes nothing until someone opens the form.
-export const NOTIFY_EVENTS = ['deploy_success', 'deploy_failed', 'restart_burst']
+// node_offline is the Fleet's: a server that reports here has been away for
+// a while (nodes/links.js), and the same event again when it is back.
+export const NOTIFY_EVENTS = ['deploy_success', 'deploy_failed', 'restart_burst', 'node_offline']
 const DEFAULT_EVENTS = {
   deploy_success: { send: false, ping: false },
   deploy_failed: { send: true, ping: false },
   restart_burst: { send: true, ping: false },
+  node_offline: { send: true, ping: false },
 }
 
 // Who a ping reaches, kept platform-neutral and whitelisted, since it lands

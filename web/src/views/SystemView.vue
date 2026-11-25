@@ -1,7 +1,11 @@
 <template>
   <div class="container">
+    <!-- Another server's page, run through the fleet (lib/ship.js). -->
+    <router-link v-if="ship.node" to="/fleet" class="mono" style="font-size: 12px; color: var(--dim)">← back to the fleet</router-link>
+    <ShipOffline />
     <div class="page-head">
       <h1 style="margin: 0">Engine room</h1>
+      <span v-if="ship.node" class="chip blue">on {{ ship.name }}</span>
       <span class="mono" style="font-size: 12px" :style="{ color: connected ? 'var(--dim)' : 'var(--amber, #d29922)' }" v-if="status">
         {{ updatedLabel }}
       </span>
@@ -103,7 +107,7 @@
                 <td class="c-project">
                   <span v-if="p.isPanel" class="chip blue" title="The Skeppa panel itself">panel</span>
                   <span v-else-if="p.isProxy" class="chip blue" title="The panel's own reverse proxy — routes subdomains to the apps">harbor gate</span>
-                  <router-link v-else-if="p.project" :to="`/projects/${p.project.id}`" class="chip proc-project">{{ p.project.name }}</router-link>
+                  <router-link v-else-if="p.project" :to="ship.link(p.project.id)" class="chip proc-project">{{ p.project.name }}</router-link>
                   <span v-else class="chip" title="Not deployed by Skeppa">external</span>
                 </td>
                 <td><StatusBadge :status="p.status" :href="p.appUrl" /></td>
@@ -184,7 +188,7 @@
                     </div>
                   </td>
                   <td class="c-project">
-                    <router-link v-if="c.project" :to="`/projects/${c.project.id}`" class="chip proc-project">{{ c.project.name }}</router-link>
+                    <router-link v-if="c.project" :to="ship.link(c.project.id)" class="chip proc-project">{{ c.project.name }}</router-link>
                     <!-- A slug with no project left is an orphan the panel once
                          created — worth naming, but it is nobody's app now. -->
                     <span v-else-if="c.slug" class="chip amber" title="No project with this slug — left over from a deleted one">{{ c.slug }}</span>
@@ -225,9 +229,10 @@
 <script>
 import StatusBadge from '../components/StatusBadge.vue'
 import Pm2Logs from '../components/Pm2Logs.vue'
+import ShipOffline from '../components/ShipOffline.vue'
 import ActionMenu from '../components/ActionMenu.vue'
 import { store, appUrlFor } from '../store.js'
-import { api } from '../api.js'
+import { shipProvider } from '../lib/ship.js'
 import { confirmDialog } from '../lib/dialog.js'
 import { bytes, uptimeSince, timeAgo } from '../lib/format.js'
 import { runsSupersededImage } from '../lib/images.js'
@@ -253,7 +258,8 @@ const CRASHES_HINT = 'Crashes the engine restarted the container after. A restar
 
 export default {
   name: 'SystemView',
-  components: { StatusBadge, Pm2Logs, ActionMenu },
+  mixins: [shipProvider], // this panel's engine room, or a fleet server's
+  components: { StatusBadge, Pm2Logs, ActionMenu, ShipOffline },
   data() {
     return {
       opened: null,
@@ -294,7 +300,7 @@ export default {
     // Fed by the server-side poller through LiveState — renders instantly on
     // navigation and refreshes itself as diffs arrive.
     status() {
-      const s = store.live.system
+      const s = this.ship.live.system
       return s?.appsDir ? s : null
     },
     connected() {
@@ -344,7 +350,7 @@ export default {
     // pm2 name -> project, so managed processes can link to their project page.
     projectsByPm2Name() {
       const map = {}
-      for (const p of Object.values(store.live.projects ?? {})) {
+      for (const p of Object.values(this.ship.live.projects ?? {})) {
         if (p.info?.pm2_name) map[p.info.pm2_name] = p.info
       }
       return map
@@ -360,7 +366,7 @@ export default {
             ...p,
             name,
             project,
-            appUrl: appUrlFor(project),
+            appUrl: appUrlFor(project, this.ship.live.proxy?.baseDomain),
             isPanel,
             isProxy,
             // What the Project column says, for sorting by it.
@@ -375,7 +381,7 @@ export default {
     // so the join needs a slug index of its own.
     projectsBySlug() {
       const map = {}
-      for (const p of Object.values(store.live.projects ?? {})) {
+      for (const p of Object.values(this.ship.live.projects ?? {})) {
         if (p.info?.slug) map[p.info.slug] = p.info
       }
       return map
@@ -392,14 +398,14 @@ export default {
             ...c,
             name,
             project,
-            appUrl: project ? appUrlFor(project) : '',
+            appUrl: project ? appUrlFor(project, this.ship.live.proxy?.baseDomain) : '',
             logsUrl: `/api/system/containers/${encodeURIComponent(name)}/logs`,
             // Only a container the panel owns has a post-mortem to show.
             prevUrl: project ? `/api/system/containers/${encodeURIComponent(name)}/logs/previous` : '',
             memPercent: limit && c.memory != null
               ? Math.min(100, Math.round((c.memory / (limit * 1024 * 1024)) * 100))
               : null,
-            imageSuperseded: runsSupersededImage(store.live.images, c),
+            imageSuperseded: runsSupersededImage(this.ship.live.images, c),
             projectLabel: project?.name ?? (c.slug || 'external'),
           }
         })
@@ -427,7 +433,7 @@ export default {
     // Registry refs stay whole: there the ref IS the information. The full
     // string remains in the cell's tooltip.
     shortImage(ref) {
-      const prefix = store.live.images?.managedPrefix
+      const prefix = this.ship.live.images?.managedPrefix
       if (!prefix || !ref?.startsWith(prefix)) return ref
       return ref.slice(prefix.length).replace(/:latest$/, '')
     },
@@ -501,7 +507,7 @@ export default {
       this.containerBusy = container.name
       this.containerActionError = ''
       try {
-        await api.post(`/api/system/containers/${encodeURIComponent(container.name)}/${act}`)
+        await this.ship.api.post(`/api/system/containers/${encodeURIComponent(container.name)}/${act}`)
       } catch (err) {
         this.containerActionError = `${act} ${container.name} failed: ${err.message}`
       } finally {
@@ -513,7 +519,7 @@ export default {
       this.busy = proc.name
       this.actionError = ''
       try {
-        await api.post(`/api/system/pm2/${encodeURIComponent(proc.name)}/${act}`)
+        await this.ship.api.post(`/api/system/pm2/${encodeURIComponent(proc.name)}/${act}`)
       } catch (err) {
         this.actionError = `pm2 ${act} ${proc.name} failed: ${err.message}`
       } finally {
