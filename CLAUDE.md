@@ -40,7 +40,7 @@ Deploys private GitHub repos onto this server via webhooks, manages encrypted EN
 - `bun scripts/install.js` — interactive server install (key file, dirs, .env, admin user, pm2 + safe `pm2 save`)
 - `bun scripts/seed.js <user> <password>` — create/reset the admin user
 - `bun scripts/join.js <master url> <code>` — pair this server as a Fleet agent of another panel (code from its Fleet page), then restart the panel; its own UI is off from then on unless `AGENT_LOCAL_UI=true`
-- `bun scripts/backup.js [dir] [--keep N]` — snapshot `skeppa.db` via `VACUUM INTO` (default `DATA_DIR/backups`, keep 14). The master key is never included — back it up separately.
+- `bun scripts/backup.js [dir] [--keep N]` — snapshot `skeppa.db` via `VACUUM INTO` (default `DATA_DIR/backups`, keep 14). The master key is never included — back it up separately. The panel also takes them itself (`lib/backups.js`): every `BACKUP_EVERY_HOURS` (24; 0 = off, for a cron) into `BACKUP_DIR`, pruned to `BACKUP_KEEP`, first a minute after boot when one is due. It watches the directory whoever writes it: a failure, or nothing newer than twice the interval (48 h with the timer off, counted from boot when there was never one), is the `backup` notification, once, and again when it is over; `system.backup` (`everyHours`, `keep`, `dir`, `lastAt`, `count`, `bytes`, `error`, `errorAt`, `late`) feeds the Backup column on the Fleet page and the overview's `backup` (`backupOf` in `web/src/lib/fleet.js`)
 - `bun start` — run the server (serves `web/dist` if present)
 
 ## Directory layout

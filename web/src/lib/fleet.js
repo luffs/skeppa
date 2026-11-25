@@ -6,6 +6,19 @@ import { vesselState } from './vessels.js'
 // here — from its ship (lib/ship.js): its live system record and projects.
 // The Fleet list and a server's own page read the same, so they agree.
 
+// Its database backups as it last said (server lib/backups.js): how old the
+// newest is, as a chip — red when one failed or it is late, amber when there
+// is none yet; null from a panel that does not say.
+export function backupOf(ship) {
+  const b = ship.live.system?.backup
+  if (!b) return null
+  const how = b.everyHours ? `taken every ${b.everyHours} h, ${b.keep} kept` : 'not taken by the panel (BACKUP_EVERY_HOURS=0) — a cron, if any'
+  const where = `${b.count} in ${b.dir}${b.bytes != null ? `, the newest ${bytes(b.bytes)}` : ''}`
+  if (b.error) return { text: 'failed', tone: 'red', title: `The last backup failed${b.errorAt ? ` ${timeAgo(b.errorAt)}` : ''}: ${b.error}. ${b.lastAt ? `The newest good one is from ${timeAgo(b.lastAt)}.` : 'There is no good one.'}` }
+  if (!b.lastAt) return { text: 'none', tone: b.late ? 'red' : 'amber', title: `No backup yet — ${how}` }
+  return { text: timeAgo(b.lastAt), tone: b.late ? 'red' : '', title: `The newest backup: ${new Date(b.lastAt).toLocaleString()} — ${where}; ${how}${b.late ? '. Late: none for over twice the interval' : ''}` }
+}
+
 // Its disk as it last said (the poller's system.disk): how full, and that in
 // bytes; null when it has not.
 export function diskOf(ship) {

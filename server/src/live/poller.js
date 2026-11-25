@@ -71,7 +71,8 @@ const projectStats = ({ status, uptime, memory, cpu, restarts, pid }) =>
 // `version`: the commit this panel runs (agent/uplink.js checkoutVersion), sent
 // along in the system record so the Fleet page can tell servers apart that run
 // another; '' when unknown.
-export function createPoller({ db, config, liveState, intervalMs = 5000, idleIntervalMs = 60_000, containerClient = null, onCrashAlert = null, version = '' }) {
+// `backup`: () => lib/backups.js info(), for the system record.
+export function createPoller({ db, config, liveState, intervalMs = 5000, idleIntervalMs = 60_000, containerClient = null, onCrashAlert = null, version = '', backup = null }) {
   let timer = null
   let timerMs = null
   let ticking = false
@@ -194,6 +195,7 @@ export function createPoller({ db, config, liveState, intervalMs = 5000, idleInt
         mountRoots: config.mountRoots ?? [],
         containerError,
         containers,
+        ...(backup ? { backup: backup() } : {}),
       }
     } finally {
       ticking = false

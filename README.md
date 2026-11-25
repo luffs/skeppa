@@ -389,9 +389,12 @@ your own start/stop clicks — never alert, so a restart alert always means some
 
 ## Backups
 
-`bun scripts/backup.js [dir] [--keep N]` snapshots the database via `VACUUM INTO` — safe while
-the panel is running (default destination `DATA_DIR/backups`, keeping the 14 newest); wire it
-to cron for a daily snapshot. The snapshots hold every setting and encrypted ENV value but are
+The panel snapshots its own database via `VACUUM INTO` — safe while it runs — every
+`BACKUP_EVERY_HOURS` (default 24) into `BACKUP_DIR` (default `DATA_DIR/backups`), keeping the
+`BACKUP_KEEP` newest (default 14). `bun scripts/backup.js [dir] [--keep N]` takes one by hand, or
+from cron with `BACKUP_EVERY_HOURS=0`. Either way the panel watches the directory: a failed
+backup, or none for twice the interval (two days with the timer off), is the *Backups failing or
+late* notification, and the Fleet page and each server's overview show how old the newest is. The snapshots hold every setting and encrypted ENV value but are
 useless without the master key, which is deliberately never part of a backup — back the key
 file up separately (see Security notes).
 

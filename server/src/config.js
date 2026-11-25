@@ -61,7 +61,25 @@ function readConfigFile(path, explicit) {
 // Config files are hand-written, so `~/` deserves to work in path values —
 // readFileSync/resolve treat it literally (tilde is shell syntax).
 const expandHome = p => (p === '~' || p?.startsWith('~/') ? join(homedir(), p.slice(1)) : p)
-const PATH_KEYS = ['MASTER_KEY_FILE', 'DATA_DIR', 'APPS_DIR', 'CONTAINER_SOCKET', 'AGENT_KEY_FILE']
+const PATH_KEYS = ['MASTER_KEY_FILE', 'DATA_DIR', 'APPS_DIR', 'CONTAINER_SOCKET', 'AGENT_KEY_FILE', 'BACKUP_DIR']
+
+// BACKUP_EVERY_HOURS: hours between the panel's own backups, 24 unless said;
+// 0 turns them off. Anything else is warned about and taken as 24.
+export function backupHours(raw) {
+  if (raw === undefined || raw === '') return 24
+  const n = Number(raw)
+  if (Number.isFinite(n) && n >= 0 && n <= 24 * 31) return n
+  console.warn(`warning: BACKUP_EVERY_HOURS=${raw} is not a number of hours — backing up every 24`)
+  return 24
+}
+// BACKUP_KEEP: how many snapshots stay, 14 unless said; at least 1.
+export function backupKeep(raw) {
+  if (raw === undefined || raw === '') return 14
+  const n = Number(raw)
+  if (Number.isInteger(n) && n >= 1) return n
+  console.warn(`warning: BACKUP_KEEP=${raw} is not a count of at least 1 — keeping 14`)
+  return 14
+}
 
 // MASTER_URL makes this panel an agent of another (agent/uplink.js): an
 // http(s) URL of the master's panel, trailing slashes dropped. Anything else
@@ -200,5 +218,13 @@ export function loadConfig({ requireMasterKey = true } = {}) {
     // writes both).
     masterUrl,
     agentKeyFile: env.AGENT_KEY_FILE || join(dirname(configPath), 'agent.key'),
+    // The panel's own database backups (lib/backups.js): every so many hours
+    // (0 = not by the panel — a cron of scripts/backup.js instead), where, and
+    // how many to keep. Watched either way.
+    backup: {
+      everyHours: backupHours(env.BACKUP_EVERY_HOURS),
+      dir: resolve(env.BACKUP_DIR || join(dataDir, 'backups')),
+      keep: backupKeep(env.BACKUP_KEEP),
+    },
   }
 }

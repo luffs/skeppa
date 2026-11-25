@@ -2290,6 +2290,30 @@ test('a fleet protocol gap shows on the Fleet page and the server page, with whi
   expect(newer.html).toContain('Its panel is newer than this one.')
 })
 
+// Each server's backups as it reports them: the newest one's age, red when
+// one failed or it is late, amber when there is none yet; nothing from a
+// panel that does not say.
+test("each server's backups show on the Fleet page and its overview", async () => {
+  seedStore('admin')
+  const backup = over => ({ everyHours: 24, keep: 14, dir: '/data/backups', lastAt: new Date(NOW - 3 * 3_600_000).toISOString(), count: 5, bytes: 2e6, error: '', errorAt: '', late: false, ...over })
+  store.live.system = { ...store.live.system, backup: backup() }
+  store.live.nodeStates[1].system = { ...store.live.nodeStates[1].system, backup: backup({ error: 'disk I/O error', errorAt: ISO }) }
+  store.live.nodeStates[2].system = { ...store.live.nodeStates[2].system, backup: backup({ lastAt: '', count: 0, everyHours: 0 }) }
+  let chips = []
+  const fleet = await expectCleanRender(FleetView, {
+    steps: async wrapper => {
+      chips = wrapper.findAll('.fleet-backup').map(c => [c.text(), c.classes().filter(k => k === 'red' || k === 'amber')[0] ?? ''])
+    },
+  })
+  expect(fleet.problems.join(' | ')).toBe('')
+  expect(chips).toContainEqual(['3h ago', ''])
+  expect(chips).toContainEqual(['failed', 'red'])
+  expect(chips).toContainEqual(['none', 'amber'])
+  const page = await expectCleanRender(ServerView, { props: { node: '1' }, route: { path: '/fleet/1', query: {} } })
+  expect(page.problems.join(' | ')).toBe('')
+  expect(page.html).toContain('disk I/O error')
+})
+
 test('a server that is gone says so', async () => {
   seedStore('admin')
   const { problems, html } = await expectCleanRender(ServerView, { props: { node: '42' } })

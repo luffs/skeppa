@@ -107,13 +107,14 @@ export async function sendNotification(db, masterKey, text, { fetchFn = fetch, m
 // so an upgrade changes nothing until someone opens the form.
 // node_offline is the Fleet's: a server that reports here has been away for
 // a while (nodes/links.js), and the same event again when it is back.
-export const NOTIFY_EVENTS = ['deploy_success', 'deploy_failed', 'restart_burst', 'node_offline', 'disk_full']
+export const NOTIFY_EVENTS = ['deploy_success', 'deploy_failed', 'restart_burst', 'node_offline', 'disk_full', 'backup']
 const DEFAULT_EVENTS = {
   deploy_success: { send: false, ping: false },
   deploy_failed: { send: true, ping: false },
   restart_burst: { send: true, ping: false },
   node_offline: { send: true, ping: false },
   disk_full: { send: true, ping: false }, // lib/diskwatch.js
+  backup: { send: true, ping: false }, // lib/backups.js: failing, or none for too long
 }
 
 // Who a ping reaches, kept platform-neutral and whitelisted, since it lands

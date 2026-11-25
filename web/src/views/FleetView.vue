@@ -59,7 +59,7 @@
       <div class="table-scroll">
         <table class="fleet-table">
           <thead>
-            <tr><th>Server</th><th>State</th><th>Version</th><th>Load</th><th>Memory</th><th>Disk</th><th>Vessels</th><th></th></tr>
+            <tr><th>Server</th><th>State</th><th>Version</th><th>Load</th><th>Memory</th><th>Disk</th><th>Backup</th><th>Vessels</th><th></th></tr>
           </thead>
           <tbody>
             <tr v-for="r in rows" :key="r.key" class="fleet-server" :class="{ here: !r.node }">
@@ -76,6 +76,10 @@
               <td class="mono" :title="r.memory?.title">{{ r.memory ? `${r.memory.percent}%` : '—' }}</td>
               <td>
                 <span v-if="r.disk" class="chip" :class="r.diskTone" :title="r.disk.title">{{ r.disk.percent }}%</span>
+                <span v-else class="mono">—</span>
+              </td>
+              <td>
+                <span v-if="r.backup" class="chip fleet-backup" :class="r.backup.tone" :title="r.backup.title">{{ r.backup.text }}</span>
                 <span v-else class="mono">—</span>
               </td>
               <td>
@@ -109,7 +113,7 @@ import { api } from '../api.js'
 import { store } from '../store.js'
 import { confirmDialog } from '../lib/dialog.js'
 import { localShip, nodeShip } from '../lib/ship.js'
-import { diskOf, diskTone, memoryOf, loadOf, versionChip, stateChip, lastSeen, vesselsOf, panelOf } from '../lib/fleet.js'
+import { diskOf, diskTone, memoryOf, loadOf, versionChip, stateChip, lastSeen, vesselsOf, panelOf, backupOf } from '../lib/fleet.js'
 import FleetLog from '../components/FleetLog.vue'
 import JoinCode from '../components/JoinCode.vue'
 
@@ -163,6 +167,7 @@ export default {
           memory: !node || node.online ? memoryOf(ship) : null,
           disk,
           diskTone: diskTone(disk),
+          backup: backupOf(ship),
           vessels: vesselsOf(ship),
           filter: node ? String(node.id) : 'here',
           panel: node ? panelOf(ship) : null,
@@ -245,6 +250,7 @@ function shipFor(id) {
 
 <style scoped>
 .fleet-gap { color: var(--red); }
+.fleet-backup:not(.red):not(.amber) { text-transform: none; letter-spacing: 0; font-weight: 500; }
 .fleet-add { margin-top: 14px; max-width: 720px; }
 .fleet-add input { flex: 1; }
 .fleet-servers { margin-top: 16px; }

@@ -507,6 +507,7 @@ const NOTIFY_EVENT_LIST = [
   { key: 'restart_burst', label: 'Restart burst', sample: '⚠ blog restarted 3 times in the last 10 minutes' },
   { key: 'node_offline', label: 'Fleet server offline', sample: '⚠ jobb-ci has not reported for 5 minutes' },
   { key: 'disk_full', label: 'Disk nearly full', sample: '⚠ Disk 92% full — 8.1 GB free of 100.0 GB' },
+  { key: 'backup', label: 'Backups failing or late', sample: '⚠ No database backup for 3 days — the last is from 2026-11-22 03:10 UTC' },
 ]
 // A fresh, editable copy of the server's per-event flags (all off until loaded).
 const notifyEventsFrom = events => Object.fromEntries(NOTIFY_EVENT_LIST.map(({ key }) => [key, {

@@ -20,6 +20,7 @@ import { sqliteStorage } from 'lazy-storage/server/sqlite'
 import { createFleetAnswers } from './nodes/answers.js'
 import { recordEvent } from './nodes/events.js'
 import { createDiskWatch } from './lib/diskwatch.js'
+import { createBackups } from './lib/backups.js'
 import { createUplink, readAgentKey, checkoutVersion } from './agent/uplink.js'
 import { FleetGitHub } from './agent/github.js'
 
@@ -77,8 +78,17 @@ const sendEvent = (event, text, { url = '' } = {}) => {
   }
   return notifyEvent(db, config.masterKey, event, text, { url })
 }
+// This panel's database, backed up by the panel and watched (lib/backups.js).
+const backups = createBackups({
+  dbPath: join(config.dataDir, 'skeppa.db'),
+  dir: config.backup.dir,
+  everyMs: config.backup.everyHours * 3_600_000,
+  keep: config.backup.keep,
+  notify: text => sendEvent('backup', text),
+})
 const poller = createPoller({
   db, config, liveState, version: panelVersion,
+  backup: () => backups.info(),
   onCrashAlert: (label, count, projectId) =>
     sendEvent('restart_burst', `⚠ ${label} restarted ${count} times in the last 10 minutes — check the Engine room`, { url: urlOfProject(projectId) }),
 })
@@ -146,7 +156,11 @@ const diskWatch = createDiskWatch({
   read: () => liveState.system?.disk,
   notify: text => sendEvent('disk_full', text),
 })
-setInterval(() => diskWatch.check(), 60_000).unref?.()
+setInterval(() => {
+  diskWatch.check()
+  backups.check()
+}, 60_000).unref?.()
+backups.start()
 const runner = new DeployRunner({
   db, config, liveState, logs: liveStores, github, poller,
   notify: (event, text, { projectId } = {}) => sendEvent(event, text, { url: urlOfProject(projectId) }),

@@ -17,6 +17,9 @@
       <span :title="gate ? 'Its harbor gate routes subdomain.' + gate : 'No base domain: nothing is routed by subdomain'">
         gate <b :class="{ unset: !gate }">{{ gate || 'not set' }}</b>
       </span>
+      <span v-if="backup" :title="backup.title">
+        backup <b :class="backup.tone">{{ backup.text }}</b>
+      </span>
     </div>
     <div class="facts-gauges">
       <div v-for="g in gauges" :key="g.key" class="gauge" :class="g.tone">
@@ -37,6 +40,7 @@
 <script>
 import { shipInject } from '../lib/ship.js'
 import { bytes, timeAgo, uptimeSince } from '../lib/format.js'
+import { backupOf } from '../lib/fleet.js'
 
 const tone = percent => (percent == null ? '' : percent >= 92 ? 'crit' : percent >= 80 ? 'warn' : '')
 const pct = (part, whole) => (whole > 0 ? Math.round((part / whole) * 100) : null)
@@ -63,6 +67,9 @@ export default {
     },
     gate() {
       return this.ship.live.proxy?.baseDomain ?? ''
+    },
+    backup() {
+      return backupOf(this.ship)
     },
     gauges() {
       const s = this.system
@@ -140,6 +147,8 @@ export default {
   color: var(--ink);
 }
 .facts-meta b.unset { color: var(--dim); font-weight: 400; }
+.facts-meta b.red { color: var(--red); }
+.facts-meta b.amber { color: var(--amber); }
 .facts-reporting { color: var(--ink); font-weight: 600; }
 .facts-reporting.away { color: var(--red); }
 .facts-reporting .dot { margin-right: 7px; }
