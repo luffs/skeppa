@@ -386,6 +386,8 @@ topic gets plain text, Discord and Slack webhook URLs are recognized and get the
 the URL is stored encrypted like ENV values. Each event — a deploy that succeeded, one that failed, a crash loop (repeated restarts within a few
 minutes — one alert per burst, then a cooldown) — can be switched on or off and can ping: `@channel`, `@here`, `@everyone` or member IDs (Slack `U…`/`S…`, Discord numeric), each sent in the platform's own mention syntax. A routed project's address is added to its messages. By default failures and crash loops are sent and nobody is pinged. Restarts the panel itself causes — deploys,
 your own start/stop clicks — never alert, so a restart alert always means something actually broke.
+A disk over 90 % full and [backups](#backups) failing or late are events too, sent by default, and so is a
+[fleet](#fleet--several-servers-one-panel) server that stops reporting.
 
 ## Backups
 
@@ -414,6 +416,76 @@ No project ENV is needed and the `.env`-file toggle stays off: whichever checkou
 runs from — the original install or `APPS_DIR/skeppa/source` — it reads the same
 `~/.skeppa/config` and master-key file. Nothing secret, and no config, lives in the app
 directory or the panel's process environment.
+
+## Fleet — several servers, one panel
+
+Run Skeppa on more than one server and one of them can run the others: its **Fleet** page lists
+every server, and each one's projects, Engine room, Shipyard and Rigging are worked from there.
+The others become *agents* of that *master*. Each keeps its own database, master key, apps and
+harbor gate, and goes on running its apps whatever happens to the master.
+
+**Pairing a server.** On the master, **Fleet → + Add a server** names it and shows a one-time
+command with a join code, good for ten minutes. On the new agent, in its Skeppa checkout:
+
+```bash
+bun scripts/join.js https://deploy.example.com skj_3_…   # the command as the Fleet page shows it
+pm2 reload skeppa
+```
+
+That spends the code for a long-lived key, written chmod 600 to `agent.key` next to the config
+(`AGENT_KEY_FILE` to put it elsewhere), and sets `MASTER_URL` in `~/.skeppa/config`. After the
+reload the agent dials the master at `/agent` with that key and keeps the connection up. The
+master never needs a way in to the agent, so an agent can sit behind NAT or a firewall that
+only lets it out. Nothing has to be added in front of the master either: the same reverse-proxy
+block that serves the panel carries `/agent`, as it does `/live`. Use `https` for `MASTER_URL`.
+Over plain `http` the key and everything the agent reports travel unencrypted, and both the
+join script and the panel warn about it.
+
+**What an agent is from then on.** Its own panel is off: every page and API answers with a 404
+naming its master, but for `/api/webhooks`. `AGENT_LOCAL_UI=true` in its config turns the whole
+panel back on, for when the master is gone. What the master may do there is a fixed list
+(projects, piers, deployments, the Engine room's process actions, the Shipyard, the harbor gate,
+notification settings), each call run through the agent's own routes and its own checks, as its
+first admin. The crew, the GitHub App and the agent's own account are not on the list, and each
+change is logged on the agent as `master: METHOD path` and in the master's Fleet log with who
+made it.
+
+**GitHub through the master.** An agent with no GitHub App of its own uses the master's. The
+master's webhook hears the pushes and passes them on to every agent whose projects deploy that
+repo, holding the latest per branch for one that is offline until it dials in. When an agent
+needs to clone, the master hands it a token for that one repository with read access, nothing
+wider. An agent that has its own App configured uses that instead.
+
+**On the master's pages.** The **Harbor** shows every server's vessels, a section and a map per
+server, filterable by server; *Deploy N with new commits* covers them all. Each server has a page
+under **Fleet**: an overview of its load, memory, disk and backups and its vessels, its Engine
+room, Shipyard and Rigging, its log, and *Pairing*. A Shipyard image can be copied to other
+servers (*Copy to…*), and each server builds its own. A server that stops reporting shows what it
+last said and turns off whatever would ask it anything.
+
+**Notifications go through one webhook.** An agent with no webhook of its own sends its
+notifications through the master's, under its name and by the master's per-event settings, at
+most 30 in ten minutes. The master also says when a server has been away for five minutes, and
+when it is back.
+
+**Keeping the fleet current.** The Fleet page shows each server's version against the master's.
+*Update panel*, and *Update all* across the fleet, deploy each server's own panel project at the
+latest commit of its branch, so a server needs Skeppa added as a project of its own for that
+([dogfooding](#deploying-skeppa-with-skeppa-dogfooding)). Master and agents also say which
+*fleet protocol* they speak. When two panels are far enough apart that they would misunderstand
+each other, the Fleet row turns red with *update needed* (or *newer than this panel*). The link
+stays up so that an update can still go through it.
+
+**The key, and taking a server out.** Under a server's **Pairing**: *Rotate key* gives a
+connected agent a new key over its own connection, with nothing to run on it, and the old key
+stops working once the agent has the new one. *New join code* pairs it again from scratch, for a
+server that lost its key or a new machine in its place. *Unpair* cuts it off at once. *Remove*
+takes it out of the fleet. Neither changes anything on the agent, which keeps running its apps.
+
+**One master per trust zone.** Whoever controls the master controls its agents and can read their
+ENV, since deploy logs echo it and the Manifest is edited from there. Servers that must not be
+able to reach each other's secrets (yours and your employer's, say) want a master each, not one
+fleet.
 
 ## Development
 
