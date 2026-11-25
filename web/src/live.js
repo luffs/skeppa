@@ -153,10 +153,13 @@ function syncNodes(ids) {
 const logClients = new Map() // store id -> { db, listeners, seen, synced }
 
 // Returns an unsubscribe function. Events: { type: 'backlog', log } once for
-// the lines present when the store opened, then { type: 'line', line } each.
-// With `node`, the deployment is on that server: node-<id>-deploy-<id>.
-export function subscribeLogs(deploymentId, fn, { node = 0 } = {}) {
-  const storeId = node ? `node-${node}-deploy-${deploymentId}` : `deploy-${deploymentId}`
+// the lines present when the store opened, then { type: 'line', line } each,
+// and { type: 'end', code } when the store is over — 'evicted' when it ran to
+// its end, 'unknown-store' when there was nothing running to follow.
+// With `node`, it is on that server: node-<id>-deploy-<id>. With `kind:
+// 'build'`, it is a Shipyard build's log, build-<image id>, the same shape.
+export function subscribeLogs(id, fn, { node = 0, kind = 'deploy' } = {}) {
+  const storeId = node ? `node-${node}-${kind}-${id}` : `${kind}-${id}`
   let entry = logClients.get(storeId)
   if (!entry) {
     if (!connection) {
@@ -184,8 +187,13 @@ export function subscribeLogs(deploymentId, fn, { node = 0 } = {}) {
       }
     })
     db.on('closed', closed => {
-      // 'evicted' is the deploy finishing; anything else is worth a look
-      if (closed?.code !== 'evicted') console.warn(`live: ${storeId} closed — ${closed?.code}: ${closed?.message}`)
+      // 'evicted' is the deploy or build finishing, 'unknown-store' a build
+      // that is not running; anything else is worth a look
+      const expected = closed?.code === 'evicted' || (kind === 'build' && closed?.code === 'unknown-store')
+      if (!expected) console.warn(`live: ${storeId} closed — ${closed?.code}: ${closed?.message}`)
+      // Over: the next one under this id is a store of its own
+      if (logClients.get(storeId) === entry) logClients.delete(storeId)
+      emit({ type: 'end', code: closed?.code ?? '' })
     })
     db.connect()
   }
@@ -193,7 +201,7 @@ export function subscribeLogs(deploymentId, fn, { node = 0 } = {}) {
   return () => {
     entry.listeners.delete(fn)
     if (entry.listeners.size) return
-    logClients.delete(storeId)
+    if (logClients.get(storeId) === entry) logClients.delete(storeId)
     entry.db.disconnect()
   }
 }

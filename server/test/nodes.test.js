@@ -80,7 +80,7 @@ function master({ db = null, ...linkOptions } = {}) {
   const app = new Hono()
   app.route('/api/nodes/join', nodeJoinRoutes({ db, links }))
   app.use('/api/nodes/*', (c, next) => {
-    c.set('user', { id: 1, role: 'admin' })
+    c.set('user', { id: 1, username: 'cap', role: 'admin' })
     return next()
   })
   app.route('/api/nodes', nodeRoutes({ db, links }))
@@ -776,4 +776,90 @@ test('what a server last reported survives a restart here, and what it removed m
 
   m2.links.remove(id) // removing it takes the kept copy along
   expect(storage.ids()).not.toContain(`node-${id}`)
+})
+
+test('a build running on the agent is followed from the master, and ends when it ends there', async () => {
+  const m = master()
+  const a = agent()
+  const { id, key } = await pair(m)
+  connect(m, a, key)
+  await until(() => m.links.isOnline(id))
+  expect(masterMayOpen('build-4')).toBe(true)
+  a.stores.openBuild(4)
+  a.stores.appendBuild(4, 'Step 1/2 : FROM alpine')
+
+  const net = browser(m)
+  const log = net.client({ store: `node-${id}-build-4`, ...STORE_SHAPES.deploy, undo: false, presence: false })
+  await until(() => Object.values(log.state.lines ?? {}).length === 1, 3000, [net])
+  a.stores.appendBuild(4, '✔ build finished')
+  await until(() => Object.values(log.state.lines).includes('✔ build finished'), 3000, [net])
+  a.stores.closeBuild(4)
+  await until(() => log.closed?.code === 'evicted', 3000, [net])
+})
+
+// --- the Fleet's log -----------------------------------------------------------
+
+test("the fleet's log: each change relayed, by whom, about what, and how it went — reads are not changes", async () => {
+  const { listEvents } = await import('../src/nodes/events.js')
+  const m = master()
+  const a = agent()
+  const { id, key } = await pair(m)
+  connect(m, a, key)
+  await until(() => Object.keys(m.links.get(`node-${id}`).state.projects).length === 2)
+
+  await m.api(`/api/nodes/${id}/api/projects/1/deploy`, { method: 'POST', body: '{}' })
+  await m.api(`/api/nodes/${id}/api/projects/1/deployments`) // a read
+  await m.api(`/api/nodes/${id}/api/projects/1/deploy`, { method: 'POST', body: JSON.stringify({ sha: 'nope' }) })
+  await m.api(`/api/nodes/${id}/api/users`, { method: 'POST', body: '{}' }) // refused over there
+  await m.api(`/api/nodes/${id}/api/projects/2`, { method: 'DELETE' })
+
+  const events = listEvents(m.db, { nodeId: id })
+  expect(events.map(e => [e.action, e.subject, e.status, e.username])).toEqual([
+    ['DELETE /api/projects/2', 'api', 200, 'cap'], // named as it was, though it is gone now
+    ['POST /api/users', '', 0, 'cap'],
+    ['POST /api/projects/1/deploy', 'web', 400, 'cap'],
+    ['POST /api/projects/1/deploy', 'web', 202, 'cap'],
+    ['paired', '', 0, ''],
+    ['created', '', 0, 'cap'],
+  ])
+  expect(events[1].error).toMatch(/not through the fleet/)
+  expect(events[2].error).toBe('validation failed')
+  expect(events.every(e => e.node_name === 'hemma-2')).toBe(true)
+})
+
+test("a node's life is in the log, and stays when the node is gone", async () => {
+  const m = master()
+  const { id } = await pair(m, 'jobb-1')
+  await m.api(`/api/nodes/${id}`, { method: 'PATCH', body: JSON.stringify({ name: 'jobb-ci' }) })
+  await m.api(`/api/nodes/${id}`, { method: 'PATCH', body: JSON.stringify({ name: 'jobb-ci' }) }) // the same: nothing to log
+  await m.api(`/api/nodes/${id}/code`, { method: 'POST' })
+  await m.api(`/api/nodes/${id}/unpair`, { method: 'POST' })
+  await m.api(`/api/nodes/${id}`, { method: 'DELETE' })
+  const res = await m.api(`/api/nodes/events?node=${id}`)
+  expect(res.status).toBe(200)
+  const events = await res.json()
+  expect(events.map(e => [e.action, e.node_name, e.subject])).toEqual([
+    ['removed', 'jobb-ci', ''],
+    ['unpaired', 'jobb-ci', ''],
+    ['new join code', 'jobb-ci', ''],
+    ['renamed', 'jobb-ci', 'from jobb-1'],
+    ['paired', 'jobb-1', ''],
+    ['created', 'jobb-1', ''],
+  ])
+  const page = await (await m.api(`/api/nodes/events?before=${events[2].id}&limit=2`)).json()
+  expect(page.map(e => e.action)).toEqual(['renamed', 'paired'])
+})
+
+test('a subject is the project, pier or image a path names; the log keeps the newest', async () => {
+  const { subjectOf, recordEvent, prune, listEvents } = await import('../src/nodes/events.js')
+  const state = { projects: { 3: { info: { name: 'shop' } } }, groups: { 2: { name: 'Kunder' } }, images: { managed: [{ id: 4, name: 'base' }] } }
+  expect(subjectOf('/api/projects/3/deploy', state)).toBe('shop')
+  expect(subjectOf('/api/projects/9', state)).toBe('project 9')
+  expect(subjectOf('/api/groups/2/deploy', state)).toBe('Kunder')
+  expect(subjectOf('/api/images/4/build', state)).toBe('base')
+  expect(subjectOf('/api/proxy', state)).toBe('')
+  const db = freshDb()
+  for (let i = 0; i < 12; i++) recordEvent(db, { nodeId: 1, action: `a${i}` })
+  prune(db, 5)
+  expect(listEvents(db, { limit: 100 }).map(e => e.action)).toEqual(['a11', 'a10', 'a9', 'a8', 'a7'])
 })

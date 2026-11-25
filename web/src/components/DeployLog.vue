@@ -50,7 +50,7 @@ export default {
       if (this.active) {
         this.unsubscribe = subscribeLogs(this.deploymentId, evt => {
           if (evt.type === 'backlog') this.text = evt.log
-          else this.text += evt.line + '\n'
+          else if (evt.type === 'line') this.text += evt.line + '\n'
         }, { node: this.node })
       } else {
         const path = this.node ? `/api/nodes/${this.node}/deployments/${this.deploymentId}` : `/api/deployments/${this.deploymentId}`

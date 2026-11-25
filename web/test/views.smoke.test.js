@@ -1,4 +1,4 @@
-import { describe, test, expect, vi } from 'vitest'
+import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 
 // Every view, mounted for both roles against a seeded store and a stubbed
@@ -37,6 +37,7 @@ vi.mock('../src/api.js', () => {
       }
     }
     if (/\/api\/deployments\/\d+/.test(url)) return { id: 1, status: 'success', log: '' }
+    if (/\/api\/images\/\d+\/log/.test(url)) return { log: 'Step 1/1 : FROM x', status: 'success', built_at: null }
     if (/\/api\/users\/\d+\/reassign/.test(url)) {
       return {
         projects: [{ id: 2, name: 'bobapp' }], blockers: [],
@@ -60,11 +61,20 @@ vi.mock('../src/api.js', () => {
 })
 // live.js would replace store.live with the store-backed composition; the
 // harness seeds store.live itself.
-vi.mock('../src/live.js', () => ({ connectLive() {}, disconnectLive() {}, subscribeLogs() { return () => {} } }))
+// A followed log here is over at once, as a build that is not running is.
+vi.mock('../src/live.js', () => ({
+  connectLive() {},
+  disconnectLive() {},
+  subscribeLogs: vi.fn((id, fn) => {
+    queueMicrotask(() => fn({ type: 'end', code: 'unknown-store' }))
+    return () => {}
+  }),
+}))
 
 import { store } from '../src/store.js'
 import { dialogState, settleDialog } from '../src/lib/dialog.js'
 import { api } from '../src/api.js'
+import { subscribeLogs } from '../src/live.js'
 import DashboardView from '../src/views/DashboardView.vue'
 import ProjectNewView from '../src/views/ProjectNewView.vue'
 import ProjectView from '../src/views/ProjectView.vue'
@@ -98,6 +108,13 @@ const project = (id, slug, owner) => ({
 })
 const ADMIN = { id: 1, username: 'cap', role: 'admin', handle: '', domain: '' }
 const TENANT = { id: 2, username: 'bob', role: 'tenant', handle: 'bob', domain: '' }
+
+// Whether seedStore includes the fleet (two servers reporting here). The
+// harbor's own tests predate the fleet and are about this panel's vessels:
+// they turn it off (withoutFleet), and every test starts with it on again.
+const SEED = { fleet: true }
+afterEach(() => { SEED.fleet = true })
+const withoutFleet = () => beforeEach(() => { SEED.fleet = false })
 
 function seedStore(role) {
   // every test starts on the list, whatever an earlier one chose
@@ -139,6 +156,10 @@ function seedStore(role) {
       1: { projects: { 5: project(5, 'remote', ADMIN) }, groups: {}, proxy: { baseDomain: 'jobb.example.com' }, system: { loadavg: [0.5, 0.4, 0.3], cpuCount: 2, memory: { total: 8e9, free: 2e9 } } },
       2: { projects: {}, groups: {}, proxy: {}, system: {} },
     },
+  }
+  if (!SEED.fleet) {
+    store.live.nodes = {}
+    store.live.nodeStates = {}
   }
 }
 
@@ -253,6 +274,7 @@ test('the harness fails on an identifier the template uses but the instance neve
 // The log opens on the latest eight under day headings; Show more reveals
 // what LiveState already holds, and Show less folds it back.
 test("the ship's log heads its entries by day, and shows more of what it holds", async () => {
+  SEED.fleet = false
   seedStore('admin')
   const ago = h => new Date(NOW - h * 3_600_000).toISOString()
   store.live.projects[1].recentDeployments = Array.from({ length: 15 }, (_, i) => ({
@@ -279,6 +301,7 @@ test("the ship's log heads its entries by day, and shows more of what it holds",
 })
 
 test('the harbor groups projects by owner for an admin, and not for a tenant', async () => {
+  SEED.fleet = false
   seedStore('admin')
   store.live.users[2].domain = 'bob.dev'
   store.live.projects[2].info.owner_domain = 'bob.dev'
@@ -317,6 +340,7 @@ test('the harbor groups projects by owner for an admin, and not for a tenant', a
 // The harbor as a map: piers as jetties, projects as ships, the same states,
 // the same row on hover, and the filter dimming instead of thinning out.
 describe('the harbor map', () => {
+  withoutFleet()
   for (const role of ['admin', 'tenant']) {
     test(`renders for ${role === 'admin' ? 'an admin' : 'a tenant'}, every vessel a ship`, async () => {
       seedStore(role)
@@ -976,6 +1000,7 @@ describe('the harbor map', () => {
 })
 
 describe('filtering the harbor', () => {
+  withoutFleet()
   const names = w => w.findAll('.vessel-row .vessel-name').map(n => n.text())
 
   test('search narrows rows, piers and the log, and opens a folded pier with a match', async () => {
@@ -1056,7 +1081,8 @@ describe('filtering the harbor', () => {
         await settle()
         expect(wrapper.findAll('.pier-toggle').every(t => t.attributes('aria-expanded') === 'false')).toBe(true)
         expect(visibleText(toggle())).toBe('Unfold all')
-        expect(JSON.parse(localStorage.getItem('skeppa.collapsedPiers')).sort()).toEqual([7, 8])
+        // kept as strings: a fleet server's piers are '<node>:<pier id>'
+        expect(JSON.parse(localStorage.getItem('skeppa.collapsedPiers')).sort()).toEqual(['7', '8'])
         await toggle().trigger('click')
         await settle()
         expect(wrapper.findAll('.pier-toggle').every(t => t.attributes('aria-expanded') === 'true')).toBe(true)
@@ -2289,12 +2315,7 @@ describe('Shipyard across the fleet', () => {
   test('copies onto the picked servers and builds there', async () => {
     seedFleet()
     const patch = vi.spyOn(api, 'patch').mockImplementation(async () => ({}))
-    const post = vi.spyOn(api, 'post').mockImplementation(async () => ({ id: 12 }))
-    const builds = []
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async url => {
-      builds.push(url)
-      return new Response('step 1\n✔ build finished\n')
-    })
+    const post = vi.spyOn(api, 'post').mockImplementation(async url => (url.endsWith('/build?detach=1') ? { store: 'build-x' } : { id: 12 }))
     const { problems, html } = await expectCleanRender(ShipyardView, {
       steps: async wrapper => {
         await wrapper.findAll('.proc-actions button').find(b => b.text() === 'Copy to…').trigger('click')
@@ -2308,35 +2329,39 @@ describe('Shipyard across the fleet', () => {
       },
     })
     const patched = patch.mock.calls
-    const posted = post.mock.calls
+    const posted = post.mock.calls.filter(c => !c[0].endsWith('/build?detach=1'))
+    const builds = post.mock.calls.map(c => c[0]).filter(u => u.endsWith('/build?detach=1'))
     patch.mockRestore()
     post.mockRestore()
-    fetchSpy.mockRestore()
     expect(problems.join(' | ')).toBe('')
     expect(patched).toEqual([['/api/nodes/1/api/images/9', { containerfile: 'FROM docker.io/oven/bun:1\nRUN apk add git\n' }]])
     expect(posted).toEqual([['/api/nodes/2/api/images', { name: 'base', containerfile: 'FROM docker.io/oven/bun:1\nRUN apk add git\n' }]])
-    expect(builds.sort()).toEqual(['/api/nodes/1/api/images/9/build', '/api/nodes/2/api/images/12/build'])
+    // started detached on each, then followed to the stored result
+    expect(builds.sort()).toEqual(['/api/nodes/1/api/images/9/build?detach=1', '/api/nodes/2/api/images/12/build?detach=1'])
     expect(html).toContain('updated, built ✔')
     expect(html).toContain('created, built ✔')
   })
 
   test("a fleet server's Shipyard builds over there, and offers this panel as a copy target", async () => {
     seedFleet()
-    const builds = []
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async url => (builds.push(url), new Response('✔ build finished\n')))
+    const post = vi.spyOn(api, 'post').mockImplementation(async () => ({ store: 'build-9' }))
     const { problems } = await expectCleanRender(ShipyardView, {
       props: { node: '1' },
       steps: async wrapper => {
         await wrapper.findAll('.proc-actions button').find(b => b.text() === 'Build').trigger('click')
         await settle()
+        // over (the mock's store ends at once): the stored log, marked
+        expect(wrapper.find('.logview').text()).toBe('Step 1/1 : FROM x\n✔ build finished')
+        expect(wrapper.findAll('.proc-actions button').find(b => b.text() === 'Build').attributes('disabled')).toBeUndefined()
         await wrapper.findAll('.proc-actions button').find(b => b.text() === 'Copy to…').trigger('click')
         expect(wrapper.find('.copy-panel').text()).toContain('this panel')
         expect(wrapper.find('.copy-panel').text()).not.toContain('jobb-1')
       },
     })
-    fetchSpy.mockRestore()
+    const builds = post.mock.calls.map(c => c[0])
+    post.mockRestore()
     expect(problems.join(' | ')).toBe('')
-    expect(builds).toEqual(['/api/nodes/1/api/images/9/build'])
+    expect(builds).toEqual(['/api/nodes/1/api/images/9/build?detach=1'])
   })
 
   test('without a fleet there is nothing to copy to', async () => {
@@ -2458,4 +2483,131 @@ describe('updating the fleet', () => {
     expect(html).not.toContain('Update all')
     expect(html).toContain('Updating…') // jobb-1's own button, while its panel deploys
   })
+})
+
+// The harbor with a fleet: each server its own section in the list, in the
+// counts, the search and the ship's log, its rows run on that server.
+describe('the harbor across the fleet', () => {
+  test('a section per server, counted, searchable, in the log, and run there', async () => {
+    seedStore('admin')
+    const post = vi.spyOn(api, 'post').mockImplementation(async () => ({ id: 77 }))
+    const { problems } = await expectCleanRender(DashboardView, {
+      steps: async wrapper => {
+        const text = () => wrapper.text().replace(/\s+/g, ' ')
+        expect(text()).toContain('3 vessels moored across 2 servers')
+        expect(wrapper.findAll('.server-head .section-label').map(h => h.text())).toEqual(['This server', 'jobb-1'])
+        const section = wrapper.find('.server-section')
+        expect(section.text()).toContain('remote')
+        expect(section.find('a.vessel-name').attributes('href')).toBe('/fleet/1/projects/5')
+        expect(section.text()).not.toContain('hemma-2') // unpaired, nothing reported: not in the harbor
+        // the ship's log has its voyage, tagged and linked there
+        const entry = wrapper.findAll('.feed-entry').find(e => e.text().includes('remote'))
+        expect(entry.text()).toContain('jobb-1')
+        expect(entry.findAll('a').map(a => a.attributes('href'))).toContain('/fleet/1/projects/5?deployment=5')
+        // its row's action runs over there
+        await section.findAll('button').find(b => b.text() === 'Deploy latest').trigger('click')
+        await settle()
+        // the search reaches it too
+        wrapper.vm.query = 'remote'
+        await settle()
+        expect(wrapper.find('.harbor-count').text()).toBe('1 of 3')
+        expect(wrapper.findAll('.server-section')).toHaveLength(1)
+        wrapper.vm.query = 'adm'
+        await settle()
+        expect(wrapper.findAll('.server-section')).toHaveLength(0)
+      },
+    })
+    const posted = post.mock.calls.map(c => c[0])
+    post.mockRestore()
+    expect(problems.join(' | ')).toBe('')
+    expect(posted).toEqual(['/api/nodes/1/api/projects/5/deploy'])
+  })
+
+  test("a server's piers fold under their own keys", async () => {
+    seedStore('admin')
+    store.live.nodeStates[1].groups = { 7: { id: 7, owner_id: 1, name: 'Jobbpiren', created_at: ISO } } // the same id as a pier here
+    store.live.nodeStates[1].projects[5].info.group_id = 7
+    const { problems } = await expectCleanRender(DashboardView, {
+      steps: async wrapper => {
+        const heads = wrapper.findAll('.server-section .pier-toggle')
+        expect(heads.map(h => h.text())).toEqual(['▸Jobbpiren'])
+        await heads[0].trigger('click')
+        await settle()
+        expect(wrapper.vm.isCollapsed('1:7')).toBe(true)
+        expect(wrapper.vm.isCollapsed(7)).toBe(false) // this panel's pier 7 stays open
+      },
+    })
+    expect(problems.join(' | ')).toBe('')
+  })
+
+  test('a tenant sees no fleet, and the map says it is this server only', async () => {
+    seedStore('tenant')
+    const tenant = await expectCleanRender(DashboardView)
+    expect(tenant.problems.join(' | ')).toBe('')
+    expect(tenant.html).not.toContain('server-section')
+    expect(tenant.html).not.toContain('across')
+
+    seedStore('admin')
+    const map = await expectCleanRender(DashboardView, { route: { query: { view: 'map' } } })
+    expect(map.problems.join(' | ')).toBe('')
+    expect(map.html).toContain("The map shows this server's harbor")
+  })
+})
+
+// A build under way, wherever it was started, shows as it goes: Building…
+// while its lines come, then the stored log once its store is over.
+test('a running build is followed line by line, then shows the stored result', async () => {
+  seedStore('admin')
+  store.live.images = { ...store.live.images, managed: [{ id: 1, name: 'base', ref: 'localhost/skeppa/base:latest', containerfile: 'FROM x', updated_at: ISO, used_by: [] }] }
+  let emit = null
+  let opts = null
+  subscribeLogs.mockImplementationOnce((id, fn, o) => { emit = fn; opts = { id, ...o }; return () => {} })
+  const { problems } = await expectCleanRender(ShipyardView, {
+    steps: async wrapper => {
+      await wrapper.findAll('.proc-actions button').find(b => b.text() === 'Edit').trigger('click')
+      await settle()
+      expect(opts).toEqual({ id: 1, node: 0, kind: 'build' })
+      emit({ type: 'backlog', log: 'Step 1/2 : FROM x\n' })
+      await settle()
+      const button = () => wrapper.findAll('.proc-actions button').find(b => /Build/.test(b.text()))
+      expect(button().text()).toBe('Building…')
+      emit({ type: 'line', line: 'Step 2/2 : RUN true' })
+      await settle()
+      expect(wrapper.find('.logview').text()).toBe('Step 1/2 : FROM x\nStep 2/2 : RUN true')
+      emit({ type: 'end', code: 'evicted' })
+      await settle()
+      expect(button().text()).toBe('Build')
+      expect(wrapper.find('.logview').text()).toBe('Step 1/1 : FROM x\n✔ build finished') // what the row keeps
+    },
+  })
+  expect(problems.join(' | ')).toBe('')
+})
+
+// The Fleet log on the Fleet page: who did what to which server, in words,
+// how it went, narrowed to one server and paged back.
+test('the fleet page shows the fleet log', async () => {
+  seedStore('admin')
+  const rows = [
+    { id: 9, node_id: 1, node_name: 'jobb-1', username: 'cap', action: 'POST /api/projects/5/deploy', subject: 'remote', status: 202, error: '', created_at: ISO },
+    { id: 8, node_id: 1, node_name: 'jobb-1', username: 'cap', action: 'POST /api/users', subject: '', status: 0, error: 'not through the fleet', created_at: ISO },
+    { id: 7, node_id: 1, node_name: 'jobb-1', username: '', action: 'paired', subject: '', status: 0, error: '', created_at: ISO },
+  ]
+  const get = vi.spyOn(api, 'get').mockImplementation(async url => (url.startsWith('/api/nodes/events') ? rows : {}))
+  const { problems } = await expectCleanRender(FleetView, {
+    steps: async wrapper => {
+      const cells = wrapper.findAll('.fleet-log-table tbody tr').map(tr => tr.findAll('td').slice(1).map(td => td.text().replace(/\s+/g, ' ')))
+      expect(cells).toEqual([
+        ['jobb-1', 'cap', 'deployed remote', '✓'],
+        ['jobb-1', 'cap', 'POST /api/users', 'failed'],
+        ['jobb-1', 'its join code', 'paired', ''],
+      ])
+      expect(wrapper.find('.fleet-log .chip.red').attributes('title')).toBe('not through the fleet')
+      await wrapper.find('.fleet-log-filter').setValue('1')
+      await settle()
+    },
+  })
+  const asked = get.mock.calls.map(c => c[0]).filter(u => u.startsWith('/api/nodes/events'))
+  get.mockRestore()
+  expect(problems.join(' | ')).toBe('')
+  expect(asked).toEqual(['/api/nodes/events?limit=30', '/api/nodes/events?limit=30&node=1'])
 })

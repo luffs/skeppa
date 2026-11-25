@@ -192,29 +192,58 @@ import StatusBadge from './StatusBadge.vue'
 import ImageUsers from './ImageUsers.vue'
 import UsedBySummary from './UsedBySummary.vue'
 import { shipInject, localShip, nodeShip } from '../lib/ship.js'
+import { subscribeLogs } from '../live.js'
 import { confirmDialog } from '../lib/dialog.js'
 import { store } from '../store.js'
 import { managedWithStore, suggestedImages, imageUserCounts } from '../lib/images.js'
 import { bytes, timeAgo } from '../lib/format.js'
 
-// POST …/build on a ship (lib/ship.js — this panel, or a fleet server through
-// the relay), its log handed to `onText` as it streams in. Through the relay
-// it arrives whole when the build is done, and a build longer than the
-// relay's wait goes on over there while this says so.
-async function runBuild(ship, imageId, onText) {
-  const res = await fetch(ship.url(`/api/images/${imageId}/build`), { method: 'POST', credentials: 'include' })
-  if (res.status === 504) throw new Error('still building over there — the status shows here when it is done')
-  if (!res.ok || !res.body) {
-    const data = await res.json().catch(() => null)
-    throw new Error(data?.error || `${res.status} ${res.statusText}`)
+// Builds run on the server as a store of their own, build-<image id>
+// (server routes/images.js): started detached, so the answer — through the
+// fleet's relay too — comes at once, then followed line by line however long
+// they take, from any tab, here or on a fleet server (lib/ship.js).
+
+// Start one on a ship; one already running (409) is just followed.
+async function startBuild(ship, imageId) {
+  try {
+    await ship.api.post(`/api/images/${imageId}/build?detach=1`)
+  } catch (err) {
+    if (err.status !== 409) throw err
   }
-  const reader = res.body.getReader()
-  const decoder = new TextDecoder()
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    onText(decoder.decode(value, { stream: true }))
+}
+
+// What the last build left on the row: { status: 'success'|'failed'|'', log }.
+async function storedBuild(ship, imageId) {
+  try {
+    const row = await ship.api.get(`/api/images/${imageId}/log`)
+    return { status: row?.status ?? '', log: row?.log ?? '' }
+  } catch {
+    return { status: '', log: '' }
   }
+}
+
+// Follow a build's store until it is over, handing `onText` what it says as
+// it comes (`onRunning` once there is something, so a build that was not
+// running reads as such); resolves to the stored result. `onStop` receives
+// the way to stop following early.
+function followBuild(ship, imageId, { onText = () => {}, onStop = () => {} } = {}) {
+  return new Promise(resolve => {
+    let done = false
+    const stop = subscribeLogs(imageId, async evt => {
+      if (evt.type === 'backlog') onText(evt.log)
+      else if (evt.type === 'line') onText(`${evt.line}\n`)
+      else if (evt.type === 'end' && !done) {
+        done = true
+        queueMicrotask(() => stop())
+        resolve(await storedBuild(ship, imageId))
+      }
+    }, { node: ship.node, kind: 'build' })
+    onStop(() => {
+      done = true
+      stop()
+      resolve(null)
+    })
+  })
 }
 
 const TEMPLATE = `FROM docker.io/oven/bun:1
@@ -248,6 +277,12 @@ export default {
       copyBusy: false,
       copyResults: {}, // target key -> { text, tone }
     }
+  },
+  created() {
+    this.followers = {} // image id -> stop following its build (not rendered)
+  },
+  beforeUnmount() {
+    for (const stop of Object.values(this.followers)) stop()
   },
   computed: {
     // Rendered straight from the LiveState mirror — no request when opening
@@ -316,6 +351,31 @@ export default {
       }
       this.opened = img.id
       if (!(img.id in this.drafts)) this.drafts[img.id] = img.containerfile
+      // A build already under way (another tab, the master, a reload) shows
+      // as it goes; otherwise the last one's log.
+      if (this.building !== img.id) this.follow(img)
+    },
+    // Follow an image's build into its log box until it is over, then show
+    // what the row keeps, marked with how it went. `started`: this tab just
+    // started it, so it reads as building from the first moment.
+    async follow(img, { started = false } = {}) {
+      this.followers[img.id]?.()
+      if (started) this.building = img.id
+      let text = ''
+      const result = await followBuild(this.ship, img.id, {
+        onText: chunk => {
+          this.building = img.id // there is something running
+          text += chunk
+          this.buildLogs[img.id] = text
+        },
+        onStop: stop => { this.followers[img.id] = stop },
+      })
+      delete this.followers[img.id]
+      if (this.building === img.id) this.building = null
+      if (!result) return // stopped: the card closed, or another follow took over
+      const marker = result.status === 'success' ? '✔ build finished' : result.status === 'failed' ? '✖ build failed' : ''
+      const body = (result.log || text).replace(/\n+$/, '')
+      if (body || started) this.buildLogs[img.id] = `${body}${marker && !body.includes(marker) ? `${body ? '\n' : ''}${marker}` : ''}\n`
     },
     async save(img) {
       this.saving = img.id
@@ -329,20 +389,23 @@ export default {
         this.saving = null
       }
     },
-    // The build endpoint streams plain text — read it chunk by chunk into the
-    // log box so long builds show progress (on a fleet server the relay hands
-    // the log over when the build is done).
+    // Started detached, then followed line by line (followBuild) — the same
+    // here and on a fleet server, however long the build takes.
     async build(img) {
-      if (this.opened !== img.id) this.toggle(img)
       this.building = img.id
+      if (this.opened !== img.id) {
+        this.opened = img.id
+        if (!(img.id in this.drafts)) this.drafts[img.id] = img.containerfile
+      }
       this.buildLogs[img.id] = ''
       try {
-        await runBuild(this.ship, img.id, text => { this.buildLogs[img.id] += text })
+        await startBuild(this.ship, img.id)
       } catch (err) {
-        this.buildLogs[img.id] += `\n✖ ${err.message}`
-      } finally {
+        this.buildLogs[img.id] = `✖ ${err.message}\n`
         this.building = null
+        return
       }
+      await this.follow(img, { started: true })
     },
     toggleCopy(img) {
       this.copying = this.copying === img.id ? null : img.id
@@ -374,9 +437,15 @@ export default {
           }
           if (!this.copyBuild) return say(t, `${what} ✔${what === 'updated' ? ' — build it there to use it' : ''}`, 'ok')
           say(t, `${what} — building…`)
-          let log = ''
-          await runBuild(t.ship, id, text => { log += text })
-          const ok = log.includes('✔ build finished')
+          await startBuild(t.ship, id)
+          let lines = 0
+          const result = await followBuild(t.ship, id, {
+            onText: chunk => {
+              lines += chunk.split('\n').filter(Boolean).length
+              say(t, `${what} — building… (${lines} line${lines === 1 ? '' : 's'})`)
+            },
+          })
+          const ok = result?.status === 'success'
           say(t, ok ? `${what}, built ✔` : `${what}, build failed — the log is in its Shipyard`, ok ? 'ok' : 'bad')
         } catch (err) {
           const fields = err.fields ? ` — ${Object.values(err.fields).join(', ')}` : ''

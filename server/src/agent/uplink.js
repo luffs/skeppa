@@ -26,7 +26,7 @@ import { SHA_RE } from '../deploy/git.js'
 // The agent stays a whole panel of its own: its UI, its webhooks, its
 // deploys. The master going away changes nothing here but the socket.
 
-const DEPLOY_ID = /^deploy-\d+$/
+const LOG_ID = /^(deploy|build)-\d+$/ // a running deploy's log, or a Shipyard build's
 
 const coded = (code, message) => Object.assign(new Error(message), { code })
 
@@ -120,8 +120,9 @@ export const METHODS = {
 }
 
 // The stores the master may read here, served over the agent's socket:
-// `uplink` and running deploy logs. Nothing else — not `panel`, not a fleet.
-export const masterMayOpen = id => id === UPLINK_ID || DEPLOY_ID.test(id)
+// `uplink`, running deploy logs and Shipyard builds. Nothing else — not
+// `panel`, not a fleet.
+export const masterMayOpen = id => id === UPLINK_ID || LOG_ID.test(id)
 
 export function createAgentHub({ liveStores, send, onError }) {
   return createHub(id => liveStores.get(id), {

@@ -48,8 +48,10 @@ function entry({ trigger, sha, took, ...rest }) {
 
 // `lives` are LiveState project entries; `ownerOf(info)` tags someone else's
 // entries ('' for your own). Returns { entries, horizon } — horizon is the
-// instant older entries were cut at, or 0 when nothing was cut.
-export function logEntries(lives, ownerOf = () => '') {
+// instant older entries were cut at, or 0 when nothing was cut. For another
+// server of the fleet, `link(id)` is its project page (lib/ship.js
+// ship.link) and `keyPrefix` keeps its ids apart from this panel's.
+export function logEntries(lives, ownerOf = () => '', { link = id => `/projects/${id}`, keyPrefix = '' } = {}) {
   const entries = []
   let horizon = 0
   for (const p of lives) {
@@ -61,8 +63,8 @@ export function logEntries(lives, ownerOf = () => '') {
       const when = d.finishedAt || d.startedAt || d.createdAt
       entries.push(entry({
         ...base,
-        key: `d${d.id}`,
-        to: `/projects/${info.id}?deployment=${d.id}`, // straight to that voyage's log
+        key: `${keyPrefix}d${d.id}`,
+        to: `${link(info.id)}?deployment=${d.id}`, // straight to that voyage's log
         ts: at(when),
         text: (TEXT[d.status] ?? (id => `#${id} ${d.status}`))(d.id),
         trigger: d.trigger,
@@ -78,8 +80,8 @@ export function logEntries(lives, ownerOf = () => '') {
     if (p.headCommit?.sha && !p.currentDeployment && p.headCommit.sha !== p.deployedSha) {
       entries.push(entry({
         ...base,
-        key: `c${info.id}`,
-        to: `/projects/${info.id}`,
+        key: `${keyPrefix}c${info.id}`,
+        to: link(info.id),
         ts: at(p.headCommit.pushedAt),
         text: `new commits on ${info.branch}`,
         trigger: 'push',

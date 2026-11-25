@@ -18,6 +18,7 @@ import { createApp, createFleetApiApp, hasLocalUi } from './app.js'
 import { createNodeLinks } from './nodes/links.js'
 import { sqliteStorage } from 'lazy-storage/server/sqlite'
 import { createFleetAnswers } from './nodes/answers.js'
+import { recordEvent } from './nodes/events.js'
 import { createUplink, readAgentKey, checkoutVersion } from './agent/uplink.js'
 import { FleetGitHub } from './agent/github.js'
 
@@ -108,10 +109,18 @@ const links = createNodeLinks({
   // self-deploy's overlap may share it) and not in the backups.
   storage: sqliteStorage(join(config.dataDir, 'fleet-mirror.sqlite'), { lease: false }),
   offlineAlertMs: NODE_ALERT_MS,
-  onNodeDown: (row, lastSeen) => notifyEvent(db, config.masterKey, 'node_offline',
-    `⚠ ${row.name} has not reported for ${minutes(NODE_ALERT_MS)} minutes${lastSeen ? ` — last seen ${lastSeen.replace('T', ' ').slice(0, 16)} UTC` : ''}. Its apps keep running; it just cannot be reached from here.`),
-  onNodeUp: (row, awayMs) => notifyEvent(db, config.masterKey, 'node_offline',
-    `✔ ${row?.name ?? 'A fleet server'} reports again, after about ${minutes(awayMs)} minutes away.`),
+  // Away and back go into the Fleet's log (nodes/events.js) as well as out
+  // as notifications.
+  onNodeDown: (row, lastSeen) => {
+    recordEvent(db, { nodeId: row.id, nodeName: row.name, action: 'offline', subject: lastSeen ? `last seen ${lastSeen}` : '' })
+    return notifyEvent(db, config.masterKey, 'node_offline',
+      `⚠ ${row.name} has not reported for ${minutes(NODE_ALERT_MS)} minutes${lastSeen ? ` — last seen ${lastSeen.replace('T', ' ').slice(0, 16)} UTC` : ''}. Its apps keep running; it just cannot be reached from here.`)
+  },
+  onNodeUp: (row, awayMs) => {
+    if (row) recordEvent(db, { nodeId: row.id, nodeName: row.name, action: 'back', subject: `after about ${minutes(awayMs)} min` })
+    return notifyEvent(db, config.masterKey, 'node_offline',
+      `✔ ${row?.name ?? 'A fleet server'} reports again, after about ${minutes(awayMs)} minutes away.`)
+  },
 })
 answers = createFleetAnswers({ github, links })
 // Always on: the crash watch must run with nobody looking. Clients connecting
@@ -136,7 +145,7 @@ if (proxySettings(db).baseDomain) {
 // would write their decrypted env to disk) — the panel starts them itself.
 resurrectApps({ db, config }).catch(err => console.error('[resurrect] failed:', err.message))
 
-const app = createApp({ db, config, liveState, runner, github, poller, proxy, links })
+const app = createApp({ db, config, liveState, runner, github, poller, proxy, links, logs: liveStores })
 // One /live socket for both: the panel's own stores, and its nodes'.
 const live = createLiveTransport({
   db,
@@ -161,7 +170,7 @@ if (config.masterUrl) {
       masterUrl: config.masterUrl,
       key: readAgentKey(config.agentKeyFile),
       db, runner, liveStores, liveState, github,
-      fleetApi: createFleetApiApp({ db, config, liveState, runner, github, poller, proxy }),
+      fleetApi: createFleetApiApp({ db, config, liveState, runner, github, poller, proxy, logs: liveStores }),
       version: panelVersion,
       onWatch: on => {
         looking.master = on

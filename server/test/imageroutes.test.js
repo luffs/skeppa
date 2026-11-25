@@ -250,3 +250,62 @@ test('prune reports what was reclaimed', async () => {
   expect(body.deleted).toBe(2)
   expect(body.reclaimed).toBe(12345)
 })
+
+// A build is a store while it runs (build-<image id>, live/stores.js):
+// followed from its first line by whoever opens it, one at a time per image,
+// and with ?detach=1 answered at once.
+test('a detached build is a store that is followed, one at a time, and gone when it is done', async () => {
+  const { createLiveState } = await import('../src/live/state.js')
+  const { createLiveStores } = await import('../src/live/stores.js')
+  const logs = createLiveStores({ liveState: createLiveState(), onError: () => {} })
+  let finish
+  const engine = fakeEngine()
+  engine.buildImage = async (tag, tar, onLine) => {
+    onLine('Step 1/2 : FROM alpine')
+    await new Promise(resolve => { finish = resolve })
+    onLine('Step 2/2 : RUN true')
+  }
+  const db = new Database(':memory:')
+  migrate(db, fileURLToPath(new URL('../src/db/migrations', import.meta.url)))
+  const app = imageRoutes({ db, config: { containerSocket: '/sock' }, containerClient: engine, logs })
+  const { id } = await (await create(app, { name: 'base', containerfile: 'FROM alpine\n' })).json()
+
+  const res = await app.request(`/${id}/build?detach=1`, { method: 'POST' })
+  expect(res.status).toBe(202)
+  expect(await res.json()).toEqual({ store: `build-${id}` })
+  await Bun.sleep(5)
+  expect(logs.isBuilding(id)).toBe(true)
+  const lines = () => Object.values(logs.get(`build-${id}`)?.state.lines ?? {})
+  expect(lines()).toEqual(['Step 1/2 : FROM alpine'])
+  // one at a time, streamed or not
+  expect((await app.request(`/${id}/build?detach=1`, { method: 'POST' })).status).toBe(409)
+  expect((await app.request(`/${id}/build`, { method: 'POST' })).status).toBe(409)
+
+  finish()
+  for (let i = 0; i < 50 && logs.isBuilding(id); i++) await Bun.sleep(5)
+  expect(logs.isBuilding(id)).toBe(false)
+  expect(logs.get(`build-${id}`)).toBeNull()
+  expect(db.query('SELECT last_build_status FROM images WHERE id = ?').get(id).last_build_status).toBe('success')
+  expect(logs.canOpen({ id: 1, role: 'admin' }, `build-${id}`)).toBe(true)
+  expect(logs.canOpen({ id: 2, role: 'tenant' }, `build-${id}`)).toBe(false)
+})
+
+test('a streamed build feeds its store too', async () => {
+  const { createLiveState } = await import('../src/live/state.js')
+  const { createLiveStores } = await import('../src/live/stores.js')
+  const logs = createLiveStores({ liveState: createLiveState(), onError: () => {} })
+  const seen = []
+  const engine = fakeEngine()
+  engine.buildImage = async (tag, tar, onLine) => {
+    onLine('Step 1/1 : FROM alpine')
+    seen.push(Object.values(logs.get('build-1')?.state.lines ?? {}))
+  }
+  const db = new Database(':memory:')
+  migrate(db, fileURLToPath(new URL('../src/db/migrations', import.meta.url)))
+  const app = imageRoutes({ db, config: { containerSocket: '/sock' }, containerClient: engine, logs })
+  await create(app, { name: 'base', containerfile: 'FROM alpine\n' })
+  const text = await (await app.request('/1/build', { method: 'POST' })).text()
+  expect(text).toContain('✔ build finished')
+  expect(seen).toEqual([['Step 1/1 : FROM alpine']])
+  expect(logs.isBuilding(1)).toBe(false)
+})

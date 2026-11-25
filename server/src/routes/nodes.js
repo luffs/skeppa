@@ -2,6 +2,8 @@ import { Hono } from 'hono'
 import { normalizeGroupName } from '../lib/validate.js'
 import { newJoinCode, newAgentKey, parseJoinCode, sha256, matchesHash, JOIN_TTL_MS } from '../nodes/keys.js'
 import { nodeInfo } from '../live/state.js'
+import { nodeStoreId } from '../nodes/links.js'
+import { recordEvent, listEvents, subjectOf } from '../nodes/events.js'
 
 // Same rule as a pier's name: one line, 40 characters, no control characters.
 const normalizeNodeName = normalizeGroupName
@@ -21,6 +23,7 @@ export function nodeJoinRoutes({ db, links }) {
     db.query("UPDATE nodes SET key_hash = ?, join_hash = '', join_expires_at = '' WHERE id = ?").run(sha256(key), node.id)
     links.disconnect(node.id)
     links.refresh(node.id)
+    recordEvent(db, { nodeId: node.id, nodeName: node.name, action: 'paired' })
     return c.json({ node: { id: node.id, name: node.name }, key })
   })
 
@@ -32,6 +35,9 @@ export function nodeRoutes({ db, links }) {
   const app = new Hono()
 
   const rowOf = id => db.query('SELECT * FROM nodes WHERE id = ?').get(Number(id)) ?? null
+  // A node's life, into the Fleet's log, as the signed-in admin's doing.
+  const logNode = (c, row, action, subject = '') =>
+    recordEvent(db, { nodeId: row.id, nodeName: row.name, username: c.get('user')?.username ?? '', action, subject })
   const nameTaken = (name, exceptId = -1) =>
     Boolean(db.query('SELECT 1 FROM nodes WHERE name = ? COLLATE NOCASE AND id != ?').get(name, exceptId))
 
@@ -55,7 +61,19 @@ export function nodeRoutes({ db, links }) {
     if (nameTaken(name)) return c.json({ error: 'validation failed', fields: { name: 'another server has that name' } }, 400)
     const id = Number(db.query('INSERT INTO nodes (name) VALUES (?)').run(name).lastInsertRowid)
     const join = issueCode(id)
+    logNode(c, rowOf(id), 'created')
     return c.json({ node: nodeInfo(rowOf(id), false), ...join }, 201)
+  })
+
+  // The Fleet's log, newest first: ?node= one server, ?before= an id to page back.
+  app.get('/events', c => {
+    const node = c.req.query('node')
+    const before = c.req.query('before')
+    return c.json(listEvents(db, {
+      nodeId: node && /^\d+$/.test(node) ? Number(node) : null,
+      before: before && /^\d+$/.test(before) ? Number(before) : null,
+      limit: Number(c.req.query('limit')) || 50,
+    }))
   })
 
   app.patch('/:id', async c => {
@@ -67,6 +85,7 @@ export function nodeRoutes({ db, links }) {
     if (nameTaken(name, row.id)) return c.json({ error: 'validation failed', fields: { name: 'another server has that name' } }, 400)
     db.query('UPDATE nodes SET name = ? WHERE id = ?').run(name, row.id)
     links.refresh(row.id)
+    if (name !== row.name) logNode(c, { ...row, name }, 'renamed', `from ${row.name}`)
     return c.json(nodeInfo(rowOf(row.id), links.isOnline(row.id)))
   })
 
@@ -75,7 +94,9 @@ export function nodeRoutes({ db, links }) {
   app.post('/:id/code', c => {
     const row = rowOf(c.req.param('id'))
     if (!row) return c.json({ error: 'not found' }, 404)
-    return c.json(issueCode(row.id))
+    const join = issueCode(row.id)
+    logNode(c, row, 'new join code')
+    return c.json(join)
   })
 
   // Take the key back now: the server is cut off until it is paired again.
@@ -85,6 +106,7 @@ export function nodeRoutes({ db, links }) {
     db.query("UPDATE nodes SET key_hash = '' WHERE id = ?").run(row.id)
     links.disconnect(row.id, 'unpaired')
     links.refresh(row.id)
+    logNode(c, row, 'unpaired')
     return c.json(nodeInfo(rowOf(row.id), false))
   })
 
@@ -93,6 +115,7 @@ export function nodeRoutes({ db, links }) {
     if (!row) return c.json({ error: 'not found' }, 404)
     db.query('DELETE FROM nodes WHERE id = ?').run(row.id)
     links.remove(row.id)
+    logNode(c, row, 'removed') // its past stays in the log, under the name it had
     return c.json({ ok: true })
   })
 
@@ -130,15 +153,25 @@ export function nodeRoutes({ db, links }) {
       links.grantRepo(row.id, url.searchParams.get('repo'))
     }
     if (typeof body?.repo_full_name === 'string') links.grantRepo(row.id, body.repo_full_name)
+    // A change goes into the Fleet's log (nodes/events.js), with what it was
+    // about as the node reports it now — before a delete takes it away.
+    const change = method !== 'GET'
+    const bare = path.split('?')[0]
+    const subject = change ? subjectOf(bare, links.get(nodeStoreId(row.id))?.state) : ''
+    const log = (status, error = '') => change && recordEvent(db, {
+      nodeId: row.id, nodeName: row.name, username: c.get('user')?.username ?? '', action: `${method} ${bare}`, subject, status, error,
+    })
     let answer
     try {
       // A clone or a slug rename waits on git and the engine over there.
       answer = await links.call(row.id, 'request', { method, path, body }, { timeoutMs: 180_000 })
     } catch (err) {
+      log(0, err.message)
       if (err.code === 'forbidden') return c.json({ error: `not through the fleet yet — use that server's own panel (${err.message})` }, 403)
       return nodeError(c, err)
     }
     const status = Number.isInteger(answer?.status) && answer.status >= 200 && answer.status <= 599 ? answer.status : 502
+    log(status, status >= 400 ? String(answer?.json?.error ?? '') : '')
     if (typeof answer?.base64 === 'string') {
       // A download from that server's file viewer: the same headers this
       // panel's own sets, whatever the agent said — only the file name comes

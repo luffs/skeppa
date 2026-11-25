@@ -3,7 +3,7 @@
     <div class="vessel-main">
       <div class="vessel-l1">
         <span class="dot" :class="dot" aria-hidden="true"></span>
-        <router-link :to="`/projects/${project.id}`" class="vessel-name" @click.stop>{{ project.name }}</router-link>
+        <router-link :to="ship.link(project.id)" class="vessel-name" @click.stop>{{ project.name }}</router-link>
         <span class="vessel-status">{{ statusText }}</span>
         <span v-if="branchChip" class="vessel-branch" title="Deploys this branch">{{ branchChip }}</span>
       </div>
@@ -25,7 +25,8 @@
 
 <script>
 import ActionMenu from './ActionMenu.vue'
-import { liveProject, appUrlFor } from '../store.js'
+import { appUrlFor } from '../store.js'
+import { localShip } from '../lib/ship.js'
 import { primaryAction, actionMenu, performAction, lastVoyageId } from '../lib/vesselActions.js'
 import { timeAgo, uptimeSince } from '../lib/format.js'
 import { vesselState, statusWord, VESSEL_STATES } from '../lib/vessels.js'
@@ -47,13 +48,18 @@ const code = t => ({ text: t, code: true })
 export default {
   name: 'ProjectRow',
   components: { ActionMenu },
-  props: { project: { type: Object, required: true } },
+  props: {
+    project: { type: Object, required: true },
+    // The server it is on (lib/ship.js): this panel, or one of the fleet's
+    // rows in the harbor.
+    ship: { type: Object, default: () => localShip },
+  },
   data() {
     return { busy: false }
   },
   computed: {
     live() {
-      return liveProject(this.project.id)
+      return this.ship.live.projects?.[this.project.id] ?? null
     },
     state() {
       return vesselState(this.live)
@@ -76,7 +82,7 @@ export default {
       return this.live?.lastDeployment ?? null
     },
     appUrl() {
-      return appUrlFor(this.project)
+      return appUrlFor(this.project, this.ship.live.proxy?.baseDomain)
     },
     appHost() {
       return this.appUrl.replace(/^https?:\/\//, '')
@@ -145,10 +151,10 @@ export default {
     // The one button on the row, and the rest in ⋮ — decided in
     // lib/vesselActions.js, so the project page offers exactly the same.
     action() {
-      return primaryAction(this.project, this.live)
+      return primaryAction(this.project, this.live, this.ship)
     },
     menu() {
-      return actionMenu(this.project, this.live, { exclude: this.action?.key, goto: true, piers: true })
+      return actionMenu(this.project, this.live, { exclude: this.action?.key, goto: true, piers: true, ship: this.ship })
     },
   },
   methods: {
@@ -156,16 +162,16 @@ export default {
       // A selection being made is not a click to open.
       if (window.getSelection?.()?.toString()) return
       if (event.target.closest('a, button')) return
-      this.$router.push(`/projects/${this.project.id}`)
+      this.$router.push(this.ship.link(this.project.id))
     },
     async run(key) {
-      const page = query => this.$router.push({ path: `/projects/${this.project.id}`, query })
+      const page = query => this.$router.push({ path: this.ship.link(this.project.id), query })
       if (key === 'voyage') return page({ deployment: String(lastVoyageId(this.live)) })
       if (key === 'logbook') return page({ tab: 'logs' })
       if (key === 'rigging') return page({ tab: 'settings' })
       this.busy = true
       try {
-        await performAction(this.project, key)
+        await performAction(this.project, key, this.ship)
       } finally {
         this.busy = false
       }

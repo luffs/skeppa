@@ -38,8 +38,7 @@
 
 <script>
 import ActionMenu from './ActionMenu.vue'
-import { store, liveProject } from '../store.js'
-import { api } from '../api.js'
+import { localShip } from '../lib/ship.js'
 import { confirmDialog, alertDialog } from '../lib/dialog.js'
 import { summarizeVessels } from '../lib/vessels.js'
 
@@ -50,6 +49,8 @@ export default {
   name: 'PierHead',
   components: { ActionMenu },
   props: {
+    // The server the pier is on (lib/ship.js): this panel, or the fleet's.
+    ship: { type: Object, default: () => localShip },
     pier: { type: Object, required: true },
     // The project infos moored here.
     projects: { type: Array, default: () => [] },
@@ -64,13 +65,13 @@ export default {
       return this.projects.length
     },
     summary() {
-      return summarizeVessels(this.projects.map(p => liveProject(p.id)))
+      return summarizeVessels(this.projects.map(p => this.ship.live.projects?.[p.id] ?? null))
     },
     // The server leaves the panel's own project out of a pier deploy (a
     // self-deploy reloads the panel mid-way); say so before, not after. Only
     // an admin can have it, and only an admin's store names it.
     deployable() {
-      const self = store.live.system?.selfPm2Name
+      const self = this.ship.live.system?.selfPm2Name
       return this.projects.filter(p => !(self && p.runtime === 'pm2' && p.pm2_name === self))
     },
     menu() {
@@ -104,7 +105,7 @@ export default {
       this.busy = true
       this.error = ''
       try {
-        await api.patch(`/api/groups/${this.pier.id}`, { name: this.newName })
+        await this.ship.api.patch(`/api/groups/${this.pier.id}`, { name: this.newName })
         this.renaming = false
       } catch (err) {
         this.error = err.fields?.name || err.message
@@ -124,7 +125,7 @@ export default {
       this.deploying = true
       this.error = ''
       try {
-        const { skipped = [] } = await api.post(`/api/groups/${this.pier.id}/deploy`)
+        const { skipped = [] } = await this.ship.api.post(`/api/groups/${this.pier.id}/deploy`)
         // The panel was announced in the confirmation; anything else the
         // server held back is news.
         const news = skipped.filter(s => this.deployable.some(p => p.id === s.project_id))
@@ -145,7 +146,7 @@ export default {
       if (!ok) return
       this.error = ''
       try {
-        await api.del(`/api/groups/${this.pier.id}`)
+        await this.ship.api.del(`/api/groups/${this.pier.id}`)
       } catch (err) {
         this.error = err.message
       }

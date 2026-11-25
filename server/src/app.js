@@ -21,7 +21,7 @@ import { nodeRoutes, nodeJoinRoutes } from './routes/nodes.js'
 // without AGENT_LOCAL_UI.
 export const hasLocalUi = config => !config.masterUrl || Boolean(config.agentLocalUi)
 
-export function createApp({ db, config, liveState, runner, github, poller, proxy, links = null }) {
+export function createApp({ db, config, liveState, runner, github, poller, proxy, links = null, logs = null }) {
   const app = new Hono()
 
   app.onError((err, c) => {
@@ -63,7 +63,7 @@ export function createApp({ db, config, liveState, runner, github, poller, proxy
   app.route('/api/users', userRoutes({ db, liveState, proxy, github }))
   app.route('/api/account', accountRoutes({ db })) // self-service — every role
   app.route('/api/proxy', proxyApiRoutes({ db, proxy, liveState }))
-  app.route('/api/images', imageRoutes({ db, config, liveState }))
+  app.route('/api/images', imageRoutes({ db, config, liveState, logs }))
   if (links) app.route('/api/nodes', nodeRoutes({ db, links }))
 
   // Static SPA (prod build). In dev, Vite serves the frontend and proxies here.
@@ -84,7 +84,7 @@ export function createApp({ db, config, liveState, runner, github, poller, proxy
 // route modules as the panel's own, so every check they make is made — as
 // this server's first admin, the master acting as that admin. No session,
 // no cookie: the uplink's key already said who is asking.
-export function createFleetApiApp({ db, config, liveState, runner, github, poller, proxy }) {
+export function createFleetApiApp({ db, config, liveState, runner, github, poller, proxy, logs = null }) {
   const app = new Hono()
   app.onError((err, c) => {
     console.error('unhandled error (fleet request):', err)
@@ -105,7 +105,7 @@ export function createFleetApiApp({ db, config, liveState, runner, github, polle
   app.route('/api/settings', settingsRoutes({ db, config, github }))
   app.route('/api/system', systemRoutes({ db, config, poller }))
   app.route('/api/proxy', proxyApiRoutes({ db, proxy, liveState }))
-  app.route('/api/images', imageRoutes({ db, config, liveState }))
+  app.route('/api/images', imageRoutes({ db, config, liveState, logs }))
   app.all('*', c => c.json({ error: 'not found' }, 404))
   return app
 }

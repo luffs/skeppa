@@ -1,5 +1,5 @@
 import { createClient, createConnection } from 'lazy-storage'
-import { STORE_SHAPES, UPLINK_ID, mirrorStore, wholeArraysOf, deployStoreId } from '../live/stores.js'
+import { STORE_SHAPES, UPLINK_ID, mirrorStore, wholeArraysOf } from '../live/stores.js'
 import { nodeInfo } from '../live/state.js'
 import { nodeForKey } from './keys.js'
 
@@ -39,9 +39,11 @@ import { nodeForKey } from './keys.js'
 
 export const AGENT_PATH = '/agent'
 const NODE_STORE = /^node-(\d+)$/
-const NODE_DEPLOY = /^node-(\d+)-deploy-(\d+)$/
+// a running log there: node-<id>-deploy-<dep>, or a Shipyard build's, node-<id>-build-<image>
+const NODE_DEPLOY = /^node-(\d+)-(deploy|build)-(\d+)$/
 export const nodeStoreId = id => `node-${id}`
 export const nodeDeployStoreId = (id, deploymentId) => `node-${id}-deploy-${deploymentId}`
+export const nodeBuildStoreId = (id, imageId) => `node-${id}-build-${imageId}`
 
 const isNodeSocket = ws => Boolean(ws?.data) && Object.hasOwn(ws.data, 'skeppaNode')
 
@@ -207,38 +209,39 @@ export function createNodeLinks({
     }
   }
 
-  // --- deploy logs, followed on demand --------------------------------------
-  function openLog(n, deploymentId) {
-    const existing = n.logs.get(deploymentId)
+  // --- running logs (deploys, Shipyard builds), followed on demand ----------
+  // `upstreamId` is the store over there: deploy-<id> or build-<image id>.
+  function openLog(n, upstreamId) {
+    const existing = n.logs.get(upstreamId)
     if (existing) return existing.store
     const store = mirrorStore(STORE_SHAPES.deploy)
-    const client = createClient({ connection: n.connection, store: deployStoreId(deploymentId), ...STORE_SHAPES.deploy, mirror: true })
+    const client = createClient({ connection: n.connection, store: upstreamId, ...STORE_SHAPES.deploy, mirror: true })
     const log = { store, client, timer: null }
-    n.logs.set(deploymentId, log)
+    n.logs.set(upstreamId, log)
     const idle = () => {
       clearTimeout(log.timer)
-      log.timer = store.sessions > 0 ? null : setTimeout(() => endLog(n, deploymentId), linger)
+      log.timer = store.sessions > 0 ? null : setTimeout(() => endLog(n, upstreamId), linger)
     }
     store.observe('session', () => {
       idle()
       updateWatch(n)
     })
-    client.watch(diff => patch(nodeDeployStoreId(n.id, deploymentId), store, client, diff))
-    // 'evicted' is the deploy finishing over there; 'unknown-store' one that
-    // already had. Either way the stored log is on the API from here.
-    client.on('closed', () => endLog(n, deploymentId))
+    client.watch(diff => patch(`node-${n.id}-${upstreamId}`, store, client, diff))
+    // 'evicted' is the deploy or build finishing over there; 'unknown-store'
+    // one that already had. Either way the stored log is on the API from here.
+    client.on('closed', () => endLog(n, upstreamId))
     client.connect()
     idle() // nobody has said hello yet: a store nobody opens does not stay
     return store
   }
 
-  function endLog(n, deploymentId) {
-    const log = n.logs.get(deploymentId)
+  function endLog(n, upstreamId) {
+    const log = n.logs.get(upstreamId)
     if (!log) return
-    n.logs.delete(deploymentId)
+    n.logs.delete(upstreamId)
     clearTimeout(log.timer)
     log.client.disconnect()
-    log.store.closeSessions(() => true, 'deployment finished')
+    log.store.closeSessions(() => true, upstreamId.startsWith('build-') ? 'build finished' : 'deployment finished')
     log.store.dispose()
     updateWatch(n)
   }
@@ -386,7 +389,7 @@ export function createNodeLinks({
       m = NODE_DEPLOY.exec(storeId)
       if (m) {
         const n = nodes.get(Number(m[1]))
-        return n ? openLog(n, Number(m[2])) : null
+        return n ? openLog(n, `${m[2]}-${m[3]}`) : null
       }
       return null
     },
@@ -462,7 +465,7 @@ export function createNodeLinks({
       clearTimeout(n.downTimer)
       n.socket?.close(4401, 'removed from the fleet')
       detach(n)
-      for (const deploymentId of [...n.logs.keys()]) endLog(n, deploymentId)
+      for (const upstreamId of [...n.logs.keys()]) endLog(n, upstreamId)
       n.upstream.disconnect()
       n.connection.close()
       n.store.closeSessions(() => true, 'removed from the fleet')
@@ -481,7 +484,7 @@ export function createNodeLinks({
         clearTimeout(n.downTimer)
         n.socket?.close(1001, 'shutting down')
         detach(n)
-        for (const deploymentId of [...n.logs.keys()]) endLog(n, deploymentId)
+        for (const upstreamId of [...n.logs.keys()]) endLog(n, upstreamId)
         n.upstream.disconnect()
         n.connection.close()
         n.store.dispose()

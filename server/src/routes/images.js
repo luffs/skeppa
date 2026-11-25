@@ -4,6 +4,7 @@ import { SLUG_RE, IMAGE_RE } from '../lib/validate.js'
 import { createContainerClient } from '../containers/client.js'
 import { managedRef, buildManagedImage, MANAGED_PREFIX } from '../containers/images.js'
 import { projectsUsing, getManagedImages, toLocalImages, annotate, syncImages } from '../live/images.js'
+import { buildStoreId } from '../live/stores.js'
 
 // Shipyard API: CRUD for managed images (Containerfile in the DB), builds
 // streamed as plain text, plus a read-only view of the engine's local image
@@ -15,7 +16,8 @@ import { projectsUsing, getManagedImages, toLocalImages, annotate, syncImages } 
 
 const IMAGE_COLUMNS = 'id, name, containerfile, last_built_at, last_build_status, created_at'
 
-export function imageRoutes({ db, config, liveState = null, containerClient = null }) {
+// `logs`: the live stores (live/stores.js) a build's log is followed in.
+export function imageRoutes({ db, config, liveState = null, containerClient = null, logs = null }) {
   const app = new Hono()
 
   let engineInstance = containerClient
@@ -149,8 +151,14 @@ export function imageRoutes({ db, config, liveState = null, containerClient = nu
     return c.json({ log: image.last_build_log, status: image.last_build_status, built_at: image.last_built_at })
   })
 
-  // Build, streaming the log as plain text. The stream always ends with a
-  // ✔/✖ marker line; the row's last_build_* fields carry the durable result.
+  // Build. While it runs a build is a store of its own, build-<image id>
+  // (live/stores.js), that whoever looks follows from its first line —
+  // another tab, a reload, the master through its uplink — and that store
+  // being open is what "building" means: one at a time per image (409).
+  // With ?detach=1 the answer is a 202 at once and the build goes on (the
+  // Shipyard, and so the master's relay, which then waits for nothing);
+  // without, the log streams back as plain text as well, ending with a ✔/✖
+  // marker line. The row's last_build_* fields carry the durable result.
   app.post('/:id/build', async c => {
     const image = getImage(c.req.param('id'))
     if (!image) return c.json({ error: 'not found' }, 404)
@@ -160,18 +168,32 @@ export function imageRoutes({ db, config, liveState = null, containerClient = nu
     } catch (err) {
       return c.json({ error: err.message }, 500)
     }
-    return streamText(c, async stream => {
+    if (logs?.isBuilding(image.id)) return c.json({ error: `${image.name} is already being built` }, 409)
+    logs?.openBuild(image.id)
+    const run = async (onLine = () => {}) => {
+      const say = line => {
+        logs?.appendBuild(image.id, line)
+        return onLine(line)
+      }
       try {
         // Manual builds refresh FROM bases — pressing Build after an upstream
         // release is how a managed image picks the new version up.
-        await buildManagedImage({ db, engine: eng, image, pull: true, onLine: line => stream.writeln(line) })
-        await stream.writeln('✔ build finished')
+        await buildManagedImage({ db, engine: eng, image, pull: true, onLine: say })
+        await say('✔ build finished')
       } catch (err) {
-        await stream.writeln(`✖ build failed: ${err.message}`)
+        await say(`✖ build failed: ${err.message}`)
+      } finally {
+        // Build status, timestamp and the store's new size, either way — and
+        // only then is the log over, so a follower rereading finds them.
+        await syncLive().catch(() => {})
+        logs?.closeBuild(image.id)
       }
-      // Build status, timestamp and the store's new size, either way.
-      await syncLive()
-    })
+    }
+    if (c.req.query('detach') === '1') {
+      run().catch(() => {})
+      return c.json({ store: buildStoreId(image.id) }, 202)
+    }
+    return streamText(c, stream => run(line => stream.writeln(line)))
   })
 
   app.delete('/:id', async c => {

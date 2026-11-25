@@ -59,6 +59,8 @@ export const UPLINK_ID = 'uplink'
 
 const FLEET_ID = /^fleet-\d+$/
 const DEPLOY_ID = /^deploy-(\d+)$/
+const BUILD_ID = /^build-(\d+)$/
+export const buildStoreId = imageId => `build-${imageId}`
 export const fleetId = ownerId => `fleet-${ownerId}`
 export const deployStoreId = deploymentId => `deploy-${deploymentId}`
 
@@ -118,7 +120,7 @@ export function createLiveStores({
   uplink = false,
 }) {
   const stores = new Map()
-  const logs = new Map() // deploymentId -> { store, seq }
+  const logs = new Map() // store id (deploy-<id>, build-<id>) -> { store, seq }
   // Last known owner per project id: a deletion diff arrives after the
   // project is gone from state, and it still has to reach its owner's fleet.
   const owners = new Map()
@@ -279,40 +281,48 @@ export function createLiveStores({
   function canOpen(user, id) {
     const deploy = DEPLOY_ID.exec(id)
     if (deploy) return Boolean(user) && Boolean(canReadDeployment(user, Number(deploy[1])))
+    // A Shipyard build is the panel's own business: admins (and a master
+    // reading through the uplink, agent/uplink.js).
+    if (BUILD_ID.test(id)) return user?.role === 'admin'
     return canOpenStore(user, id)
   }
 
-  // --- deploy logs -----------------------------------------------------------
-  function openLog(deploymentId) {
-    if (logs.has(deploymentId)) return
+  // --- running logs: deploys and Shipyard builds -------------------------------
+  // The same store either way (STORE_SHAPES.deploy): one leaf per line, so a
+  // patch is the line, a snapshot is the backlog, and keys sort as strings in
+  // arrival order. Keyed by store id.
+  function openLines(storeId) {
+    if (logs.has(storeId)) return
     const store = mirrorStore(STORE_SHAPES.deploy)
-    add(deployStoreId(deploymentId), store)
-    logs.set(deploymentId, { store, seq: 0 })
+    add(storeId, store)
+    logs.set(storeId, { store, seq: 0 })
   }
 
-  // One leaf per line: a patch is the line, a snapshot is the backlog, and
-  // keys sort as strings in arrival order.
-  function appendLog(deploymentId, line) {
-    const log = logs.get(deploymentId)
+  function appendLines(storeId, line) {
+    const log = logs.get(storeId)
     if (!log) return
     log.seq += 1
     try {
       log.store.patch({ lines: { [String(log.seq).padStart(7, '0')]: String(line) } })
     } catch (err) {
-      onError(new Error(`deploy log ${deploymentId}: ${err.message}`, { cause: err }))
+      onError(new Error(`${storeId}: ${err.message}`, { cause: err }))
     }
   }
 
   // Everyone following is told the store is over (the client reads the
   // stored log from the API from here), then the store and its lines go.
-  function closeLog(deploymentId) {
-    const log = logs.get(deploymentId)
+  function closeLines(storeId, message) {
+    const log = logs.get(storeId)
     if (!log) return
-    logs.delete(deploymentId)
-    stores.delete(deployStoreId(deploymentId))
-    log.store.closeSessions(() => true, 'deployment finished')
+    logs.delete(storeId)
+    stores.delete(storeId)
+    log.store.closeSessions(() => true, message)
     log.store.dispose()
   }
+
+  const openLog = deploymentId => openLines(deployStoreId(deploymentId))
+  const appendLog = (deploymentId, line) => appendLines(deployStoreId(deploymentId), line)
+  const closeLog = deploymentId => closeLines(deployStoreId(deploymentId), 'deployment finished')
 
   return {
     // The shape createHandlers takes as `stores`: get(id) → store or null
@@ -322,6 +332,12 @@ export function createLiveStores({
     openLog,
     appendLog,
     closeLog,
+    // A Shipyard build's log (routes/images.js), `build-<image id>`; the
+    // store being open is what "building" means — one at a time per image.
+    openBuild: imageId => openLines(buildStoreId(imageId)),
+    appendBuild: (imageId, line) => appendLines(buildStoreId(imageId), line),
+    closeBuild: imageId => closeLines(buildStoreId(imageId), 'build finished'),
+    isBuilding: imageId => logs.has(buildStoreId(imageId)),
     get sessions() {
       return sessions
     },

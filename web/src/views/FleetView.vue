@@ -143,6 +143,45 @@
         <template v-else>{{ n.paired ? 'Nothing reported since this panel started — it shows up when the server dials in.' : 'Not paired yet: make a code and run the command on that server.' }}</template>
       </p>
     </section>
+
+    <!-- Who did what to which server from here, and how it went (server
+         nodes/events.js): every change relayed, and each server's own life. -->
+    <section v-if="nodes.length || events.length" class="panel fleet-log">
+      <div class="fleet-log-head">
+        <span class="section-label">Fleet log</span>
+        <select v-model="eventsNode" class="fleet-log-filter" aria-label="Show the log of" @change="loadEvents()">
+          <option value="">every server</option>
+          <option v-for="n in nodes" :key="n.id" :value="String(n.id)">{{ n.name }}</option>
+        </select>
+        <span class="spacer"></span>
+        <button type="button" class="small secondary" :disabled="eventsBusy" @click="loadEvents()">↻ Refresh</button>
+      </div>
+      <p v-if="eventsError" class="error">{{ eventsError }}</p>
+      <p v-else-if="!events.length" class="hint" style="margin: 8px 0 0">Nothing done to {{ eventsNode ? 'that server' : 'the fleet' }} from here yet.</p>
+      <div v-else class="table-scroll">
+        <table class="fleet-log-table">
+          <thead>
+            <tr><th>When</th><th>Server</th><th>Who</th><th>What</th><th></th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="e in events" :key="e.id">
+              <td class="mono fleet-log-when" :title="e.created_at">{{ timeAgo(e.created_at) }}</td>
+              <td>{{ e.node_name }}</td>
+              <td class="fleet-log-who">{{ e.username || (e.action === 'paired' ? 'its join code' : 'this panel') }}</td>
+              <td>
+                {{ describeAction(e.action) }}<template v-if="e.subject || processOf(e.action)">{{ " " }}<b>{{ e.subject || processOf(e.action) }}</b></template>
+              </td>
+              <td class="fleet-log-outcome">
+                <span v-if="outcomeOf(e).text" class="chip" :class="outcomeOf(e).tone" :title="outcomeOf(e).why || e.action">{{ outcomeOf(e).text }}</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div v-if="eventsMore" style="margin-top: 8px">
+        <button type="button" class="small secondary" :disabled="eventsBusy" @click="loadEvents({ more: true })">Show older</button>
+      </div>
+    </section>
   </div>
 </template>
 
@@ -153,6 +192,7 @@ import { timeAgo, bytes } from '../lib/format.js'
 import { vesselState, statusWord, VESSEL_STATES } from '../lib/vessels.js'
 import { confirmDialog } from '../lib/dialog.js'
 import { nodeShip } from '../lib/ship.js'
+import { describeAction, processOf, outcomeOf } from '../lib/fleetLog.js'
 import { primaryAction, actionMenu, performAction, lastVoyageId } from '../lib/vesselActions.js'
 import ActionMenu from '../components/ActionMenu.vue'
 import CopyButton from '../components/CopyButton.vue'
@@ -178,6 +218,11 @@ export default {
       busy: false,
       busyRows: {}, // `${node}:${project}` -> true while an action runs
       updatingAll: false,
+      events: [], // the Fleet log, newest first
+      eventsNode: '', // '' = every server
+      eventsMore: false,
+      eventsBusy: false,
+      eventsError: '',
       join: null, // { name, code, expiresAt }
       renaming: 0,
       renameTo: '',
@@ -211,8 +256,45 @@ export default {
       return this.join ? new Date(this.join.expiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''
     },
   },
+  created() {
+    this.loadEvents()
+    // What others (another tab, a project page) did meanwhile turns up too.
+    this.eventsTimer = setInterval(() => {
+      if (document.visibilityState !== 'hidden' && !this.eventsBusy) this.loadEvents({ quiet: true })
+    }, 20_000)
+  },
+  beforeUnmount() {
+    clearInterval(this.eventsTimer)
+  },
   methods: {
     timeAgo,
+    describeAction,
+    processOf,
+    outcomeOf,
+    // The newest page of the log, or (more) the page before what is shown.
+    async loadEvents({ more = false, quiet = false } = {}) {
+      const PAGE = 30
+      this.eventsBusy = true
+      if (!quiet) this.eventsError = ''
+      try {
+        const q = new URLSearchParams({ limit: String(PAGE) })
+        if (this.eventsNode) q.set('node', this.eventsNode)
+        if (more && this.events.length) q.set('before', String(this.events.at(-1).id))
+        const page = await api.get(`/api/nodes/events?${q}`)
+        const rows = Array.isArray(page) ? page : []
+        if (more) this.events = [...this.events, ...rows]
+        else if (!quiet || !this.events.length || rows[0]?.id !== this.events[0]?.id) {
+          // a refresh keeps what Show older brought in, below the newest page
+          const older = quiet ? this.events.filter(e => e.id < (rows.at(-1)?.id ?? 0)) : []
+          this.events = [...rows, ...older]
+        }
+        if (more || !quiet) this.eventsMore = rows.length === PAGE
+      } catch (err) {
+        if (!quiet) this.eventsError = `The fleet log could not be read: ${err.message}`
+      } finally {
+        this.eventsBusy = false
+      }
+    },
     stateOf(n) {
       return store.live.nodeStates?.[n.id] ?? null
     },
@@ -299,6 +381,7 @@ export default {
         this.setError(n, new Error(`Update failed: ${err.message}`))
       } finally {
         this.busyRows = { ...this.busyRows, [k]: false }
+        this.loadEvents({ quiet: true })
       }
     },
     async updateOne(n) {
@@ -334,6 +417,7 @@ export default {
         await performAction(p.info, key, ship)
       } finally {
         this.busyRows = { ...this.busyRows, [k]: false }
+        this.loadEvents({ quiet: true })
       }
     },
     isOpen(n, p) {
@@ -391,6 +475,7 @@ export default {
       } catch (err) {
         this.setError(n, err)
       }
+      this.loadEvents({ quiet: true })
     },
     async rename(n) {
       this.busy = true
@@ -398,6 +483,7 @@ export default {
         await api.patch(`/api/nodes/${n.id}`, { name: this.renameTo })
         this.renaming = 0
         this.setError(n, null)
+        this.loadEvents({ quiet: true })
       } catch (err) {
         this.setError(n, err.fields?.name ? new Error(err.fields.name) : err)
       } finally {
@@ -417,6 +503,7 @@ export default {
         const res = await api.post('/api/nodes', { name: this.newName })
         this.join = { name: res.node.name, code: res.code, expiresAt: res.expiresAt }
         this.adding = false
+        this.loadEvents({ quiet: true })
       } catch (err) {
         this.addError = err.fields?.name ?? err.message
       } finally {
@@ -438,6 +525,13 @@ export default {
 .fleet-rename { max-width: 240px; }
 .fleet-meta { font-size: 12px; color: var(--dim); }
 .fleet-drift { color: var(--amber, #d29922); }
+.fleet-log { margin-top: 24px; }
+.fleet-log-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.fleet-log-filter { width: auto; }
+.fleet-log-table { width: 100%; font-size: 13px; }
+.fleet-log-table td { padding: 5px 8px; vertical-align: top; }
+.fleet-log-when, .fleet-log-who { white-space: nowrap; color: var(--dim); }
+.fleet-log-outcome { text-align: right; white-space: nowrap; }
 .fleet-rows { margin-top: 10px; display: flex; flex-direction: column; }
 .fleet-row { display: flex; align-items: center; gap: 10px; padding: 7px 4px; border-top: 1px solid var(--line, rgba(127, 127, 127, 0.18)); cursor: pointer; flex-wrap: wrap; }
 .fleet-row:hover, .fleet-row.open { background: var(--hover, rgba(127, 127, 127, 0.06)); }
