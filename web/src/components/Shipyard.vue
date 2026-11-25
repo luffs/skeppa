@@ -1,201 +1,233 @@
 <template>
-  <div>
-    <div class="section-head">
-      <span class="section-label">managed images</span>
-      <span class="mono" style="font-size: 12px; color: var(--dim)" v-if="localSummary">{{ localSummary }}</span>
-    </div>
-
+  <div class="yard">
     <p v-if="error" class="error">{{ error }}</p>
-    <p v-if="images?.engineError" class="hint">
-      Engine unreachable ({{ images.engineError }}) — definitions are editable, builds and the local
-      store need the engine.
-    </p>
-
-    <div class="proc-list" v-if="images">
-      <div v-for="img in managedImages" :key="img.id" class="proc-card" :class="{ open: opened === img.id }">
-        <!-- Same card as the Engine room's: name left, who wants it and how
-             the last build went pinned right, then the numbers, the full ref
-             on its own line, and the buttons. -->
-        <div class="proc-head">
-          <div class="proc-title">
-            <span class="proc-name">{{ img.name }}</span>
-            <span class="proc-tags">
-              <UsedBySummary :counts="counts([img.ref], img.used_by)" :open="usersOpen === `m${img.id}`"
-                @toggle="toggleUsers(`m${img.id}`)" />
-              <span v-if="img.exists === false" class="chip amber" title="Not in the engine store — rebuilt automatically when needed">not built</span>
-              <StatusBadge v-if="img.last_build_status" :status="img.last_build_status" />
-            </span>
-          </div>
-          <div class="proc-stats" v-if="img.size != null || img.last_built_at">
-            <span v-if="img.size != null"><i>size</i><b>{{ bytes(img.size) }}</b></span>
-            <span v-if="img.last_built_at"><i>built</i><b>{{ timeAgo(img.last_built_at) }}</b></span>
-          </div>
-          <div class="proc-meta">
-            <span class="proc-image"><i>ref</i>{{ img.ref }}</span>
-          </div>
-          <div class="proc-users" v-if="usersOpen === `m${img.id}`">
-            <ImageUsers :image-refs="[img.ref]" :slugs="img.used_by" />
-          </div>
-          <div class="proc-actions">
-            <button class="secondary" @click="toggle(img)">{{ opened === img.id ? 'Close' : 'Edit' }}</button>
-            <button class="secondary" :disabled="building === img.id" @click="build(img)">
-              {{ building === img.id ? 'Building…' : 'Build' }}
-            </button>
-            <!-- The same definition onto other servers of the fleet (copyTo). -->
-            <button v-if="copyTargets.length" class="secondary" @click="toggleCopy(img)">
-              {{ copying === img.id ? 'Close' : 'Copy to…' }}
-            </button>
-            <button
-              class="danger"
-              :disabled="img.used_by.length > 0"
-              :title="img.used_by.length ? `In use by: ${img.used_by.join(', ')}` : 'Remove definition and image'"
-              @click="remove(img)"
-            >✕</button>
-          </div>
-        </div>
-        <div v-if="opened === img.id" style="padding: 0 14px 14px">
-          <label>Containerfile</label>
-          <textarea v-model="drafts[img.id]" class="code" rows="8" spellcheck="false"></textarea>
-          <div class="row" style="margin-top: 10px">
-            <button :disabled="saving === img.id" @click="save(img)">
-              {{ saving === img.id ? 'Saving…' : 'Save' }}
-            </button>
-            <span class="hint" v-if="savedId === img.id">Saved ✔</span>
-          </div>
-          <template v-if="buildLogs[img.id]">
-            <label style="margin-top: 14px">Build log</label>
-            <div class="logview" style="max-height: 260px">{{ buildLogs[img.id] }}</div>
-          </template>
-        </div>
-        <div v-if="copying === img.id" class="copy-panel">
-          <p class="hint" style="margin: 0 0 8px">
-            Copies the saved Containerfile of <span class="mono">{{ img.name }}</span>. Where an image of that name
-            exists its Containerfile is replaced; each server builds its own.
-          </p>
-          <label v-for="t in copyTargets" :key="t.key" class="check-label" style="margin-top: 4px">
-            <input v-model="copyPicked" type="checkbox" :value="t.key" :disabled="!t.online" />
-            {{ t.label }}<span v-if="!t.online" class="hint"> — offline</span>
-            <span v-if="copyResults[t.key]" class="copy-result" :class="copyResults[t.key].tone">{{ copyResults[t.key].text }}</span>
-          </label>
-          <label class="check-label" style="margin-top: 10px">
-            <input v-model="copyBuild" type="checkbox" />
-            Build it there afterwards
-          </label>
-          <div class="row" style="margin-top: 10px">
-            <button :disabled="copyBusy || !copyPicked.length" @click="copyTo(img)">
-              {{ copyBusy ? 'Copying…' : `Copy to ${copyPicked.length || ''} server${copyPicked.length === 1 ? '' : 's'}`.replace('  ', ' ') }}
-            </button>
-          </div>
-        </div>
-      </div>
+    <div v-if="images?.engineError" class="yard-banner">
+      <b>The container engine is unreachable</b> — {{ images.engineError }}. Definitions stay editable; building,
+      pulling and the store need the engine.
     </div>
 
-    <div class="row" style="margin-top: 14px" v-if="images">
-      <input
-        v-model="newName"
-        class="code"
-        placeholder="new-image-name"
-        style="flex: 0 1 240px"
-        @keyup.enter="create"
-      />
-      <button class="secondary" :disabled="!newName.trim()" @click="create">+ New image</button>
+    <!-- What is built here, from a Containerfile of its own -->
+    <div class="section-head yard-head">
+      <span class="section-label">Built here</span>
+      <span class="yard-count">{{ managedImages.length }} image{{ managedImages.length === 1 ? '' : 's' }} from a Containerfile</span>
+      <span class="spacer"></span>
+      <button v-if="!creating" class="small" @click="startNew">+ New image</button>
+    </div>
+    <div v-if="creating" class="panel yard-new">
+      <div class="row">
+        <input
+          ref="newName"
+          v-model="newName"
+          class="code"
+          placeholder="image-name"
+          aria-label="New image name"
+          @keyup.enter="create"
+          @keyup.esc="creating = false"
+        />
+        <button class="small" :disabled="!newName.trim()" @click="create">Create</button>
+        <button class="small secondary" @click="creating = false">Cancel</button>
+      </div>
+      <p class="hint" style="margin: 6px 0 0">
+        Lowercase letters, digits and dashes. It is built as <span class="mono">{{ images?.managedPrefix || 'localhost/skeppa/' }}{{ newName.trim().toLowerCase() || 'image-name' }}:latest</span>
+        and starts from a Containerfile you can edit straight away.
+      </p>
     </div>
 
-    <template v-if="images?.storeListed || localImages.length">
-      <div class="section-head" style="margin-top: 24px">
-        <span class="section-label">local image store</span>
-        <button class="secondary small" :disabled="pruning" @click="prune">
-          {{ pruning ? 'Pruning…' : 'Prune dangling' }}
-        </button>
-      </div>
-      <p class="hint" v-if="storeNote">{{ storeNote }}</p>
-      <p class="hint" v-if="!localImages.length">Nothing in the store yet.</p>
-      <div class="table-scroll" v-else>
-        <table style="min-width: 620px">
-          <thead>
-            <tr><th>Image</th><th>Size</th><th>Used by</th><th></th></tr>
-          </thead>
-          <tbody>
-            <template v-for="img in localImages" :key="img.id">
-            <tr>
-              <td class="mono" style="font-size: 12.5px">
-                {{ img.tags.length ? img.tags.join(', ') : '(dangling)' }}
-                <span v-if="img.managed" class="chip blue" style="margin-left: 6px">managed</span>
-                <!-- What the tag above does not say: which image this actually
-                     is, and how old this copy of it is. -->
-                <div class="image-facts" v-if="imageFacts(img).length">
-                  <span v-for="fact in imageFacts(img)" :key="fact">{{ fact }}</span>
+    <div v-if="images && !managedImages.length && !creating" class="panel yard-empty">
+      Nothing built here yet. A Containerfile of your own makes an image projects can build or run in — a base with the
+      tools your builds need, say. <button type="button" class="link-button" @click="startNew">Make one</button>
+    </div>
+
+    <div v-if="managedImages.length" class="panel proc-table yard-table yard-managed">
+      <table>
+        <colgroup>
+          <col /><col class="c-state" /><col class="c-size" /><col class="c-when" /><col class="c-users" /><col class="c-act" />
+        </colgroup>
+        <thead>
+          <tr><th>Image</th><th>State</th><th class="num">Size</th><th>Built</th><th>Used by</th><th aria-label="Actions"></th></tr>
+        </thead>
+        <tbody>
+          <template v-for="img in managedImages" :key="img.id">
+            <tr :class="{ open: opened === img.id }">
+              <td>
+                <button type="button" class="yard-name" :title="opened === img.id ? 'Close the Containerfile' : 'Open the Containerfile'" @click="toggle(img)">
+                  <span class="dot" :class="stateOf(img).dot" aria-hidden="true"></span>{{ img.name }}
+                </button>
+                <div class="yard-ref" :title="img.ref">{{ img.ref }}</div>
+              </td>
+              <td><span class="chip" :class="stateOf(img).color" :title="stateOf(img).title">{{ stateOf(img).text }}</span></td>
+              <td class="num">{{ img.size != null ? bytes(img.size) : '—' }}</td>
+              <td class="yard-dim">{{ img.last_built_at ? timeAgo(img.last_built_at) : 'never' }}</td>
+              <td>
+                <UsedBySummary :counts="counts([img.ref], img.used_by)" :open="usersOpen === `m${img.id}`" @toggle="toggleUsers(`m${img.id}`)" />
+              </td>
+              <td class="menu yard-actions">
+                <div class="yard-act">
+                  <button type="button" class="small secondary" :disabled="building === img.id" @click="build(img)">
+                    {{ building === img.id ? 'Building…' : 'Build' }}
+                  </button>
+                  <ActionMenu :label="`Image ${img.name}`" :items="menuOf(img)" @select="key => onMenu(img, key)" />
                 </div>
               </td>
-              <td class="mono" style="font-size: 12.5px">{{ bytes(img.size) }}</td>
-              <td style="font-size: 13px">
-                <!-- One row can be the default build image of every project on
-                     the server, so the row only counts them; the list opens
-                     underneath, where it has the width to say something about
-                     each one. -->
-                <UsedBySummary :counts="counts(img.tags, img.used_by)" :open="usersOpen === `l${img.id}`"
-                  @toggle="toggleUsers(`l${img.id}`)" />
-              </td>
-              <td style="text-align: right; white-space: nowrap">
-                <button
-                  v-if="img.tags.length && !img.managed"
-                  class="secondary small"
-                  :disabled="pulling === img.id"
-                  title="Fetch the newest version of this tag from its registry"
-                  @click="pull(img)"
-                >{{ pulling === img.id ? 'Pulling…' : 'Pull' }}</button>
-                <button
-                  v-if="img.tags.length && !img.managed"
-                  class="danger small"
-                  style="margin-left: 6px"
-                  :disabled="removing === img.id || img.used_by.length > 0"
-                  :title="img.used_by.length
-                    ? `In use by: ${img.used_by.join(', ')}`
-                    : 'Remove from the local store (pulled again automatically if something needs it)'"
-                  @click="removeLocal(img)"
-                >✕</button>
+            </tr>
+            <tr v-if="usersOpen === `m${img.id}`" class="yard-sub users-row">
+              <td colspan="6"><ImageUsers :image-refs="[img.ref]" :slugs="img.used_by" /></td>
+            </tr>
+            <!-- The Containerfile beside what its last build said -->
+            <tr v-if="opened === img.id" class="yard-sub">
+              <td colspan="6">
+                <div class="yard-editor" :class="{ 'with-log': buildLogs[img.id] || building === img.id }">
+                  <div>
+                    <div class="yard-editor-head">
+                      <span class="section-label">Containerfile</span>
+                      <span v-if="basesOf(drafts[img.id]).length" class="yard-dim">builds on {{ basesOf(drafts[img.id]).join(', ') }}</span>
+                    </div>
+                    <textarea v-model="drafts[img.id]" class="code" rows="10" spellcheck="false" aria-label="Containerfile"></textarea>
+                    <div class="row" style="margin-top: 10px">
+                      <button class="small" :disabled="saving === img.id || !changed(img)" @click="save(img)">{{ saving === img.id ? 'Saving…' : 'Save' }}</button>
+                      <button class="small secondary" :disabled="saving === img.id || building === img.id" @click="saveAndBuild(img)">
+                        {{ changed(img) ? 'Save and build' : 'Build' }}
+                      </button>
+                      <span v-if="savedId === img.id && !changed(img)" class="hint">Saved ✔</span>
+                      <span class="spacer"></span>
+                      <button class="small secondary" @click="toggle(img)">Close</button>
+                    </div>
+                  </div>
+                  <div v-if="buildLogs[img.id] || building === img.id">
+                    <div class="yard-editor-head">
+                      <span class="section-label">{{ building === img.id ? 'Building…' : 'Last build' }}</span>
+                      <span v-if="img.last_built_at && building !== img.id" class="yard-dim">{{ timeAgo(img.last_built_at) }}</span>
+                    </div>
+                    <div class="logview yard-log">{{ buildLogs[img.id] }}</div>
+                  </div>
+                </div>
               </td>
             </tr>
-            <tr v-if="usersOpen === `l${img.id}`" class="users-row">
-              <td colspan="4">
-                <ImageUsers :image-refs="img.tags" :slugs="img.used_by" />
+            <!-- Copy to…: the same definition onto other servers of the fleet -->
+            <tr v-if="copying === img.id" class="yard-sub">
+              <td colspan="6">
+                <div class="copy-panel">
+                  <p class="hint" style="margin: 0 0 8px">
+                    Copies the saved Containerfile of <span class="mono">{{ img.name }}</span>. Where an image of that name
+                    exists its Containerfile is replaced; each server builds its own.
+                  </p>
+                  <label v-for="t in copyTargets" :key="t.key" class="check-label" style="margin-top: 4px">
+                    <input v-model="copyPicked" type="checkbox" :value="t.key" :disabled="!t.online" />
+                    {{ t.label }}<span v-if="!t.online" class="hint"> — offline</span>
+                    <span v-if="copyResults[t.key]" class="copy-result" :class="copyResults[t.key].tone">{{ copyResults[t.key].text }}</span>
+                  </label>
+                  <label class="check-label" style="margin-top: 10px">
+                    <input v-model="copyBuild" type="checkbox" />
+                    Build it there afterwards
+                  </label>
+                  <div class="row" style="margin-top: 10px">
+                    <button class="small" :disabled="copyBusy || !copyPicked.length" @click="copyTo(img)">
+                      {{ copyBusy ? 'Copying…' : `Copy to ${copyPicked.length || ''} server${copyPicked.length === 1 ? '' : 's'}`.replace('  ', ' ') }}
+                    </button>
+                    <button class="small secondary" @click="toggleCopy(img)">Close</button>
+                  </div>
+                </div>
               </td>
             </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- What came from a registry: pulled, kept, refreshed by hand -->
+    <template v-if="images?.storeListed || registryImages.length">
+      <div class="section-head yard-head" style="margin-top: 30px">
+        <span class="section-label">From registries</span>
+        <span class="yard-count">{{ storeSummary }}</span>
+      </div>
+      <p v-if="storeNote" class="hint">{{ storeNote }}</p>
+      <div class="panel proc-table yard-table yard-registry">
+        <table v-if="registryImages.length || dangling.count">
+          <colgroup>
+            <col /><col class="c-facts" /><col class="c-size" /><col class="c-users" /><col class="c-act" />
+          </colgroup>
+          <thead>
+            <tr><th>Image</th><th>Version</th><th class="num">Size</th><th>Used by</th><th aria-label="Actions"></th></tr>
+          </thead>
+          <tbody>
+            <template v-for="img in registryImages" :key="img.id">
+              <tr>
+                <td>
+                  <div class="yard-name plain">
+                    {{ refName(img.tags[0]).name }}<span class="chip yard-tag">{{ refName(img.tags[0]).tag }}</span>
+                  </div>
+                  <div class="yard-ref" :title="img.tags.join(', ')">{{ refName(img.tags[0]).where }}<template v-if="img.tags.length > 1"> · +{{ img.tags.length - 1 }} more tag{{ img.tags.length === 2 ? '' : 's' }}</template></div>
+                </td>
+                <td class="yard-dim image-facts">{{ imageFacts(img).join(' · ') || '—' }}</td>
+                <td class="num">{{ bytes(img.size) }}</td>
+                <td>
+                  <UsedBySummary :counts="counts(img.tags, img.used_by)" :open="usersOpen === `l${img.id}`" @toggle="toggleUsers(`l${img.id}`)" />
+                </td>
+                <td class="menu yard-actions">
+                  <div class="yard-act">
+                    <button
+                      type="button"
+                      class="small secondary"
+                      :disabled="pulling === img.id"
+                      title="Fetch the newest version of this tag from its registry"
+                      @click="pull(img)"
+                    >{{ pulling === img.id ? 'Pulling…' : 'Pull' }}</button>
+                    <ActionMenu :label="`Image ${img.tags[0]}`" :items="registryMenuOf(img)" @select="key => onRegistryMenu(img, key)" />
+                  </div>
+                </td>
+              </tr>
+              <tr v-if="usersOpen === `l${img.id}`" class="yard-sub users-row">
+                <td colspan="5"><ImageUsers :image-refs="img.tags" :slugs="img.used_by" /></td>
+              </tr>
             </template>
+            <!-- Untagged layers left behind by rebuilds and pulls: one line, one button -->
+            <tr v-if="dangling.count" class="yard-dangling">
+              <td>
+                <div class="yard-name plain">Dangling layers</div>
+                <div class="yard-ref">untagged leftovers of rebuilds and pulls — nothing uses them</div>
+              </td>
+              <td class="yard-dim">{{ dangling.count }} layer{{ dangling.count === 1 ? '' : 's' }}</td>
+              <td class="num">{{ bytes(dangling.size) }}</td>
+              <td></td>
+              <td class="menu yard-actions">
+                <button type="button" class="small secondary" :disabled="pruning" @click="prune">{{ pruning ? 'Pruning…' : 'Prune' }}</button>
+              </td>
+            </tr>
           </tbody>
         </table>
-      </div>
-
-      <div class="row" style="margin-top: 14px">
-        <input
-          v-model="newRef"
-          class="code"
-          list="skeppa-suggested-images"
-          placeholder="docker.io/library/node:22-alpine"
-          style="flex: 0 1 320px"
-          spellcheck="false"
-          @keyup.enter="addRegistryImage"
-        />
-        <datalist id="skeppa-suggested-images">
-          <option v-for="ref in suggestions" :key="ref" :value="ref" />
-        </datalist>
-        <button class="secondary" :disabled="!newRef.trim() || adding" @click="addRegistryImage">
-          {{ adding ? 'Pulling…' : '+ Add registry image' }}
-        </button>
+        <p v-else class="hint yard-none">Nothing pulled yet.</p>
+        <!-- Pull a reference before a project points at it -->
+        <div class="yard-add">
+          <input
+            v-model="newRef"
+            class="code"
+            list="skeppa-suggested-images"
+            placeholder="docker.io/library/node:22-alpine"
+            aria-label="Image to pull"
+            spellcheck="false"
+            @keyup.enter="addRegistryImage"
+          />
+          <datalist id="skeppa-suggested-images">
+            <option v-for="ref in suggestions" :key="ref" :value="ref" />
+          </datalist>
+          <button class="small secondary" :disabled="!newRef.trim() || adding" @click="addRegistryImage">
+            {{ adding ? 'Pulling…' : 'Pull an image' }}
+          </button>
+        </div>
       </div>
     </template>
   </div>
 </template>
 
 <script>
-import StatusBadge from './StatusBadge.vue'
+import ActionMenu from './ActionMenu.vue'
 import ImageUsers from './ImageUsers.vue'
 import UsedBySummary from './UsedBySummary.vue'
 import { shipInject, localShip, nodeShip } from '../lib/ship.js'
 import { subscribeLogs } from '../live.js'
 import { confirmDialog } from '../lib/dialog.js'
 import { store } from '../store.js'
-import { managedWithStore, suggestedImages, imageUserCounts } from '../lib/images.js'
+import { managedWithStore, suggestedImages, imageUserCounts, fromBases } from '../lib/images.js'
 import { bytes, timeAgo } from '../lib/format.js'
 
 // Builds run on the server as a store of their own, build-<image id>
@@ -253,7 +285,7 @@ const TEMPLATE = `FROM docker.io/oven/bun:1
 export default {
   name: 'Shipyard',
   inject: shipInject, // which server (lib/ship.js)
-  components: { StatusBadge, ImageUsers, UsedBySummary },
+  components: { ActionMenu, ImageUsers, UsedBySummary },
   data() {
     return {
       error: '',
@@ -264,6 +296,7 @@ export default {
       saving: null,
       savedId: null,
       newName: '',
+      creating: false,
       newRef: '',
       adding: false,
       usersOpen: null,
@@ -317,16 +350,97 @@ export default {
       }
       return targets.sort((a, b) => (a.key === 'local' ? -1 : b.key === 'local' ? 1 : a.label.localeCompare(b.label)))
     },
-    localSummary() {
+    // The store's tagged images but those of a definition here (the table
+    // above has them, with their size). A managed tag whose definition is
+    // gone stays listed, so it can still be seen and removed.
+    registryImages() {
+      const defined = new Set(this.managedImages.map(img => img.ref))
+      return this.localImages.filter(img => img.tags.length && !img.tags.some(t => defined.has(t)))
+        .sort((a, b) => this.refName(a.tags[0]).name.localeCompare(this.refName(b.tags[0]).name) || a.tags[0].localeCompare(b.tags[0]))
+    },
+    // Untagged layers, summed: one line and one Prune, not a row each.
+    dangling() {
+      const layers = this.localImages.filter(img => !img.tags.length)
+      return { count: layers.length, size: layers.reduce((n, i) => n + (i.size ?? 0), 0) }
+    },
+    storeSummary() {
       const list = this.localImages
       if (!list.length) return ''
       const total = list.reduce((n, i) => n + (i.size ?? 0), 0)
-      return `${list.length} images · ~${bytes(total)}`
+      return `${list.length} in the store · ${bytes(total)} in all`
     },
   },
   methods: {
     bytes,
     timeAgo,
+    // A managed image's state at a glance: what the dot, the chip and its
+    // hint say.
+    stateOf(img) {
+      if (this.building === img.id) return { text: 'building…', color: 'blue', dot: 'blue pulse', title: 'A build is under way' }
+      if (img.last_build_status === 'failed') return { text: 'build failed', color: 'red', dot: 'red', title: 'The last build failed — the image in the store, if any, is the one before' }
+      if (img.exists === false || (!img.last_built_at && img.exists !== true)) {
+        return { text: 'not built', color: 'amber', dot: 'amber', title: 'Not in the engine store — built automatically when something needs it, or now with Build' }
+      }
+      return { text: 'built', color: 'green', dot: 'green', title: 'In the store, from the last Containerfile built' }
+    },
+    menuOf(img) {
+      const items = [{ key: 'edit', label: this.opened === img.id ? 'Close the Containerfile' : 'Edit the Containerfile' }]
+      if (this.copyTargets.length) items.push({ key: 'copy', label: this.copying === img.id ? 'Close Copy to…' : 'Copy to another server…' })
+      items.push({ separator: true })
+      items.push({
+        key: 'remove',
+        label: 'Remove…',
+        danger: true,
+        disabled: img.used_by.length > 0,
+        hint: img.used_by.length ? `In use by ${img.used_by.join(', ')}` : 'The definition and the image it built',
+      })
+      return items
+    },
+    onMenu(img, key) {
+      if (key === 'edit') this.toggle(img)
+      else if (key === 'copy') this.toggleCopy(img)
+      else if (key === 'remove') this.remove(img)
+    },
+    registryMenuOf(img) {
+      return [{
+        key: 'remove',
+        label: 'Remove from the store…',
+        danger: true,
+        disabled: img.used_by.length > 0 || this.removing === img.id,
+        hint: img.used_by.length ? `In use by ${img.used_by.join(', ')}` : 'Pulled again automatically when something needs it',
+      }]
+    },
+    onRegistryMenu(img, key) {
+      if (key === 'remove') this.removeLocal(img)
+    },
+    // docker.io/library/node:22-alpine → { name: 'node', tag: '22-alpine', where: 'docker.io/library' }
+    refName(ref = '') {
+      const at = ref.lastIndexOf(':')
+      const slash = ref.lastIndexOf('/')
+      const hasTag = at > slash
+      const path = hasTag ? ref.slice(0, at) : ref
+      const cut = path.lastIndexOf('/')
+      return { name: path.slice(cut + 1), tag: hasTag ? ref.slice(at + 1) : 'latest', where: cut > 0 ? path.slice(0, cut) : '' }
+    },
+    // The images a Containerfile starts FROM (its own stages and scratch aside).
+    basesOf(containerfile) {
+      return [...new Set(fromBases({ managed: [{ containerfile: containerfile ?? '' }] }))]
+    },
+    changed(img) {
+      return (this.drafts[img.id] ?? img.containerfile) !== img.containerfile
+    },
+    async saveAndBuild(img) {
+      if (this.changed(img)) {
+        await this.save(img)
+        if (this.savedId !== img.id) return // the save failed: say so, build nothing
+      }
+      await this.build(img)
+    },
+    startNew() {
+      this.creating = true
+      this.newName = ''
+      this.$nextTick(() => this.$refs.newName?.focus())
+    },
     counts(refs, slugs) {
       return imageUserCounts(this.ship.live, refs, slugs)
     },
@@ -458,6 +572,7 @@ export default {
       try {
         const created = await this.ship.api.post('/api/images', { name: this.newName, containerfile: TEMPLATE })
         this.newName = ''
+        this.creating = false
         this.toggle({ id: created.id, containerfile: created.containerfile })
       } catch (err) {
         const fields = err.fields ? ` — ${Object.values(err.fields).join(', ')}` : ''
@@ -536,40 +651,114 @@ export default {
 </script>
 
 <style scoped>
-/* The open project list: a row of its own under the table row it belongs
-   to, and a block under the head of an image card. Both are the same panel,
-   set apart from what they hang off rather than boxed in again. */
-.users-row > td {
-  padding-top: 0;
-  border-top: 0;
+.yard-banner {
+  margin: 0 0 16px;
+  padding: 10px 14px;
+  border: 1px solid var(--banner-border);
+  background: var(--banner-bg);
+  border-radius: 8px;
+  font-size: 13.5px;
 }
-.proc-users {
-  margin-top: 10px;
-  padding-top: 10px;
+.yard-head { justify-content: flex-start; }
+.yard-count { font-family: var(--mono); font-size: 12px; color: var(--dim); }
+.spacer { flex: 1; }
+.yard-new { margin-bottom: 12px; }
+.yard-new input { max-width: 280px; }
+.yard-empty { padding: 16px 18px; font-size: 14px; color: var(--dim); }
+
+/* Both tables read as the Engine room's do: name and where it comes from on
+   the left, the readings in columns, what can be done at the right. */
+.yard-table col.c-state { width: 120px; }
+.yard-table col.c-size { width: 96px; }
+.yard-table col.c-when { width: 96px; }
+.yard-table col.c-facts { width: 220px; }
+.yard-table col.c-users { width: 170px; }
+.yard-table col.c-act { width: 128px; }
+/* Narrower windows fold readings away, the Engine room's way: a column keeps
+   its slot at zero width, since the rows that open under an image span them
+   all. Built and Version go first; on a phone the state (the dot says it) and
+   Used by too, which leaves name, size and what can be done. */
+@media (max-width: 760px) {
+  .yard-table col.c-when, .yard-table col.c-facts { width: 0; }
+  .yard-managed tr > :nth-child(4):not([colspan]),
+  .yard-registry tr > :nth-child(2):not([colspan]) { padding: 0; overflow: hidden; visibility: hidden; white-space: nowrap; }
+}
+@media (max-width: 600px) {
+  .yard-table col.c-state, .yard-table col.c-users { width: 0; }
+  .yard-table col.c-size { width: 84px; }
+  .yard-table col.c-act { width: 104px; }
+  .yard-managed tr > :nth-child(2):not([colspan]),
+  .yard-managed tr > :nth-child(5):not([colspan]),
+  .yard-registry tr > :nth-child(4):not([colspan]) { padding: 0; overflow: hidden; visibility: hidden; white-space: nowrap; }
+}
+.yard-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+.yard-name:hover { color: var(--accent); }
+.yard-name.plain { cursor: default; }
+.yard-name.plain:hover { color: var(--ink); }
+.yard-tag { margin-left: 8px; padding: 1px 7px; font-family: var(--mono); font-weight: 500; letter-spacing: 0; text-transform: none; }
+.yard-ref {
+  margin-top: 2px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.yard-dim { font-size: 12.5px; color: var(--dim); }
+.yard-act { display: inline-flex; align-items: center; gap: 4px; }
+tr.open > td { background: var(--row-selected); }
+
+/* What opens under a row: the project list, the editor, Copy to… */
+.yard-sub > td {
+  padding: 4px 18px 16px !important;
+  border-top: 0;
+  background: var(--row-selected);
+}
+.yard-editor { display: grid; gap: 16px; }
+.yard-editor.with-log { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+@media (max-width: 860px) {
+  .yard-editor.with-log { grid-template-columns: minmax(0, 1fr); }
+}
+.yard-editor-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin: 8px 0 6px;
+}
+.yard-editor textarea { min-height: 220px; font-size: 12.5px; }
+.yard-log { height: 220px; max-height: none; font-size: 12px; }
+
+.yard-dangling td { border-top: 1px dashed var(--line); }
+.yard-none { padding: 14px 18px; margin: 0; }
+.yard-add {
+  display: flex;
+  gap: 8px;
+  padding: 12px 18px;
   border-top: 1px solid var(--line-soft);
 }
+.yard-add { flex-wrap: wrap; }
+.yard-add input { flex: 0 1 340px; min-width: 0; }
 
 /* Copy to…: the servers to copy a definition onto, each with how it went. */
-.copy-panel {
-  padding: 10px 14px 14px;
-  border-top: 1px solid var(--line-soft);
-}
+.copy-panel { padding-top: 6px; }
 .copy-result {
   margin-left: 10px;
   font-size: 12.5px;
   color: var(--dim);
 }
-.copy-result.ok { color: var(--green, #3fb950); }
-.copy-result.bad { color: var(--red, #f85149); }
-
-/* A dim second line inside the image cell: facts about the image itself,
-   subordinate to the reference above them. */
-.image-facts {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 3px;
-  font-size: 11.5px;
-  color: var(--dim);
-}
+.copy-result.ok { color: var(--green); }
+.copy-result.bad { color: var(--red); }
 </style>

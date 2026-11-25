@@ -1,5 +1,5 @@
 <template>
-  <div :class="embedded ? 'embedded-view' : 'container mid'">
+  <div :class="embedded ? 'embedded-view' : 'container'">
     <!-- Another server's page, run through the fleet (lib/ship.js); a tab of
          its server page when embedded, which has the heading and the banner. -->
     <template v-if="!embedded">

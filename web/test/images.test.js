@@ -81,7 +81,7 @@ describe('the Shipyard names the image behind the tag', () => {
         version: '', digest: '', createdAt: NOW - 2 * HOUR },
     ]
     const wrapper = mount(Shipyard, { global: { stubs, mocks } })
-    const rows = wrapper.findAll('tbody tr')
+    const rows = wrapper.findAll('.yard-registry tbody tr')
 
     expect(rows[0].find('.image-facts').text()).toContain('v1.4.4')
     expect(rows[0].find('.image-facts').text()).toContain('built 37d ago')
@@ -228,7 +228,7 @@ describe('the Shipyard keeps a long user list out of the row', () => {
     }]
 
     const wrapper = mount(Shipyard, { global: { stubs, mocks } })
-    const cell = wrapper.find('tbody tr td:nth-child(3)')
+    const cell = wrapper.find('.yard-registry tbody tr td:nth-child(4)')
     expect(cell.find('button.used-by').text()).toContain('5 projects')
     // Nothing of the list itself until it is asked for.
     expect(wrapper.find('tr.users-row').exists()).toBe(false)
@@ -236,7 +236,7 @@ describe('the Shipyard keeps a long user list out of the row', () => {
     await cell.find('button.used-by').trigger('click')
     const panel = wrapper.find('tr.users-row')
     expect(panel.findAll('.user')).toHaveLength(5)
-    expect(panel.find('td').attributes('colspan')).toBe('4')
+    expect(panel.find('td').attributes('colspan')).toBe('5') // the whole row
     // The engine listed no containers, so it cannot say which are behind —
     // and the blunt action stays on offer rather than disappearing.
     expect(panel.find('button.secondary').text()).toBe('Restart running (3)')
@@ -272,7 +272,7 @@ describe('the Shipyard aims the restart at what is actually behind', () => {
     ]))
 
     const wrapper = mount(Shipyard, { global: { stubs, mocks } })
-    const cell = wrapper.find('tbody tr td:nth-child(3)')
+    const cell = wrapper.find('.yard-registry tbody tr td:nth-child(4)')
     // The outdated count is the one thing the row says beyond how many.
     expect(cell.find('.outdated').text()).toBe('2 outdated')
 

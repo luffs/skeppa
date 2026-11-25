@@ -2373,6 +2373,12 @@ test('mooring a project on a fleet server', async () => {
 // Copy to…: a Shipyard definition onto other servers of the fleet —
 // replaced where that name exists and differs, created where it does not,
 // built there if asked; and Build on a fleet server's Shipyard builds there.
+// A Shipyard image row's ⋮, opened, and the item that reads `label` picked.
+async function yardMenu(wrapper, label, row = 0) {
+  await wrapper.findAll('.yard-managed .yard-act')[row].find('.action-menu-toggle').trigger('click')
+  await wrapper.findAll('.action-menu-item').find(b => b.text() === label).trigger('click')
+}
+
 describe('Shipyard across the fleet', () => {
   const managed = (id, name, containerfile) => ({ id, name, ref: `localhost/skeppa/${name}:latest`, containerfile, updated_at: ISO, used_by: [] })
   function seedFleet() {
@@ -2389,7 +2395,7 @@ describe('Shipyard across the fleet', () => {
     const post = vi.spyOn(api, 'post').mockImplementation(async url => (url.endsWith('/build?detach=1') ? { store: 'build-x' } : { id: 12 }))
     const { problems, html } = await expectCleanRender(ShipyardView, {
       steps: async wrapper => {
-        await wrapper.findAll('.proc-actions button').find(b => b.text() === 'Copy to…').trigger('click')
+        await yardMenu(wrapper, 'Copy to another server…')
         const boxes = wrapper.findAll('.copy-panel input[type="checkbox"]')
         expect(wrapper.find('.copy-panel').text()).toContain('hemma-2')
         expect(wrapper.find('.copy-panel').text()).toContain('jobb-1')
@@ -2419,12 +2425,12 @@ describe('Shipyard across the fleet', () => {
     const { problems } = await expectCleanRender(ShipyardView, {
       props: { node: '1' },
       steps: async wrapper => {
-        await wrapper.findAll('.proc-actions button').find(b => b.text() === 'Build').trigger('click')
+        await wrapper.findAll('.yard-act button').find(b => b.text() === 'Build').trigger('click')
         await settle()
         // over (the mock's store ends at once): the stored log, marked
         expect(wrapper.find('.logview').text()).toBe('Step 1/1 : FROM x\n✔ build finished')
-        expect(wrapper.findAll('.proc-actions button').find(b => b.text() === 'Build').attributes('disabled')).toBeUndefined()
-        await wrapper.findAll('.proc-actions button').find(b => b.text() === 'Copy to…').trigger('click')
+        expect(wrapper.findAll('.yard-act button').find(b => b.text() === 'Build').attributes('disabled')).toBeUndefined()
+        await yardMenu(wrapper, 'Copy to another server…')
         expect(wrapper.find('.copy-panel').text()).toContain('this panel')
         expect(wrapper.find('.copy-panel').text()).not.toContain('jobb-1')
       },
@@ -2439,9 +2445,15 @@ describe('Shipyard across the fleet', () => {
     seedStore('admin')
     store.live.images = { ...store.live.images, managed: [managed(1, 'base', 'FROM x')] }
     store.live.nodes = {}
-    const { problems, html } = await expectCleanRender(ShipyardView)
+    let items = []
+    const { problems } = await expectCleanRender(ShipyardView, {
+      steps: async wrapper => {
+        await wrapper.find('.yard-managed .action-menu-toggle').trigger('click')
+        items = wrapper.findAll('.action-menu-item').map(b => b.text())
+      },
+    })
     expect(problems.join(' | ')).toBe('')
-    expect(html).not.toContain('Copy to…')
+    expect(items).toEqual(['Edit the Containerfile', 'Remove…'])
   })
 })
 
@@ -2654,12 +2666,12 @@ test('a running build is followed line by line, then shows the stored result', a
   subscribeLogs.mockImplementationOnce((id, fn, o) => { emit = fn; opts = { id, ...o }; return () => {} })
   const { problems } = await expectCleanRender(ShipyardView, {
     steps: async wrapper => {
-      await wrapper.findAll('.proc-actions button').find(b => b.text() === 'Edit').trigger('click')
+      await wrapper.find('.yard-name').trigger('click') // the name opens the Containerfile
       await settle()
       expect(opts).toEqual({ id: 1, node: 0, kind: 'build' })
       emit({ type: 'backlog', log: 'Step 1/2 : FROM x\n' })
       await settle()
-      const button = () => wrapper.findAll('.proc-actions button').find(b => /Build/.test(b.text()))
+      const button = () => wrapper.findAll('.yard-act button').find(b => /Build/.test(b.text()))
       expect(button().text()).toBe('Building…')
       emit({ type: 'line', line: 'Step 2/2 : RUN true' })
       await settle()
