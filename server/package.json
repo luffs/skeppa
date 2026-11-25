@@ -9,7 +9,7 @@
   },
   "dependencies": {
     "hono": "^4.6.0",
-    "lazy-storage": "1.0.3",
+    "lazy-storage": "1.4.1",
     "lazy-watch": "^7.0.2"
   }
 }

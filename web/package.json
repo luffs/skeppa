@@ -9,7 +9,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "lazy-storage": "1.0.3",
+    "lazy-storage": "1.4.1",
     "lazy-watch": "^7.0.2",
     "vue": "^3.5.41",
     "vue-router": "^5.2.0"
