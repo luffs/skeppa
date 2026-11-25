@@ -7,7 +7,7 @@ import { createNetwork } from 'lazy-storage/testing'
 import { migrate } from '../src/db/migrate.js'
 import { createLiveState, initLiveState } from '../src/live/state.js'
 import { createLiveStores, STORE_SHAPES } from '../src/live/stores.js'
-import { createNodeLinks } from '../src/nodes/links.js'
+import { createNodeLinks, trustedIds } from '../src/nodes/links.js'
 import { createUplink, createAgentHub, masterMayOpen, agentUrl, METHODS, fleetRequestUrl } from '../src/agent/uplink.js'
 import { createFleetApiApp } from '../src/app.js'
 import { createFleetAnswers } from '../src/nodes/answers.js'
@@ -1023,4 +1023,98 @@ test('rotate: an agent that does not answer leaves both keys working until it di
   expect(nodeForKey(m.db, `Bearer ${sent}`)?.id).toBe(id)
   const events = await (await m.api(`/api/nodes/events?node=${id}`)).json()
   expect(events[0].action).toBe('key rotation pending')
+})
+
+// --- what a fleet server may read of GitHub, and what it may name ----------------
+
+test('a server says what it deploys once, at pairing; after that a repo is on its list only from here', async () => {
+  const m = master()
+  const a = agent()
+  const { id, key } = await pair(m)
+  connect(m, a, key)
+  await until(() => Object.keys(m.links.get(`node-${id}`).state.projects).length === 2)
+  await until(() => m.db.query('SELECT repos_seeded FROM nodes WHERE id = ?').get(id).repos_seeded === 1)
+  expect(m.db.query('SELECT repo, how FROM node_repos WHERE node_id = ? ORDER BY repo').all(id))
+    .toEqual([{ repo: 'ops/api', how: 'reported' }, { repo: 'ops/web', how: 'reported' }])
+
+  // later it claims a repo of someone else's: shown, not lent, no pushes
+  a.db.query(`INSERT INTO projects (slug, name, owner_id, repo_full_name, branch, pm2_name, runtime, start_command, port)
+              VALUES ('loot', 'loot', 1, 'tenantco/secret', 'main', 'loot', 'container', 'bun start', 4103)`).run()
+  a.liveState.projects[3] = { info: { id: 3, slug: 'loot', name: 'loot', repo_full_name: 'tenantco/secret', git_url: '' } }
+  await until(() => m.links.get(`node-${id}`).state.projects[3]?.info?.repo_full_name === 'tenantco/secret')
+  expect(m.links.mayUseRepo(id, 'tenantco/secret')).toBe(false)
+  await expect(a.github.getInstallationToken('tenantco/secret')).rejects.toMatchObject({ code: 'forbidden' })
+  await expect(a.github.getRepoInstallation('tenantco/secret')).rejects.toMatchObject({ code: 'forbidden' })
+  expect(m.minted).not.toContain('tenantco/secret')
+  expect(m.links.forwardPush({ repository: { full_name: 'tenantco/secret' }, ref: 'refs/heads/main', after: 'a'.repeat(40) })).toBe(0)
+  expect((await (await m.api(`/api/nodes/${id}/repos`)).json()).reported).toEqual(['tenantco/secret'])
+
+  // the admin allows it, and takes it back
+  const allowed = await (await m.api(`/api/nodes/${id}/repos`, { method: 'POST', body: JSON.stringify({ repo: 'tenantco/secret' }) })).json()
+  expect(allowed.allowed.map(r => [r.repo, r.how])).toContainEqual(['tenantco/secret', 'allowed'])
+  expect(allowed.reported).toEqual([])
+  expect(await a.github.getInstallationToken('tenantco/secret')).toBe('tok-tenantco/secret')
+  expect((await m.api(`/api/nodes/${id}/repos`, { method: 'POST', body: JSON.stringify({ repo: 'not a repo' }) })).status).toBe(400)
+  await m.api(`/api/nodes/${id}/repos?repo=tenantco/secret`, { method: 'DELETE' })
+  expect(m.links.mayUseRepo(id, 'tenantco/secret')).toBe(false)
+  const events = (await (await m.api(`/api/nodes/events?node=${id}`)).json()).map(e => [e.action, e.subject])
+  expect(events.slice(0, 2)).toEqual([['took a repo back', 'tenantco/secret'], ['allowed a repo', 'tenantco/secret']])
+
+  // a new pairing looks once more
+  const { code } = await (await m.api(`/api/nodes/${id}/code`, { method: 'POST' })).json()
+  await m.api('/api/nodes/join', { method: 'POST', body: JSON.stringify({ code }) })
+  expect(m.db.query('SELECT repos_seeded FROM nodes WHERE id = ?').get(id).repos_seeded).toBe(0)
+})
+
+test('a project moored there from here puts its repo on the list for good', async () => {
+  const m = master()
+  const a = agent()
+  const { id, key } = await pair(m)
+  connect(m, a, key)
+  await until(() => m.liveState.nodes[id]?.adminId === 1)
+  const res = await m.api(`/api/nodes/${id}/api/projects`, {
+    method: 'POST',
+    body: JSON.stringify({ name: 'shop', repo_full_name: 'ops/shop', branch: 'main', runtime: 'container', start_command: 'bun start' }),
+  })
+  expect(res.status).toBe(201)
+  expect(m.db.query('SELECT how FROM node_repos WHERE node_id = ? AND repo = ?').get(id, 'ops/shop')).toEqual({ how: 'moored' })
+  // a refused one adds nothing
+  const bad = await m.api(`/api/nodes/${id}/api/projects`, { method: 'POST', body: JSON.stringify({ name: '', repo_full_name: 'ops/nope' }) })
+  expect(bad.status).toBe(400)
+  expect(m.db.query('SELECT 1 FROM node_repos WHERE node_id = ? AND repo = ?').get(id, 'ops/nope')).toBeNull()
+})
+
+test("an agent's repo listing leaves the tenants' installations out", async () => {
+  const m = master()
+  m.db.query("INSERT INTO users (username, password_hash, role, handle, github_login) VALUES ('t', 'x', 'tenant', 't', 'TenantCo')").run()
+  m.github.listRepos = async account => [
+    { full_name: 'ops/web', owner: 'ops' },
+    { full_name: 'tenantco/secret', owner: 'tenantco' },
+  ].filter(r => !account || r.owner === account.toLowerCase())
+  const a = agent()
+  const { key } = await pair(m)
+  connect(m, a, key)
+  await until(() => a.link.uplink.connected)
+  expect((await a.github.listRepos(null)).map(r => r.full_name)).toEqual(['ops/web'])
+  expect(await a.github.listRepos('tenantco')).toEqual([])
+  expect((await a.github.listRepos('ops')).map(r => r.full_name)).toEqual(['ops/web'])
+})
+
+test('a project or pier keyed by anything but its plain id is not mirrored', async () => {
+  expect(trustedIds({ projects: { 5: { info: { id: 5 } }, '../../system/pm2/skeppa-proxy/stop?': { info: { id: 1 } } } }))
+    .toEqual({ projects: { 5: { info: { id: 5 } } } })
+  expect(trustedIds({ projects: { 7: { info: { id: '../../nodes/2/unpair?' } } } })).toEqual({ projects: {} })
+  expect(trustedIds({ projects: { 7: { pm2: { status: 'online' } }, 8: null } })).toEqual({ projects: { 7: { pm2: { status: 'online' } }, 8: null } })
+  expect(trustedIds({ groups: { '1e3': { id: 1000 }, 2: { id: 2 } } })).toEqual({ groups: { 2: { id: 2 } } })
+  const same = { system: { x: 1 } }
+  expect(trustedIds(same)).toBe(same)
+
+  const m = master()
+  const a = agent()
+  const { id, key } = await pair(m)
+  a.liveState.projects['../../system/pm2/skeppa-proxy/stop?'] = { info: { id: '../../system/pm2/skeppa-proxy/stop?', name: 'bait' } }
+  connect(m, a, key)
+  await until(() => Object.keys(m.links.get(`node-${id}`).state.projects).length === 2)
+  await wait(50)
+  expect(Object.keys(m.links.get(`node-${id}`).state.projects).sort()).toEqual(['1', '2'])
 })

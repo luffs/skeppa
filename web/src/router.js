@@ -19,10 +19,12 @@ export const router = createRouter({
     { path: '/login', component: LoginView },
     { path: '/', component: DashboardView },
     { path: '/projects/new', component: ProjectNewView },
-    { path: '/projects/:id', component: ProjectView, props: true, meta: { project: true } },
-    // Another server's project, run through the fleet (lib/ship.js).
-    { path: '/fleet/:node/projects/new', component: ProjectNewView, props: true, meta: { nodePage: true } },
-    { path: '/fleet/:node/projects/:id', component: ProjectView, props: true, meta: { project: true } },
+    { path: '/projects/:id(\\d+)', component: ProjectView, props: true, meta: { project: true } },
+    // Another server's project, run through the fleet (lib/ship.js). The ids
+    // are plain numbers in the patterns: a link to a page can come from
+    // anywhere, and what the page does with its id is an API call.
+    { path: '/fleet/:node(\\d+)/projects/new', component: ProjectNewView, props: true, meta: { nodePage: true } },
+    { path: '/fleet/:node(\\d+)/projects/:id(\\d+)', component: ProjectView, props: true, meta: { project: true } },
     // …and the server's own page: its overview, and its admin pages as tabs.
     { path: '/fleet/:node(\\d+|here)', component: ServerView, props: true, meta: { nodePage: true } },
     // the admin pages' own addresses from before they were tabs

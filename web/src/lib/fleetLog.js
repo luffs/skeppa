@@ -9,6 +9,8 @@ const LIFE = {
   unpaired: 'unpaired',
   'key rotated': 'gave it a new key',
   'key rotation pending': 'sent it a new key (not confirmed)',
+  'allowed a repo': 'let it read a repo',
+  'took a repo back': 'took a repo back from it',
   removed: 'removed from the fleet',
   offline: 'went offline',
   back: 'reporting again',

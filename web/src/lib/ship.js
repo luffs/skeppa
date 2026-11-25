@@ -37,9 +37,43 @@ const EMPTY = Object.freeze({})
 // A fleet server's admin pages, as tabs of its server page (ServerView).
 const SERVER_TABS = { system: 'engine', shipyard: 'shipyard', settings: 'rigging' }
 
+// A path for another server's relay, or null when it would not stay there.
+// The ids in these paths come from what that server reports, and the browser
+// resolves `..` (and `%2e%2e`, and `\` as `/`) before it sends anything: a
+// project "id" of `../../../../system/pm2/skeppa-proxy/stop?` would turn its
+// Deploy button into a POST to this panel's own route, with the admin's
+// session. So a path with any dot segment, backslash or encoded slash is
+// refused outright, and what the browser would send must still be under
+// /api/nodes/<node>/api/. (The master's mirror drops such ids as well —
+// server nodes/links.js trustedIds.)
+export function relayPath(node, path) {
+  if (typeof path !== 'string' || !path.startsWith('/api/')) return null
+  const bare = path.split(/[?#]/)[0]
+  if (/\\|%2f|%5c/i.test(bare)) return null
+  for (const segment of bare.split('/')) {
+    let decoded
+    try {
+      decoded = decodeURIComponent(segment)
+    } catch {
+      return null
+    }
+    if (decoded === '.' || decoded === '..') return null
+  }
+  const target = `/api/nodes/${node}${path}`
+  const sent = new URL(target, 'http://ship.invalid').pathname
+  return sent.startsWith(`/api/nodes/${node}/api/`) ? target : null
+}
+
 export function nodeShip(node) {
   node = Number(node)
-  const url = path => (typeof path === 'string' && path.startsWith('/api/') ? `/api/nodes/${node}${path}` : path)
+  // What the api calls send (refused at once when it would leave the relay),
+  // and what a link points at ('#' then — a link that goes nowhere).
+  const relayed = path => {
+    const target = relayPath(node, path)
+    if (target === null) throw Object.assign(new Error(`refused: ${String(path).slice(0, 80)} is not a path on that server`), { status: 400 })
+    return target
+  }
+  const url = path => (typeof path === 'string' && path.startsWith('/api/') ? relayPath(node, path) ?? '#' : path)
   const known = () => store.live.nodes?.[node] ?? null
   const name = () => known()?.name ?? `server ${node}`
   // A server known to be offline is not asked at all: the answer would be
@@ -64,11 +98,11 @@ export function nodeShip(node) {
       return known()?.lastSeenAt ?? ''
     },
     api: {
-      get: guarded(path => api.get(url(path))),
-      post: guarded((path, body) => api.post(url(path), body)),
-      put: guarded((path, body) => api.put(url(path), body)),
-      patch: guarded((path, body) => api.patch(url(path), body)),
-      del: guarded(path => api.del(url(path))),
+      get: guarded(path => api.get(relayed(path))),
+      post: guarded((path, body) => api.post(relayed(path), body)),
+      put: guarded((path, body) => api.put(relayed(path), body)),
+      patch: guarded((path, body) => api.patch(relayed(path), body)),
+      del: guarded(path => api.del(relayed(path))),
     },
     url,
     get live() {

@@ -49,6 +49,34 @@ export const nodeBuildStoreId = (id, imageId) => `node-${id}-build-${imageId}`
 
 const isNodeSocket = ws => Boolean(ws?.data) && Object.hasOwn(ws.data, 'skeppaNode')
 
+// Projects and piers a node reports are keyed by their id there, and those
+// ids go into this panel's URLs (/fleet/<node>/projects/<id>, the relay's
+// /api/nodes/<node>/api/projects/<id>/…): one keyed by anything but a plain
+// positive integer, or whose own id says otherwise, is not mirrored. A server
+// that sends such a thing is not running Skeppa's code, and a crafted id
+// (`../../system/pm2/…`) would point an admin's click elsewhere.
+const PLAIN_ID = /^[1-9][0-9]{0,15}$/
+export function trustedIds(diff) {
+  if (!diff || typeof diff !== 'object' || Array.isArray(diff)) return diff
+  let out = diff
+  for (const [c, idOf] of [['projects', r => r?.info?.id], ['groups', r => r?.id]]) {
+    const records = diff[c]
+    if (!records || typeof records !== 'object' || Array.isArray(records)) continue
+    const kept = {}
+    let dropped = false
+    for (const [key, record] of Object.entries(records)) {
+      const id = record && typeof record === 'object' ? idOf(record) : undefined
+      if (!PLAIN_ID.test(key) || (id !== undefined && String(id) !== key)) {
+        dropped = true
+        continue
+      }
+      kept[key] = record
+    }
+    if (dropped) out = { ...out, [c]: kept }
+  }
+  return out
+}
+
 export class NodeCallError extends Error {
   constructor(message, code) {
     super(message)
@@ -118,7 +146,7 @@ export function createNodeLinks({
 
   function patch(label, store, client, diff) {
     try {
-      store.patch(wholeArraysOf(client.state, diff))
+      store.patch(wholeArraysOf(client.state, trustedIds(diff)))
     } catch (err) {
       onError(new Error(`${label}: ${err.message}`, { cause: err }))
     }
@@ -152,7 +180,9 @@ export function createNodeLinks({
     // kept copy still has and the agent no longer does goes: the client
     // started empty, so its first snapshot can only add.
     n.upstream.on('status', status => {
-      if (status !== 'online' || n.reconciled) return
+      if (status !== 'online') return
+      seedRepos(n) // once per pairing, the first time it is in step
+      if (n.reconciled) return
       n.reconciled = true
       reconcile(n)
     })
@@ -319,13 +349,34 @@ export function createNodeLinks({
   }
 
   // The repositories a node's reported projects deploy from GitHub.
-  function reposOf(n) {
+  // What a node says it deploys: for forwarding pushes and for the admin's
+  // eyes (Pairing) — never what it may read (allowed, below).
+  function reposOf(n, state = n.store.state) {
     const repos = new Set()
-    for (const live of Object.values(n.store.state.projects ?? {})) {
+    for (const live of Object.values(state?.projects ?? {})) {
       const info = live?.info
-      if (info?.repo_full_name && !info.git_url) repos.add(String(info.repo_full_name).toLowerCase())
+      if (typeof info?.repo_full_name === 'string' && info.repo_full_name && !info.git_url) repos.add(info.repo_full_name.toLowerCase())
     }
     return repos
+  }
+
+  // --- what a node may read of GitHub (node_repos, 024) -------------------
+  // Decided here: a node's own report can name any repository the App can
+  // reach, a tenant's included, so it only ever counts once — the first time
+  // the node is in step after pairing (or after this list existed), taken as
+  // its own. After that a repository is on the list because an admin moored
+  // it there through the relay or allowed it under Pairing.
+  const allowedRow = (id, repo) => db.query('SELECT 1 FROM node_repos WHERE node_id = ? AND repo = ?').get(Number(id), repo)
+  function allowRepo(id, repo, how = 'allowed') {
+    if (typeof repo !== 'string' || !repo || !rowOf(Number(id))) return false
+    db.query('INSERT OR IGNORE INTO node_repos (node_id, repo, how) VALUES (?, ?, ?)').run(Number(id), repo.toLowerCase(), how)
+    return true
+  }
+  function seedRepos(n) {
+    const row = rowOf(n.id)
+    if (!row || row.repos_seeded) return
+    for (const repo of reposOf(n, n.upstream.state)) allowRepo(n.id, repo, 'reported')
+    db.query('UPDATE nodes SET repos_seeded = 1 WHERE id = ?').run(n.id)
   }
 
   function callNode(n, method, params = {}, { timeoutMs = rpcTimeoutMs } = {}) {
@@ -444,7 +495,7 @@ export function createNodeLinks({
       if (!repo) return 0
       let count = 0
       for (const n of nodes.values()) {
-        if (!reposOf(n).has(repo)) continue
+        if (!reposOf(n).has(repo) || !allowedRow(n.id, repo)) continue
         count++
         if (n.socket) {
           callNode(n, 'push', push).catch(err => onError(new Error(`node ${n.id}: push forward failed — ${err.message}`)))
@@ -455,13 +506,14 @@ export function createNodeLinks({
       return count
     },
 
-    // Which GitHub repositories a node may have a token for: those its
-    // projects deploy, and those just granted (below).
+    // Which GitHub repositories a node may have a token for: those on its
+    // list (allowRepo), and those just granted (below) — never because it
+    // says it deploys them.
     mayUseRepo(id, repo) {
       const n = nodes.get(Number(id))
       if (!n || typeof repo !== 'string') return false
       const key = repo.toLowerCase()
-      if (reposOf(n).has(key)) return true
+      if (allowedRow(n.id, key)) return true
       const until = grants.get(`${n.id} ${key}`)
       if (until && until > Date.now()) return true
       grants.delete(`${n.id} ${key}`)
@@ -471,6 +523,20 @@ export function createNodeLinks({
     // branch list or suggestions): its token may follow, for a while.
     grantRepo(id, repo) {
       if (typeof repo === 'string' && repo) grants.set(`${Number(id)} ${repo.toLowerCase()}`, Date.now() + GRANT_MS)
+    },
+    allowRepo,
+    disallowRepo(id, repo) {
+      grants.delete(`${Number(id)} ${String(repo).toLowerCase()}`)
+      return db.query('DELETE FROM node_repos WHERE node_id = ? AND repo = ?').run(Number(id), String(repo).toLowerCase()).changes > 0
+    },
+    // For its Pairing: what it may read, and what it reports deploying
+    // that it may not.
+    repos(id) {
+      const n = nodes.get(Number(id))
+      const allowed = db.query('SELECT repo, how, added_at FROM node_repos WHERE node_id = ? ORDER BY repo').all(Number(id))
+      const listed = new Set(allowed.map(r => r.repo))
+      const reported = n ? [...reposOf(n)].filter(repo => !listed.has(repo)).sort() : []
+      return { allowed, reported, seeded: Boolean(rowOf(Number(id))?.repos_seeded) }
     },
 
     // A node created, renamed or re-paired: its row as LiveState shows it.

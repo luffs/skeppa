@@ -454,7 +454,10 @@ made it.
 master's webhook hears the pushes and passes them on to every agent whose projects deploy that
 repo, holding the latest per branch for one that is offline until it dials in. When an agent
 needs to clone, the master hands it a token for that one repository with read access, nothing
-wider. An agent that has its own App configured uses that instead.
+wider, and only for a repository on that server's list under its **Pairing → GitHub access**: what
+it deployed when it was paired, what an admin moors there from the master, and what is allowed
+there by hand. A server cannot add one by saying it deploys it, and its repo listing leaves out
+the master's tenants' installations. An agent that has its own App configured uses that instead.
 
 **On the master's pages.** The **Harbor** shows every server's vessels, a section and a map per
 server, filterable by server; *Deploy N with new commits* covers them all. Each server has a page

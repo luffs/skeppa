@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { normalizeGroupName } from '../lib/validate.js'
+import { normalizeGroupName, REPO_RE } from '../lib/validate.js'
 import { newJoinCode, newAgentKey, parseJoinCode, sha256, matchesHash, promoteKey, JOIN_TTL_MS } from '../nodes/keys.js'
 import { nodeInfo } from '../live/state.js'
 import { nodeStoreId } from '../nodes/links.js'
@@ -20,7 +20,9 @@ export function nodeJoinRoutes({ db, links }) {
     const valid = node && matchesHash(parsed.value, node.join_hash) && Date.parse(node.join_expires_at) > Date.now()
     if (!valid) return c.json({ error: 'that code is not valid, or it has expired — make a new one on the Fleet page' }, 401)
     const key = newAgentKey(node.id)
-    db.query("UPDATE nodes SET key_hash = ?, next_key_hash = '', join_hash = '', join_expires_at = '' WHERE id = ?").run(sha256(key), node.id)
+    // A new pairing looks at what the server deploys once more (links.js
+    // seedRepos): a new machine in an old one's place brings its own.
+    db.query("UPDATE nodes SET key_hash = ?, next_key_hash = '', join_hash = '', join_expires_at = '', repos_seeded = 0 WHERE id = ?").run(sha256(key), node.id)
     links.disconnect(node.id)
     links.refresh(node.id)
     recordEvent(db, { nodeId: node.id, nodeName: node.name, action: 'paired' })
@@ -153,6 +155,32 @@ export function nodeRoutes({ db, links }) {
     return c.json({ ok: true })
   })
 
+  // The GitHub repositories that server may read through this panel's App
+  // (links.js), and those it reports deploying that it may not: its Pairing.
+  app.get('/:id/repos', c => {
+    const row = rowOf(c.req.param('id'))
+    if (!row) return c.json({ error: 'not found' }, 404)
+    return c.json(links.repos(row.id))
+  })
+  app.post('/:id/repos', async c => {
+    const row = rowOf(c.req.param('id'))
+    if (!row) return c.json({ error: 'not found' }, 404)
+    const body = await c.req.json().catch(() => ({}))
+    const repo = typeof body.repo === 'string' ? body.repo.trim() : ''
+    if (!REPO_RE.test(repo)) return c.json({ error: 'validation failed', fields: { repo: 'owner/name' } }, 400)
+    links.allowRepo(row.id, repo, 'allowed')
+    logNode(c, row, 'allowed a repo', repo.toLowerCase())
+    return c.json(links.repos(row.id))
+  })
+  app.delete('/:id/repos', c => {
+    const row = rowOf(c.req.param('id'))
+    if (!row) return c.json({ error: 'not found' }, 404)
+    const repo = c.req.query('repo') ?? ''
+    if (!REPO_RE.test(repo)) return c.json({ error: 'validation failed', fields: { repo: 'owner/name' } }, 400)
+    if (links.disallowRepo(row.id, repo)) logNode(c, row, 'took a repo back', repo.toLowerCase())
+    return c.json(links.repos(row.id))
+  })
+
   // A deployment on that server, with its log — asked of the agent itself.
   app.get('/:id/deployments/:deploymentId', async c => {
     const row = rowOf(c.req.param('id'))
@@ -206,6 +234,12 @@ export function nodeRoutes({ db, links }) {
     }
     const status = Number.isInteger(answer?.status) && answer.status >= 200 && answer.status <= 599 ? answer.status : 502
     log(status, status >= 400 ? String(answer?.json?.error ?? '') : '')
+    // A project moored there, or pointed at a repo, by an admin here: that
+    // server may read the repo from now on (links.js allowRepo).
+    if (status < 300 && (method === 'POST' || method === 'PATCH') && /^\/api\/projects(\/\d+)?$/.test(bare)
+      && typeof body?.repo_full_name === 'string' && REPO_RE.test(body.repo_full_name)) {
+      links.allowRepo(row.id, body.repo_full_name, 'moored')
+    }
     if (typeof answer?.base64 === 'string') {
       // A download from that server's file viewer: the same headers this
       // panel's own sets, whatever the agent said — only the file name comes

@@ -83,6 +83,41 @@
           </p>
         </section>
         <section class="panel">
+          <h3 class="section-part-title">GitHub access</h3>
+          <p class="hint">
+            The repositories it may read through this panel's GitHub App, for its deploys. A project moored there from
+            here adds its repo; what it reported the first time it was in step after pairing was taken as its own.
+            It cannot add one by saying it deploys it.
+          </p>
+          <p v-if="!repos" class="hint">Loading…</p>
+          <template v-else>
+            <ul v-if="repos.allowed.length" class="repo-list">
+              <li v-for="r in repos.allowed" :key="r.repo">
+                <span class="mono">{{ r.repo }}</span>
+                <span class="hint">{{ HOW[r.how] ?? r.how }}</span>
+                <span class="spacer"></span>
+                <button class="small secondary" :disabled="busy" @click="disallowRepo(r.repo)">Take back</button>
+              </li>
+            </ul>
+            <p v-else class="hint">None yet.</p>
+            <div v-if="repos.reported.length" class="repo-asks">
+              <span class="section-label">It deploys, may not read</span>
+              <ul class="repo-list">
+                <li v-for="repo in repos.reported" :key="repo">
+                  <span class="mono">{{ repo }}</span>
+                  <span class="hint">its deploys of it fail to fetch</span>
+                  <span class="spacer"></span>
+                  <button class="small secondary" :disabled="busy" @click="allowRepo(repo)">Allow</button>
+                </li>
+              </ul>
+            </div>
+            <div class="row inline-action" style="margin-top: 10px">
+              <input v-model="repoToAllow" class="code" placeholder="owner/name" aria-label="Repository to allow" @keydown.enter.prevent="allowRepo(repoToAllow)" />
+              <button class="secondary" :disabled="busy || !repoToAllow.trim()" @click="allowRepo(repoToAllow)">Allow</button>
+            </div>
+          </template>
+        </section>
+        <section class="panel">
           <h3 class="section-part-title">Join code</h3>
           <p class="hint">
             {{ server.paired ? 'A new code pairs it again — on that server, with the command it shows; the key it has works until then. For a server that lost its key, or a new machine in its place.' : 'It is not paired: make a code and run the command it shows on that server.' }}
@@ -124,6 +159,11 @@ import SystemView from './SystemView.vue'
 import ShipyardView from './ShipyardView.vue'
 import SettingsView from './SettingsView.vue'
 
+// Why a repository is on a server's GitHub access list (server node_repos).
+const HOW = { moored: 'moored from here', allowed: 'allowed by hand', reported: 'reported at pairing' }
+
+const reposOf = res => ({ allowed: res?.allowed ?? [], reported: res?.reported ?? [] })
+
 const TABS = [
   { key: 'overview', label: 'Overview' },
   { key: 'engine', label: 'Engine room' },
@@ -154,6 +194,9 @@ export default {
       error: '',
       asked: false, // its panel's deploy is being asked for
       rotated: null, // how the last Rotate key went: { text, tone }
+      repos: null, // its GitHub access (GET /api/nodes/:id/repos), on Pairing
+      repoToAllow: '',
+      HOW,
     }
   },
   computed: {
@@ -205,6 +248,12 @@ export default {
     '$route.query.tab'(tab) {
       this.tab = TABS.some(t => t.key === tab) ? tab : 'overview'
     },
+    tab: {
+      immediate: true,
+      handler(tab) {
+        if (tab === 'pairing' && !this.local) this.loadRepos()
+      },
+    },
   },
   methods: {
     timeAgo,
@@ -242,6 +291,24 @@ export default {
     rename() {
       return this.run(async () => {
         await api.patch(`/api/nodes/${this.server.id}`, { name: this.renameTo })
+      })
+    },
+    async loadRepos() {
+      try {
+        this.repos = reposOf(await api.get(`/api/nodes/${this.node}/repos`))
+      } catch (err) {
+        this.error = err.message
+      }
+    },
+    allowRepo(repo) {
+      return this.run(async () => {
+        this.repos = reposOf(await api.post(`/api/nodes/${this.server.id}/repos`, { repo: repo.trim() }))
+        this.repoToAllow = ''
+      })
+    },
+    disallowRepo(repo) {
+      return this.run(async () => {
+        this.repos = reposOf(await api.del(`/api/nodes/${this.server.id}/repos?repo=${encodeURIComponent(repo)}`))
       })
     },
     rotate() {
@@ -289,6 +356,11 @@ export default {
   font-size: 13.5px;
 }
 .rotate-result { margin: 8px 0 0; }
+.repo-list { list-style: none; margin: 8px 0 0; padding: 0; }
+.repo-list li { display: flex; align-items: center; gap: 12px; padding: 6px 0; border-top: 1px solid var(--line-soft); }
+.repo-list li:first-child { border-top: 0; }
+.repo-asks { margin-top: 14px; }
+.spacer { flex: 1; }
 .rotate-result.green { color: var(--green); }
 .rotate-result.amber { color: var(--amber); }
 .danger-zone { border-color: var(--red-soft, rgba(248, 81, 73, 0.4)); }

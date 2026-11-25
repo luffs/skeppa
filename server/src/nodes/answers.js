@@ -7,10 +7,16 @@ import { NOTIFY_EVENTS, notifyEvent } from '../lib/notify.js'
 // needs:
 //
 //   githubToken           a token for ONE repository, read-only (contents),
-//                         and only one of its own projects deploys (or one
-//                         the admin here just asked about through the relay)
-//   githubRepoInstallation  which installation covers a repo, and whose
-//   githubRepos           the repo listing, for its mooring form
+//                         and only one on that server's list here (node_repos:
+//                         moored there through the relay, allowed under its
+//                         Pairing, or taken from its first report after
+//                         pairing) or one the admin here just asked about
+//                         through the relay — never because it says so now
+//   githubRepoInstallation  which installation covers a repo, and whose —
+//                         for a repo it may read, the same way
+//   githubRepos           the repo listing, for its mooring form: the App's
+//                         installations but the tenants' (tenants on agents
+//                         are not a thing yet, and their repos are theirs)
 //   githubOwner           the App owner's login (the picker's "mine")
 //   notify                one of its notifications, sent through this
 //                         panel's webhook under its name and by this panel's
@@ -35,6 +41,17 @@ export function createFleetAnswers({ github, links, db = null, masterKey = '', n
     if (!REPO_RE.test(repo)) throw coded('bad-request', 'repo must be owner/name')
     return repo
   }
+  // The GitHub accounts of this panel's tenants — not an admin's, nor the
+  // App owner's — whose installations an agent's listing leaves out.
+  async function tenantAccounts() {
+    if (!db) return new Set()
+    const login = r => String(r.github_login ?? '').toLowerCase()
+    const tenants = db.query("SELECT github_login FROM users WHERE role != 'admin' AND github_login != ''").all().map(login)
+    const ours = new Set(db.query("SELECT github_login FROM users WHERE role = 'admin' AND github_login != ''").all().map(login))
+    const owner = String((await github.appOwnerLogin?.().catch(() => '')) ?? '').toLowerCase()
+    if (owner) ours.add(owner)
+    return new Set(tenants.filter(t => t && !ours.has(t)))
+  }
   const needApp = () => {
     if (!github?.isConfigured()) throw coded('unavailable', 'no GitHub App is configured on the master')
   }
@@ -58,20 +75,24 @@ export function createFleetAnswers({ github, links, db = null, masterKey = '', n
     async githubToken(nodeId, params) {
       const repo = repoParam(params)
       needApp()
-      if (!links.mayUseRepo(nodeId, repo)) throw coded('forbidden', `no project on that server deploys ${repo}`)
+      if (!links.mayUseRepo(nodeId, repo)) throw coded('forbidden', `this server may not read ${repo} — moor it through the master, or allow it under this server's Pairing there`)
       const { token, expiresAt } = await github.getScopedToken(repo)
       return { token, expiresAt }
     },
-    async githubRepoInstallation(_nodeId, params) {
+    async githubRepoInstallation(nodeId, params) {
       const repo = repoParam(params)
       needApp()
+      if (!links.mayUseRepo(nodeId, repo)) throw coded('forbidden', `this server may not read ${repo}`)
       const { id, account } = await github.getRepoInstallation(repo)
       return { id, account }
     },
     async githubRepos(_nodeId, params) {
       needApp()
       const account = typeof params?.account === 'string' && params.account ? params.account : null
-      return github.listRepos(account, { fresh: params?.fresh === true })
+      const hidden = await tenantAccounts()
+      if (account && hidden.has(account.toLowerCase())) return []
+      const repos = await github.listRepos(account, { fresh: params?.fresh === true })
+      return repos.filter(r => !hidden.has(String(r.owner ?? '').toLowerCase()))
     },
     async githubOwner() {
       needApp()
