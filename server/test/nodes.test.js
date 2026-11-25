@@ -16,6 +16,10 @@ import { GitHubApp } from '../src/github/appClient.js'
 import { pushSlice } from '../src/github/push.js'
 import { nodeRoutes, nodeJoinRoutes } from '../src/routes/nodes.js'
 import { parseAgentKey, sha256, nodeForKey } from '../src/nodes/keys.js'
+import { FLEET_PROTOCOL, MIN_FLEET_PROTOCOL, helloProtocol, protocolsMeet, protocolAdvice } from '../src/nodes/protocol.js'
+import { mkdtempSync, readFileSync, writeFileSync, rmSync, existsSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { parseMasterUrl } from '../src/config.js'
 
 // Agents: another Skeppa reporting to this one over a socket it dials
@@ -335,7 +339,7 @@ test('rpc: a deployment with its log is asked of the agent; offline and unknown 
 })
 
 test('METHODS is the whole list of what a master may ask', () => {
-  expect(Object.keys(METHODS)).toEqual(['deployment', 'push', 'request'])
+  expect(Object.keys(METHODS)).toEqual(['deployment', 'push', 'request', 'rotateKey'])
 })
 
 test('unpairing cuts the agent off and its key stops working; a new code pairs it again', async () => {
@@ -884,4 +888,139 @@ test("an agent's notification goes out through the master, under its name, and o
   for (let i = m.notified.length; i < NOTIFY_BURST; i++) await uplink.ask('notify', { event: 'restart_burst', text: `loop ${i}` })
   await expect(uplink.ask('notify', { event: 'restart_burst', text: 'one too many' })).rejects.toMatchObject({ code: 'rate-limited' })
   expect(m.notified).toHaveLength(NOTIFY_BURST)
+})
+
+// --- the fleet protocol --------------------------------------------------------
+
+test('protocol ranges: a hello without numbers is protocol 1; ranges meet or say who is behind', () => {
+  expect(helloProtocol({})).toEqual({ protocol: 1, minProtocol: 1 })
+  expect(helloProtocol({ protocol: 3, minProtocol: 2 })).toEqual({ protocol: 3, minProtocol: 2 })
+  expect(helloProtocol({ protocol: 3, minProtocol: 9 })).toEqual({ protocol: 3, minProtocol: 3 }) // a min above its own is nonsense
+  expect(helloProtocol({ protocol: 'x', minProtocol: -1 })).toEqual({ protocol: 1, minProtocol: 1 })
+  const ours = { protocol: 3, minProtocol: 2 }
+  expect(protocolsMeet({ protocol: 2, minProtocol: 1 }, ours)).toBe(true)
+  expect(protocolsMeet({ protocol: 5, minProtocol: 3 }, ours)).toBe(true)
+  expect(protocolAdvice({ protocol: 1, minProtocol: 1 }, ours)).toBe('peer-older')
+  expect(protocolAdvice({ protocol: 5, minProtocol: 4 }, ours)).toBe('peer-newer')
+  expect(protocolAdvice({ protocol: 3, minProtocol: 3 }, ours)).toBe('')
+})
+
+// A raw socket in an agent's place: says what a test wants and answers nothing.
+function rawAgent(m, key, hello) {
+  const ws = new WebSocket(agentUrl(m.url), { headers: { authorization: `Bearer ${key}` } })
+  const got = []
+  ws.onmessage = e => got.push(JSON.parse(e.data))
+  ws.onopen = () => hello && ws.send(JSON.stringify({ ch: 'ctl', t: 'hello', ...hello }))
+  cleanups.push(() => ws.close())
+  return { ws, got }
+}
+
+test('both sides say their protocol; one the other does not meet is shown, said, and still connected', async () => {
+  const m = master()
+  const a = agent()
+  const { id, key } = await pair(m)
+  const uplink = connect(m, a, key)
+  await until(() => m.liveState.nodes[id]?.protocol === FLEET_PROTOCOL)
+  expect(m.liveState.nodes[id]).toMatchObject({ protocolMin: MIN_FLEET_PROTOCOL, protocolGap: '' })
+  await until(() => uplink.masterProtocol === FLEET_PROTOCOL) // and the master's reached the agent
+  uplink.stop()
+
+  // a panel from the future: kept, flagged as the newer one, said in the log
+  const future = rawAgent(m, key, { version: 'fff0000', protocol: FLEET_PROTOCOL + 5, minProtocol: FLEET_PROTOCOL + 5 })
+  await until(() => m.liveState.nodes[id]?.protocolGap === 'newer')
+  expect(m.liveState.nodes[id]).toMatchObject({ online: true, protocol: FLEET_PROTOCOL + 5 })
+  expect(m.errors.some(e => e.includes('update this panel'))).toBe(true)
+  expect(m.db.query('SELECT agent_protocol FROM nodes WHERE id = ?').get(id).agent_protocol).toBe(FLEET_PROTOCOL + 5)
+  future.ws.close()
+
+  // a hello from before the numbers is protocol 1
+  rawAgent(m, key, { version: 'old0000' })
+  await until(() => m.liveState.nodes[id]?.version === 'old0000')
+  expect(m.liveState.nodes[id]).toMatchObject({ protocol: 1, protocolMin: 1, protocolGap: '' })
+})
+
+// --- rotating an agent's key -------------------------------------------------------
+
+test('rotate: the agent writes the new key and dials with it; the old one is done', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'skeppa-key-'))
+  cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+  const keyFile = join(dir, 'agent.key')
+
+  const m = master()
+  const a = agent()
+  const { id, key } = await pair(m)
+  writeFileSync(keyFile, `${key}\n`)
+  connect(m, a, key, { keyFile })
+  await until(() => m.links.isOnline(id))
+
+  const res = await m.api(`/api/nodes/${id}/rotate`, { method: 'POST' })
+  expect(res.status).toBe(200)
+  expect(await res.json()).toMatchObject({ pending: false, node: { rotating: false, online: true } })
+  const written = readFileSync(keyFile, 'utf8').trim()
+  expect(parseAgentKey(written)?.nodeId).toBe(id)
+  expect(written).not.toBe(key)
+  expect(existsSync(`${keyFile}.new`)).toBe(false)
+  const row = m.db.query('SELECT * FROM nodes WHERE id = ?').get(id)
+  expect(row.key_hash).toBe(sha256(written))
+  expect(row.next_key_hash).toBe('')
+  expect(nodeForKey(m.db, `Bearer ${key}`)).toBeNull()
+  expect(m.links.isOnline(id)).toBe(true) // the socket it has stays
+
+  // the next connection is the new key's
+  m.links.disconnect(id)
+  await until(() => !m.links.isOnline(id))
+  await until(() => m.links.isOnline(id))
+  const events = await (await m.api(`/api/nodes/events?node=${id}`)).json()
+  expect(events[0].action).toBe('key rotated')
+})
+
+test('rotate: refused while offline or unpaired, and an agent that says no changes nothing', async () => {
+  const m = master()
+  const a = agent()
+  const { id, key } = await pair(m)
+  expect((await m.api(`/api/nodes/${id}/rotate`, { method: 'POST' })).status).toBe(409) // offline
+  connect(m, a, key) // no key file to write to
+  await until(() => m.links.isOnline(id))
+  const res = await m.api(`/api/nodes/${id}/rotate`, { method: 'POST' })
+  expect(res.status).toBe(502)
+  expect((await res.json()).error).toContain('no key file')
+  const row = m.db.query('SELECT * FROM nodes WHERE id = ?').get(id)
+  expect(row.key_hash).toBe(sha256(key))
+  expect(row.next_key_hash).toBe('')
+  expect(m.liveState.nodes[id].rotating).toBe(false)
+
+  await m.api(`/api/nodes/${id}/unpair`, { method: 'POST' })
+  expect((await m.api(`/api/nodes/${id}/rotate`, { method: 'POST' })).status).toBe(409)
+})
+
+test('the agent takes only a well-formed key for itself', () => {
+  const key = `skn_3_${'a'.repeat(64)}`
+  const ctx = { keyFile: '/nowhere/agent.key', key, setKey: () => {} }
+  expect(() => METHODS.rotateKey({ key: 'nope' }, ctx)).toThrow('agent key')
+  expect(() => METHODS.rotateKey({ key: `skn_4_${'b'.repeat(64)}` }, ctx)).toThrow('another server')
+  expect(() => METHODS.rotateKey({ key: `skn_3_${'b'.repeat(64)}` }, { ...ctx, keyFile: null })).toThrow('no key file')
+})
+
+test('rotate: an agent that does not answer leaves both keys working until it dials with the new one', async () => {
+  const m = master({ rpcTimeoutMs: 200 })
+  const { id, key } = await pair(m)
+  const mute = rawAgent(m, key, { version: 'mute000' })
+  await until(() => m.links.isOnline(id))
+  const res = await m.api(`/api/nodes/${id}/rotate`, { method: 'POST' })
+  expect(res.status).toBe(202)
+  expect(await res.json()).toMatchObject({ pending: true, node: { rotating: true } })
+  expect(m.liveState.nodes[id].rotating).toBe(true)
+  const sent = mute.got.find(msg => msg.ch === 'rpc' && msg.method === 'rotateKey')?.params?.key
+  expect(parseAgentKey(sent)?.nodeId).toBe(id)
+  expect(nodeForKey(m.db, `Bearer ${key}`)?.id).toBe(id) // the old one still works…
+  mute.ws.close()
+  await until(() => !m.links.isOnline(id))
+
+  rawAgent(m, sent, { version: 'mute000' }) // …until the new one is heard
+  await until(() => m.links.isOnline(id))
+  await until(() => m.liveState.nodes[id].rotating === false)
+  expect(nodeForKey(m.db, `Bearer ${key}`)).toBeNull()
+  expect(nodeForKey(m.db, `Bearer ${sent}`)?.id).toBe(id)
+  const events = await (await m.api(`/api/nodes/events?node=${id}`)).json()
+  expect(events[0].action).toBe('key rotation pending')
 })

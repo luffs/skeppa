@@ -7,6 +7,8 @@ const LIFE = {
   renamed: 'renamed',
   'new join code': 'made a new join code',
   unpaired: 'unpaired',
+  'key rotated': 'gave it a new key',
+  'key rotation pending': 'sent it a new key (not confirmed)',
   removed: 'removed from the fleet',
   offline: 'went offline',
   back: 'reporting again',

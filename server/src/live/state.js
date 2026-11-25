@@ -4,6 +4,7 @@ import { imagesDefaults } from './images.js'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { projectDirs } from '../deploy/envfiles.js'
+import { protocolAdvice } from '../nodes/protocol.js'
 
 // Single server-side LiveState object. All mutations go through this proxy so
 // lazy-watch batches them into diffs that the Hub broadcasts to WS clients.
@@ -26,7 +27,13 @@ export function createLiveState() {
 // per the LiveState string convention. `adminId` is who the master acts as
 // over there (the agent's hello; 0 until it said): a project moored there is
 // theirs, and so are the piers it may moor at.
+// `protocol`/`protocolMin`: the fleet protocol range its hello said (0 =
+// never said); `protocolGap` '' while that meets this panel's, else which
+// side is behind — 'older' (the agent) or 'newer' (this panel).
+// `rotating`: a new key is out and the agent has not dialled with it yet.
 export function nodeInfo(row, online = false, { adminId = 0 } = {}) {
+  const said = row.agent_protocol > 0
+  const gap = said ? protocolAdvice({ protocol: row.agent_protocol, minProtocol: row.agent_min_protocol || row.agent_protocol }) : ''
   return {
     id: row.id,
     name: row.name,
@@ -35,6 +42,10 @@ export function nodeInfo(row, online = false, { adminId = 0 } = {}) {
     joinExpiresAt: row.join_hash ? row.join_expires_at : '',
     lastSeenAt: row.last_seen_at,
     version: row.agent_version,
+    protocol: row.agent_protocol ?? 0,
+    protocolMin: row.agent_min_protocol ?? 0,
+    protocolGap: gap === 'peer-older' ? 'older' : gap === 'peer-newer' ? 'newer' : '',
+    rotating: Boolean(row.next_key_hash),
     adminId,
     createdAt: row.created_at,
   }

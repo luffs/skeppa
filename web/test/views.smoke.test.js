@@ -2243,6 +2243,53 @@ test("a server's Pairing: rename, a new code, unpair and remove — and gone, ba
   expect(pushed).toEqual(['/fleet'])
 })
 
+// Rotate key: over its own connection, so only while it is online; what the
+// answer says — in place, or out and waiting for it to dial in — is said.
+test("a server's key is rotated from Pairing, and an unconfirmed one says so", async () => {
+  seedStore('admin')
+  let pending = false
+  const post = vi.spyOn(api, 'post').mockImplementation(async () => ({ pending, node: {} }))
+  const { problems } = await expectCleanRender(ServerView, {
+    props: { node: '1' },
+    route: { path: '/fleet/1', query: { tab: 'pairing' } },
+    steps: async wrapper => {
+      const rotate = () => wrapper.findAll('.server-pairing button').find(b => b.text() === 'Rotate key')
+      await rotate().trigger('click')
+      await settle()
+      expect(wrapper.find('.rotate-result').text()).toContain('the old one no longer works')
+      pending = true
+      await rotate().trigger('click')
+      await settle()
+      expect(wrapper.find('.rotate-result').text()).toContain('Both keys work')
+      store.live.nodes[1] = { ...store.live.nodes[1], online: false }
+      await settle()
+      expect(rotate().attributes('disabled')).toBeDefined()
+    },
+  })
+  const urls = post.mock.calls.map(c => c[0])
+  post.mockRestore()
+  expect(problems.join(' | ')).toBe('')
+  expect(urls).toEqual(['/api/nodes/1/rotate', '/api/nodes/1/rotate'])
+})
+
+// A server whose fleet protocol this panel does not meet: a red chip on the
+// Fleet page and on its own, a banner saying which side to update.
+test('a fleet protocol gap shows on the Fleet page and the server page, with which side to update', async () => {
+  seedStore('admin')
+  store.live.nodes[1] = { ...store.live.nodes[1], protocol: 1, protocolMin: 1, protocolGap: 'older' }
+  store.live.nodes[2] = { ...store.live.nodes[2], protocol: 9, protocolMin: 9, protocolGap: 'newer' }
+  const fleet = await expectCleanRender(FleetView)
+  expect(fleet.problems.join(' | ')).toBe('')
+  expect(fleet.html).toContain('update needed')
+  expect(fleet.html).toContain('newer than this panel')
+  expect(fleet.html).toContain('2 that cannot fully talk to it')
+  const older = await expectCleanRender(ServerView, { props: { node: '1' }, route: { path: '/fleet/1', query: {} } })
+  expect(older.problems.join(' | ')).toBe('')
+  expect(older.html).toContain('Its panel is too old for this one.')
+  const newer = await expectCleanRender(ServerView, { props: { node: '2' }, route: { path: '/fleet/2', query: {} } })
+  expect(newer.html).toContain('Its panel is newer than this one.')
+})
+
 test('a server that is gone says so', async () => {
   seedStore('admin')
   const { problems, html } = await expectCleanRender(ServerView, { props: { node: '42' } })

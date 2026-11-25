@@ -2,6 +2,7 @@ import { createClient, createConnection } from 'lazy-storage'
 import { STORE_SHAPES, UPLINK_ID, mirrorStore, wholeArraysOf } from '../live/stores.js'
 import { nodeInfo } from '../live/state.js'
 import { nodeForKey } from './keys.js'
+import { FLEET_PROTOCOL, MIN_FLEET_PROTOCOL, helloProtocol, protocolAdvice } from './protocol.js'
 
 // The master's side of its agents: other Skeppa servers that dial this
 // panel at /agent and report what they run.
@@ -27,9 +28,10 @@ import { nodeForKey } from './keys.js'
 //          `{ ch: 'answer' }`), judged by onAsk (nodes/answers.js) — GitHub
 //          tokens scoped to one of its repos, the repo listing — so an agent
 //          needs no GitHub App of its own. Pushes come down as rpc `push`.
-//   ctl    small talk: the agent's hello (its version), and the master's
-//          `watch`, which tells the agent someone is looking so its poller
-//          runs at the live cadence.
+//   ctl    small talk: each side's hello (the agent's version and admin,
+//          and both sides' fleet protocol range, nodes/protocol.js), and
+//          the master's `watch`, which tells the agent someone is looking
+//          so its poller runs at the live cadence.
 //
 // The upstream connection lives as long as the node does, across the
 // agent's reconnects: the tunnel transport below fails at once while no
@@ -281,8 +283,14 @@ export function createNodeLinks({
     } else if (msg.ch === 'ctl' && msg.t === 'hello') {
       const version = typeof msg.version === 'string' ? msg.version.slice(0, 40) : ''
       n.adminId = Number.isInteger(msg.adminId) && msg.adminId > 0 ? msg.adminId : 0
-      db.query('UPDATE nodes SET agent_version = ? WHERE id = ?').run(version, n.id)
+      const said = helloProtocol(msg)
+      db.query('UPDATE nodes SET agent_version = ?, agent_protocol = ?, agent_min_protocol = ? WHERE id = ?')
+        .run(version, said.protocol, said.minProtocol, n.id)
       setInfo(n.id, true)
+      // Still connected — the Fleet page says it, and Update panel goes
+      // through the relay — but worth a line in this panel's log too.
+      const gap = protocolAdvice(said)
+      if (gap) onError(new Error(`node ${n.id}: speaks fleet protocol ${said.minProtocol}–${said.protocol}, this panel ${MIN_FLEET_PROTOCOL}–${FLEET_PROTOCOL} — update ${gap === 'peer-older' ? 'that server' : 'this panel'}`))
     }
   }
 
@@ -348,6 +356,7 @@ export function createNodeLinks({
       db.query('UPDATE nodes SET last_seen_at = ? WHERE id = ?').run(now(), n.id)
       setInfo(n.id, true)
       markUp(n)
+      sendCtl(n, { t: 'hello', protocol: FLEET_PROTOCOL, minProtocol: MIN_FLEET_PROTOCOL })
       sendCtl(n, { t: 'watch', on: n.watching })
       n.connection.connect() // now, not when the backoff says
       flushPushes(n)

@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { normalizeGroupName } from '../lib/validate.js'
-import { newJoinCode, newAgentKey, parseJoinCode, sha256, matchesHash, JOIN_TTL_MS } from '../nodes/keys.js'
+import { newJoinCode, newAgentKey, parseJoinCode, sha256, matchesHash, promoteKey, JOIN_TTL_MS } from '../nodes/keys.js'
 import { nodeInfo } from '../live/state.js'
 import { nodeStoreId } from '../nodes/links.js'
 import { recordEvent, listEvents, subjectOf } from '../nodes/events.js'
@@ -20,7 +20,7 @@ export function nodeJoinRoutes({ db, links }) {
     const valid = node && matchesHash(parsed.value, node.join_hash) && Date.parse(node.join_expires_at) > Date.now()
     if (!valid) return c.json({ error: 'that code is not valid, or it has expired — make a new one on the Fleet page' }, 401)
     const key = newAgentKey(node.id)
-    db.query("UPDATE nodes SET key_hash = ?, join_hash = '', join_expires_at = '' WHERE id = ?").run(sha256(key), node.id)
+    db.query("UPDATE nodes SET key_hash = ?, next_key_hash = '', join_hash = '', join_expires_at = '' WHERE id = ?").run(sha256(key), node.id)
     links.disconnect(node.id)
     links.refresh(node.id)
     recordEvent(db, { nodeId: node.id, nodeName: node.name, action: 'paired' })
@@ -99,11 +99,45 @@ export function nodeRoutes({ db, links }) {
     return c.json(join)
   })
 
+  // A new key for a connected server, handed over its own socket: no join
+  // code, nothing to run over there. The new key's hash waits beside the old
+  // one while the agent writes it (agent/uplink.js rotateKey); its answer —
+  // the key is on disk — retires the old key. An agent that cannot say (the
+  // link drops, no answer in time) may or may not have it, so both keep
+  // dialling in until it is heard with the new one (nodes/keys.js), and the
+  // answer says the rotation is pending. An agent that says no changed
+  // nothing.
+  app.post('/:id/rotate', async c => {
+    const row = rowOf(c.req.param('id'))
+    if (!row) return c.json({ error: 'not found' }, 404)
+    if (!row.key_hash) return c.json({ error: 'that server is not paired — pair it with a join code' }, 409)
+    if (!links.isOnline(row.id)) return c.json({ error: 'that server is offline — it takes a new key over its own connection, so it has to be connected' }, 409)
+    const key = newAgentKey(row.id)
+    db.query('UPDATE nodes SET next_key_hash = ? WHERE id = ?').run(sha256(key), row.id)
+    links.refresh(row.id)
+    try {
+      await links.call(row.id, 'rotateKey', { key })
+    } catch (err) {
+      if (err.code === 'offline' || err.code === 'timeout') {
+        logNode(c, row, 'key rotation pending', err.message)
+        return c.json({ pending: true, node: nodeInfo(rowOf(row.id), links.isOnline(row.id)) }, 202)
+      }
+      db.query("UPDATE nodes SET next_key_hash = '' WHERE id = ?").run(row.id)
+      links.refresh(row.id)
+      if (err.code === 'unknown-method') return c.json({ error: "that server's panel is too old to take a new key — update it first" }, 409)
+      return nodeError(c, err)
+    }
+    promoteKey(db, row.id)
+    links.refresh(row.id)
+    logNode(c, row, 'key rotated')
+    return c.json({ pending: false, node: nodeInfo(rowOf(row.id), links.isOnline(row.id)) })
+  })
+
   // Take the key back now: the server is cut off until it is paired again.
   app.post('/:id/unpair', c => {
     const row = rowOf(c.req.param('id'))
     if (!row) return c.json({ error: 'not found' }, 404)
-    db.query("UPDATE nodes SET key_hash = '' WHERE id = ?").run(row.id)
+    db.query("UPDATE nodes SET key_hash = '', next_key_hash = '' WHERE id = ?").run(row.id)
     links.disconnect(row.id, 'unpaired')
     links.refresh(row.id)
     logNode(c, row, 'unpaired')

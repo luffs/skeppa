@@ -7,6 +7,7 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
 //
 //   join code   skj_<node id>_<32 hex>   one-time, 10 minutes, pairs an agent
 //   agent key   skn_<node id>_<64 hex>   what the agent dials with, until re-paired
+//                                        or rotated (routes/nodes.js /:id/rotate)
 
 export const JOIN_TTL_MS = 10 * 60 * 1000
 
@@ -42,10 +43,21 @@ export function matchesHash(value, hash) {
 }
 
 // Who an `Authorization: Bearer skn_…` header is: the node row, or null.
+// While a rotation is out, the new key dials in too — and the first time it
+// does, it is the key from then on and the old one stops working.
 export function nodeForKey(db, authorization) {
   const m = /^Bearer\s+(\S+)$/i.exec(authorization ?? '')
   const parsed = m ? parseAgentKey(m[1]) : null
   if (!parsed) return null
   const node = db.query('SELECT * FROM nodes WHERE id = ?').get(parsed.nodeId)
-  return node && matchesHash(parsed.value, node.key_hash) ? node : null
+  if (!node) return null
+  if (matchesHash(parsed.value, node.key_hash)) return node
+  if (matchesHash(parsed.value, node.next_key_hash)) return promoteKey(db, node.id)
+  return null
+}
+
+// The rotated-to key becomes the key: the agent has it.
+export function promoteKey(db, id) {
+  db.query("UPDATE nodes SET key_hash = next_key_hash, next_key_hash = '' WHERE id = ? AND next_key_hash != ''").run(id)
+  return db.query('SELECT * FROM nodes WHERE id = ?').get(id)
 }

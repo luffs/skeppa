@@ -1,8 +1,9 @@
 import { createHub } from 'lazy-storage/server'
-import { readFileSync, statSync } from 'node:fs'
+import { readFileSync, statSync, writeFileSync, chmodSync, renameSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { UPLINK_ID } from '../live/stores.js'
 import { parseAgentKey } from '../nodes/keys.js'
+import { FLEET_PROTOCOL, MIN_FLEET_PROTOCOL, helloProtocol, protocolAdvice } from '../nodes/protocol.js'
 import { applyPush } from '../github/push.js'
 import { REPO_RE } from '../lib/validate.js'
 import { SHA_RE } from '../deploy/git.js'
@@ -20,8 +21,9 @@ import { SHA_RE } from '../deploy/git.js'
 //   ask    this panel's questions to the master (`ask` below): GitHub tokens
 //          for one repo, the repo listing — agent/github.js, when this
 //          panel has no GitHub App of its own. Pushes come as rpc `push`.
-//   ctl    `watch`: someone on the master is looking, so the poller should
-//          run at the live cadence (onWatch).
+//   ctl    each side's hello (this one: version, admin and fleet protocol;
+//          the master's: its protocol), and `watch`: someone on the master
+//          is looking, so the poller should run at the live cadence (onWatch).
 //
 // The agent stays a whole panel of its own: its UI, its webhooks, its
 // deploys. The master going away changes nothing here but the socket.
@@ -117,6 +119,36 @@ export const METHODS = {
     if (bytes.length > MAX_RELAYED_BYTES) throw coded('too-large', `${Math.round(bytes.length / 1024)} kB is too large to relay through the master — download it on that server's own panel`)
     return { status: res.status, base64: Buffer.from(bytes).toString('base64'), disposition: res.headers.get('content-disposition') ?? '' }
   },
+
+  // A new key from the master (routes/nodes.js /:id/rotate): written over
+  // the key file — through a temporary file and a rename, so a crash leaves
+  // the old key or the new one, never half of either — and dialled with from
+  // the next connection on. Only a key for this same node; the answer comes
+  // once it is on disk, which is what lets the master retire the old one.
+  rotateKey(params, { keyFile, key, setKey, log }) {
+    if (!keyFile || !setKey) throw coded('unavailable', 'this server keeps no key file')
+    const next = parseAgentKey(params?.key)
+    if (!next) throw coded('bad-request', 'key must be an agent key')
+    if (next.nodeId !== parseAgentKey(key)?.nodeId) throw coded('bad-request', 'that key is for another server')
+    writeKeyFile(keyFile, next.value)
+    setKey(next.value)
+    log?.('the master gave this server a new key')
+    return { ok: true }
+  },
+}
+
+// The key file, replaced whole: chmod 600 before it has a name.
+export function writeKeyFile(path, key) {
+  const tmp = `${path}.new`
+  try {
+    writeFileSync(tmp, `${key}
+`, { mode: 0o600 })
+    chmodSync(tmp, 0o600) // a leftover .new keeps its mode on write
+    renameSync(tmp, path)
+  } catch (err) {
+    rmSync(tmp, { force: true })
+    throw coded('failed', `could not write ${path}: ${err.code ?? err.message}`)
+  }
 }
 
 // The stores the master may read here, served over the agent's socket:
@@ -188,6 +220,7 @@ export function checkoutVersion(dir) {
 export function createUplink({
   masterUrl,
   key,
+  keyFile = null, // where `key` came from: rotateKey writes the new one there
   db,
   runner = null,
   liveState = null, // for `push`
@@ -209,6 +242,7 @@ export function createUplink({
   let delay = backoff.min
   let connected = false
   let refused = false
+  let masterProtocol = 0 // what the master's hello said; 0 until it did
   // Questions to the master (`ask`), waiting for its answer: id -> { resolve, reject, timer }
   const asks = new Map()
   let askSeq = 0
@@ -237,7 +271,7 @@ export function createUplink({
       reply = { error: { code: 'unknown-method', message: `this server does not know "${String(msg.method).slice(0, 40)}"` } }
     } else {
       try {
-        reply = { result: (await fn(msg.params ?? {}, { db, runner, liveState, github, fleetApi, log })) ?? null }
+        reply = { result: (await fn(msg.params ?? {}, { db, runner, liveState, github, fleetApi, log, keyFile, key, setKey: k => { key = k } })) ?? null }
       } catch (err) {
         reply = { error: { code: err.code ?? 'failed', message: err.message ?? 'failed' } }
       }
@@ -275,7 +309,7 @@ export function createUplink({
       // Who the master acts as here (createFleetApiApp): what a project it
       // moors here is owned by, and whose piers it may moor at.
       const admin = db.query("SELECT id FROM users WHERE role = 'admin' ORDER BY id LIMIT 1").get()
-      ws.send(JSON.stringify({ ch: 'ctl', t: 'hello', version, adminId: admin?.id ?? 0 }))
+      ws.send(JSON.stringify({ ch: 'ctl', t: 'hello', version, adminId: admin?.id ?? 0, protocol: FLEET_PROTOCOL, minProtocol: MIN_FLEET_PROTOCOL }))
       log(`connected to ${url}`)
     }
 
@@ -305,6 +339,13 @@ export function createUplink({
         else pending.resolve(msg.result ?? null)
       } else if (msg.ch === 'ctl' && msg.t === 'watch') {
         onWatch(msg.on === true)
+      } else if (msg.ch === 'ctl' && msg.t === 'hello') {
+        // The master's protocol: the link stays up either way (an update
+        // through it is how the two catch up), but say which side is behind.
+        const said = helloProtocol(msg)
+        const gap = protocolAdvice(said)
+        masterProtocol = said.protocol
+        if (gap) onError(new Error(`the master speaks fleet protocol ${said.minProtocol}–${said.protocol}, this server ${MIN_FLEET_PROTOCOL}–${FLEET_PROTOCOL} — update ${gap === 'peer-older' ? 'the master' : 'this panel'}`))
       }
     }
 
@@ -369,6 +410,9 @@ export function createUplink({
     },
     get connected() {
       return connected
+    },
+    get masterProtocol() {
+      return masterProtocol
     },
     url,
   }

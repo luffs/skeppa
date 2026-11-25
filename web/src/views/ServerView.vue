@@ -20,6 +20,16 @@
         </div>
       </div>
       <ShipOffline />
+      <div v-if="!local && server.protocolGap" class="server-banner">
+        <template v-if="server.protocolGap === 'older'">
+          <b>Its panel is too old for this one.</b> It speaks fleet protocol {{ server.protocol }}, which this panel no
+          longer understands, so parts of its pages may not work. <i>Update panel</i> brings it level.
+        </template>
+        <template v-else>
+          <b>Its panel is newer than this one.</b> It speaks fleet protocol {{ server.protocol }}, which this panel does
+          not understand yet, so parts of its pages may not work. Update this panel.
+        </template>
+      </div>
 
       <div class="tabs">
         <button v-for="t in tabs" :key="t.key" :class="{ active: tab === t.key }" @click="setTab(t.key)">{{ t.label }}</button>
@@ -58,10 +68,24 @@
             <button class="secondary" :disabled="busy || !renameTo.trim() || renameTo.trim() === server.name" @click="rename">Rename</button>
           </div>
         </section>
+        <section v-if="server.paired" class="panel">
+          <h3 class="section-part-title">Key</h3>
+          <div class="row inline-action">
+            <p class="hint">
+              Rotate: a new key, handed to it over its own connection — nothing to run over there. The old one stops
+              working as soon as it has the new one.
+            </p>
+            <button class="secondary" :disabled="busy || !server.online" :title="server.online ? '' : 'It takes the new key over its connection: it has to be online'" @click="rotate">Rotate key</button>
+          </div>
+          <p v-if="rotated" class="hint rotate-result" :class="rotated.tone">{{ rotated.text }}</p>
+          <p v-else-if="server.rotating" class="hint rotate-result amber">
+            A new key is out and it has not dialled in with it yet. Both keys work until it does.
+          </p>
+        </section>
         <section class="panel">
           <h3 class="section-part-title">Join code</h3>
           <p class="hint">
-            {{ server.paired ? 'A new code pairs it again — on that server, with the command it shows; the key it has works until then.' : 'It is not paired: make a code and run the command it shows on that server.' }}
+            {{ server.paired ? 'A new code pairs it again — on that server, with the command it shows; the key it has works until then. For a server that lost its key, or a new machine in its place.' : 'It is not paired: make a code and run the command it shows on that server.' }}
           </p>
           <button class="secondary" :disabled="busy" @click="newCode">{{ server.paired ? 'New join code' : 'Make a join code' }}</button>
           <JoinCode v-if="join" :join="join" @done="join = null" />
@@ -129,6 +153,7 @@ export default {
       busy: false,
       error: '',
       asked: false, // its panel's deploy is being asked for
+      rotated: null, // how the last Rotate key went: { text, tone }
     }
   },
   computed: {
@@ -151,7 +176,7 @@ export default {
     },
     version() {
       if (this.local) return this.server.version ? { text: this.server.version, color: '', title: 'The commit this panel runs' } : null
-      return versionChip(this.server?.version)
+      return versionChip(this.server?.version, this.server)
     },
     disk() {
       return diskOf(this.ship)
@@ -219,6 +244,15 @@ export default {
         await api.patch(`/api/nodes/${this.server.id}`, { name: this.renameTo })
       })
     },
+    rotate() {
+      this.rotated = null
+      return this.run(async () => {
+        const res = await api.post(`/api/nodes/${this.server.id}/rotate`)
+        this.rotated = res.pending
+          ? { text: 'Sent, but it did not say it has it. Both keys work until it dials in with the new one.', tone: 'amber' }
+          : { text: 'New key in place ✔ — the old one no longer works.', tone: 'green' }
+      })
+    },
     newCode() {
       return this.run(async () => {
         const res = await api.post(`/api/nodes/${this.server.id}/code`)
@@ -246,5 +280,16 @@ export default {
 .small-link { font-size: 12.5px; margin-right: 10px; }
 .server-pairing { display: flex; flex-direction: column; gap: 14px; margin-top: 14px; max-width: 760px; }
 .server-pairing input { max-width: 280px; }
+.server-banner {
+  margin: 12px 0 4px;
+  padding: 10px 14px;
+  border: 1px solid var(--red);
+  background: var(--red-tint);
+  border-radius: 8px;
+  font-size: 13.5px;
+}
+.rotate-result { margin: 8px 0 0; }
+.rotate-result.green { color: var(--green); }
+.rotate-result.amber { color: var(--amber); }
 .danger-zone { border-color: var(--red-soft, rgba(248, 81, 73, 0.4)); }
 </style>

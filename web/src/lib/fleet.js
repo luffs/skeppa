@@ -37,8 +37,23 @@ export function diskTone(disk) {
 }
 
 // Its version against this panel's: green the same, amber another.
-export function versionChip(version) {
+// `node`: its record, for the fleet protocol — a server whose protocol does
+// not meet this panel's is the one thing worse than another commit
+// (server nodes/protocol.js), and says which side to update.
+export function versionChip(version, node = null) {
   const here = store.live.system?.version ?? ''
+  if (node?.protocolGap) {
+    const older = node.protocolGap === 'older'
+    return {
+      text: older ? 'update needed' : 'newer than this panel',
+      color: 'red',
+      drift: true,
+      gap: node.protocolGap,
+      title: older
+        ? `Its panel${version ? ` (${version})` : ''} speaks fleet protocol ${node.protocol}, older than this panel understands — Update panel brings it level`
+        : `Its panel${version ? ` (${version})` : ''} speaks fleet protocol ${node.protocol}, newer than this panel understands — update this panel`,
+    }
+  }
   if (!version) return null
   if (!here) return { text: version, color: '', title: 'The commit its panel runs' }
   if (version === here) return { text: version, color: 'green', title: 'The same commit as this panel' }

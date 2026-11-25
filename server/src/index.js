@@ -190,6 +190,7 @@ if (config.masterUrl) {
     uplink = createUplink({
       masterUrl: config.masterUrl,
       key: readAgentKey(config.agentKeyFile),
+      keyFile: config.agentKeyFile,
       db, runner, liveStores, liveState, github,
       fleetApi: createFleetApiApp({ db, config, liveState, runner, github, poller, proxy, logs: liveStores }),
       version: panelVersion,

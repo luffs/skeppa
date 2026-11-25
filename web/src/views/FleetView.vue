@@ -9,6 +9,7 @@
           </template>
           <template v-else>Other Skeppa servers, reporting to this one</template>
           <template v-if="driftCount"> · <span class="fleet-drift">{{ driftCount }} on another version than this panel ({{ hereVersion }})</span></template>
+          <template v-if="gapCount"> · <span class="fleet-gap">{{ gapCount }} that cannot fully talk to it — see the red chip</span></template>
         </div>
       </div>
       <div class="row">
@@ -157,7 +158,7 @@ export default {
           dot: !node || node.online ? 'green' : node.paired ? 'red' : '',
           state,
           seen: lastSeen(node),
-          version: node ? versionChip(node.version) : (this.hereVersion ? { text: this.hereVersion, color: '', title: 'The commit this panel runs' } : null),
+          version: node ? versionChip(node.version, node) : (this.hereVersion ? { text: this.hereVersion, color: '', title: 'The commit this panel runs' } : null),
           load: !node || node.online ? loadOf(ship) : '',
           memory: !node || node.online ? memoryOf(ship) : null,
           disk,
@@ -171,6 +172,10 @@ export default {
     },
     driftCount() {
       return this.rows.filter(r => r.node && r.version?.drift).length
+    },
+    // Of those, the ones whose fleet protocol does not meet this panel's.
+    gapCount() {
+      return this.rows.filter(r => r.node && r.version?.gap).length
     },
     // The servers whose own panel can be deployed from here right now.
     updatable() {
@@ -239,6 +244,7 @@ function shipFor(id) {
 </script>
 
 <style scoped>
+.fleet-gap { color: var(--red); }
 .fleet-add { margin-top: 14px; max-width: 720px; }
 .fleet-add input { flex: 1; }
 .fleet-servers { margin-top: 16px; }
