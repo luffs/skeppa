@@ -1,4 +1,4 @@
-import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, test, expect, vi, beforeEach, afterEach, onTestFinished } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 
 // Every view, mounted for both roles against a seeded store and a stubbed
@@ -767,7 +767,13 @@ describe('the harbor map', () => {
   test('a voyage under way makes headway, and says how far along it is', async () => {
     seedStore('admin')
     const at = s => new Date(NOW + s * 1000).toISOString()
-    store.now = NOW
+    // store.js ticks store.now from Date.now() every second: a tick landing
+    // mid-test put the real clock back under the one this test sets, and a
+    // voyage 30 s in read as 31. The clock is the test's, ticks and all.
+    let clock = NOW
+    const wall = vi.spyOn(Date, 'now').mockImplementation(() => clock)
+    onTestFinished(() => wall.mockRestore()) // whether it passes or not
+    store.now = clock
     store.live.projects[1].recentDeployments = [{ id: 5, status: 'success', trigger: 'push', commitSha: 'a'.repeat(40), startedAt: at(-200), finishedAt: at(-140), createdAt: at(-200) }]
     store.live.projects[1].currentDeployment = { id: 9, status: 'running', startedAt: at(-30) }
     const res = await expectCleanRender(DashboardView, {
@@ -782,7 +788,7 @@ describe('the harbor map', () => {
         expect(adm().find('.hm-bob').attributes('data-uneasy')).toBe('0')
 
         // long past it: full, amber, rolling uneasily
-        store.now = NOW + 90_000
+        store.now = clock = NOW + 90_000
         await settle()
         expect(ring().classes()).toContain('overdue')
         expect(ring().find('.hm-voyage-done').attributes('stroke-dasharray')).toBe('100 100')
