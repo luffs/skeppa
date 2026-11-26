@@ -309,7 +309,7 @@ test('the harbor groups projects by owner for an admin, and not for a tenant', a
   const admin = await expectCleanRender(DashboardView, {
     steps: async wrapper => {
       const heads = wrapper.findAll('.fleet-head').map(h => h.findAll('span').map(x => x.text()).filter(Boolean).join(' '))
-      expect(heads).toEqual(['Your fleet 1 vessel', 'bob bob.dev 1 vessel'])
+      expect(heads).toEqual(['▸ Your fleet 1 vessel', '▸ bob bob.dev 1 vessel'])
       // bob's project has a finished voyage and unsighted commits: both are his
       expect(wrapper.findAll('.feed-owner').map(o => o.text())).toEqual(['bob ·', 'bob ·'])
       // every entry names its project as a link — a voyage straight to its log
@@ -2698,6 +2698,72 @@ describe('the harbor across the fleet', () => {
         expect(wrapper.vm.isCollapsed(7)).toBe(false) // this panel's pier 7 stays open
       },
     })
+    expect(problems.join(' | ')).toBe('')
+  })
+
+  test('a new pier goes on the server picked for it — the filtered one to begin with', async () => {
+    seedStore('admin')
+    const post = vi.spyOn(api, 'post').mockImplementation(async () => ({ id: 9 }))
+    const { problems } = await expectCleanRender(DashboardView, {
+      steps: async wrapper => {
+        const open = async () => {
+          await wrapper.findAll('button').find(b => b.text() === '+ New pier').trigger('click')
+          await settle()
+        }
+        await open()
+        const select = wrapper.find('.pier-new select.pier-server')
+        expect(select.findAll('option').map(o => o.text())).toEqual(['This server', 'jobb-1'])
+        expect(select.element.value).toBe('') // this panel unless said otherwise
+        await select.setValue('1')
+        await wrapper.find('.pier-new input').setValue('Jobb')
+        await wrapper.findAll('.pier-new button').find(b => b.text() === 'Create').trigger('click')
+        await settle()
+        // filtered to a fleet server, the form starts there
+        wrapper.vm.serverFilter = '1'
+        await settle()
+        await open()
+        expect(wrapper.find('.pier-new select.pier-server').element.value).toBe('1')
+      },
+    })
+    const calls = post.mock.calls.map(c => [c[0], c[1]])
+    post.mockRestore()
+    expect(problems.join(' | ')).toBe('')
+    expect(calls).toEqual([['/api/nodes/1/api/groups', { name: 'Jobb' }]])
+  })
+
+  // Someone else's fleet, or a whole server, folds to its heading — one key
+  // for the list and the map's quays, remembered — and a search opens it.
+  test('a server and an owner fold to their headings, remembered; a search opens them', async () => {
+    seedStore('admin')
+    try { localStorage.removeItem('skeppa.foldedFleets') } catch { /* nothing folded */ }
+    const { problems } = await expectCleanRender(DashboardView, {
+      steps: async wrapper => {
+        const toggles = () => wrapper.findAll('.section-toggle')
+        expect(toggles().map(t => t.attributes('aria-label'))).toEqual(['Fold This server', 'Fold Your fleet', 'Fold bob', 'Fold jobb-1'])
+        expect(wrapper.findAll('.fleet-head.nested')).toHaveLength(2) // the owners, under This server
+        expect(wrapper.findAll('.server-head a.section-link').map(a => a.attributes('href'))).toEqual(['/fleet/here', '/fleet/1'])
+        await toggles()[2].trigger('click') // bob
+        await settle()
+        const list = () => wrapper.find('.harbor-list').text() // the log beside it still names everything
+        expect(list()).not.toContain('bobapp')
+        expect(wrapper.find('.fleet-head.folded').text()).toContain('1 with new commits') // what is folded away, summed up
+        await wrapper.findAll('.section-toggle').at(-1).trigger('click') // jobb-1
+        await settle()
+        expect(wrapper.find('.server-section').text()).not.toContain('remote')
+        expect(JSON.parse(localStorage.getItem('skeppa.foldedFleets')).sort()).toEqual(['2', 'server:n1'])
+        wrapper.vm.query = 'o' // bobapp, remote
+        await settle()
+        expect(list()).toContain('bobapp')
+        expect(wrapper.find('.server-section').text()).toContain('remote')
+        wrapper.vm.query = ''
+        await settle()
+        await toggles()[0].trigger('click') // this whole server
+        await settle()
+        expect(wrapper.findAll('.section-toggle').map(t => t.attributes('aria-label'))).toEqual(['Unfold This server', 'Unfold jobb-1'])
+        expect(list()).not.toContain('adm')
+      },
+    })
+    try { localStorage.removeItem('skeppa.foldedFleets') } catch { /* nothing folded */ }
     expect(problems.join(' | ')).toBe('')
   })
 

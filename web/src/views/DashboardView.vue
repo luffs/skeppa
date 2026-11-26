@@ -33,7 +33,7 @@
           :title="ahead.map(a => (a.server ? `${a.server}: ` : '') + a.info.name).join(', ')"
           @click="deployAhead"
         >{{ deployingAhead ? 'Setting sail…' : `Deploy ${ahead.length} with new commits` }}</button>
-        <button v-if="projects.length" class="secondary" @click="startPier">+ New pier</button>
+        <button v-if="harborCount" class="secondary" @click="startPier">+ New pier</button>
         <router-link to="/projects/new"><button>+ Moor a project</button></router-link>
       </div>
     </div>
@@ -88,6 +88,14 @@
               @keydown.enter.prevent="createPier"
               @keydown.esc.prevent="addingPier = false"
             />
+            <!-- With a fleet: which server the pier is on — it holds that
+                 server's vessels only. One that is offline cannot be asked. -->
+            <select v-if="nodeShips.length" v-model="pierServer" class="pier-server" aria-label="On which server">
+              <option value="">This server</option>
+              <option v-for="{ n } in nodeShips" :key="n.id" :value="String(n.id)" :disabled="!n.online">
+                {{ n.name }}{{ n.online ? '' : ' (offline)' }}
+              </option>
+            </select>
             <button class="small" :disabled="pierBusy || !pierName.trim()" @click="createPier">
               {{ pierBusy ? 'Building…' : 'Create' }}
             </button>
@@ -103,12 +111,9 @@
           No vessel matches<template v-if="query"> “{{ query }}”</template><template v-if="stateFilter"> among those that {{ STATE_FILTERS[stateFilter].that }}</template><template v-if="view === 'map'"> — the rest of the harbor is dimmed</template>.
           <button type="button" class="link-button" @click="clearFilters">Clear</button>
         </p>
-        <!-- With a fleet, this panel's own vessels are headed as such — in the
-             list, and over this panel's own map. -->
-        <div
-          v-if="view === 'list' ? servers.length && fleets.some(f => f.projects.length || f.piers.length) : mapServers.length && projects.length"
-          class="fleet-head server-head"
-        >
+        <!-- With a fleet, this panel's own vessels are headed as such over
+             this panel's own map. -->
+        <div v-if="view === 'map' && mapServers.length && projects.length" class="fleet-head server-head">
           <span class="section-label">This server</span>
         </div>
         <HarborMap
@@ -121,49 +126,76 @@
           :legend="!mapServers.length"
           @toggle-state="toggleState"
         />
-        <template v-for="f in fleets" v-else :key="f.key">
-          <!-- One fleet is the whole harbor: headings only once there is more than one. -->
-          <div v-if="fleets.length > 1" class="fleet-head">
-            <span class="section-label">{{ f.label }}</span>
-            <span v-if="f.detail" class="fleet-detail">{{ f.detail }}</span>
-            <span class="spacer"></span>
-            <span class="fleet-detail">{{ f.projects.length }} vessel{{ f.projects.length === 1 ? '' : 's' }}</span>
-          </div>
-          <div v-for="s in f.piers" :key="'pier' + s.pier.id" class="pier">
-            <PierHead
-              :pier="s.pier"
-              :projects="s.projects"
-              :collapsed="isCollapsed(s.pier.id)"
-              @toggle="toggleCollapsed(s.pier.id)"
-            />
-            <div v-if="!isCollapsed(s.pier.id)" class="pier-body">
-              <div v-if="s.projects.length" class="vessel-rows">
-                <ProjectRow v-for="p in s.projects" :key="p.id" :project="p" />
-              </div>
-              <p v-else class="hint pier-empty">
-                Nothing moored here yet — pick this pier under a project's Rigging.
-              </p>
-            </div>
-          </div>
-          <!-- Projects at no pier: headed only when there are piers to tell them from. -->
-          <div v-if="f.piers.length && f.loose.length" class="pier-head anchor-head">
-            <span class="pier-name">At anchor</span>
-            <span class="fleet-detail">{{ f.loose.length }} vessel{{ f.loose.length === 1 ? '' : 's' }} at no pier</span>
-          </div>
-          <div v-if="f.loose.length" class="vessel-rows">
-            <ProjectRow v-for="p in f.loose" :key="p.id" :project="p" />
-          </div>
-        </template>
+        <!-- The list: this server's section, then each fleet server's. A
+             section folds to its heading, and so does each owner's fleet in
+             it (remembered here, as the map's quays are; a search opens them). -->
+        <section v-else-if="fleets.length" class="harbor-section here-section">
+          <SectionHead
+            v-if="servers.length"
+            level="server"
+            label="This server"
+            :projects="visible"
+            :collapsed="isFolded(HERE_FOLD)"
+            to="/fleet/here"
+            @toggle="toggleFold(HERE_FOLD)"
+          />
+          <template v-if="!servers.length || !isFolded(HERE_FOLD)">
+            <template v-for="f in fleets" :key="f.key">
+              <!-- One fleet is the whole harbor: headings only once there is more than one. -->
+              <SectionHead
+                v-if="fleets.length > 1"
+                :label="f.label"
+                :detail="f.detail"
+                :projects="f.projects"
+                :nested="servers.length > 0"
+                :collapsed="isFolded(String(f.key))"
+                @toggle="toggleFold(String(f.key))"
+              />
+              <template v-if="fleets.length < 2 || !isFolded(String(f.key))">
+                <div v-for="s in f.piers" :key="'pier' + s.pier.id" class="pier">
+                  <PierHead
+                    :pier="s.pier"
+                    :projects="s.projects"
+                    :collapsed="isCollapsed(s.pier.id)"
+                    @toggle="toggleCollapsed(s.pier.id)"
+                  />
+                  <div v-if="!isCollapsed(s.pier.id)" class="pier-body">
+                    <div v-if="s.projects.length" class="vessel-rows">
+                      <ProjectRow v-for="p in s.projects" :key="p.id" :project="p" />
+                    </div>
+                    <p v-else class="hint pier-empty">
+                      Nothing moored here yet — pick this pier under a project's Rigging.
+                    </p>
+                  </div>
+                </div>
+                <!-- Projects at no pier: headed only when there are piers to tell them from. -->
+                <div v-if="f.piers.length && f.loose.length" class="pier-head anchor-head">
+                  <span class="pier-name">At anchor</span>
+                  <span class="fleet-detail">{{ f.loose.length }} vessel{{ f.loose.length === 1 ? '' : 's' }} at no pier</span>
+                </div>
+                <div v-if="f.loose.length" class="vessel-rows">
+                  <ProjectRow v-for="p in f.loose" :key="p.id" :project="p" />
+                </div>
+              </template>
+            </template>
+          </template>
+        </section>
         <!-- The fleet's servers, each its own section: its piers, then its
              vessels at none — run on that server (lib/ship.js). -->
         <template v-if="view === 'list'">
-          <section v-for="s in servers" :key="s.key" class="server-section">
-            <div class="fleet-head server-head">
-              <router-link to="/fleet" class="section-label server-name">{{ s.label }}</router-link>
-              <span class="chip" :class="s.online ? 'green' : 'red'">{{ s.online ? 'online' : 'offline' }}</span>
-              <span class="spacer"></span>
-              <span class="fleet-detail">{{ s.count }} vessel{{ s.count === 1 ? '' : 's' }}</span>
-            </div>
+          <section v-for="s in servers" :key="s.key" class="harbor-section server-section">
+            <SectionHead
+              level="server"
+              :label="s.label"
+              :projects="s.projects"
+              :total="s.count"
+              :ship="s.ship"
+              :online="s.online"
+              :to="`/fleet/${s.node}`"
+              :collapsed="isFolded(`server:${s.key}`)"
+              @toggle="toggleFold(`server:${s.key}`)"
+            />
+            <template v-if="!isFolded(`server:${s.key}`)">
             <div v-for="x in s.piers" :key="x.key" class="pier">
               <PierHead :pier="x.pier" :projects="x.projects" :ship="s.ship" :collapsed="isCollapsed(x.key)" @toggle="toggleCollapsed(x.key)" />
               <div v-if="!isCollapsed(x.key)" class="pier-body">
@@ -180,15 +212,16 @@
             <div v-if="s.loose.length" class="vessel-rows">
               <ProjectRow v-for="p in s.loose" :key="p.id" :project="p" :ship="s.ship" />
             </div>
+            </template>
           </section>
         </template>
         <!-- On the map, a harbor per fleet server under its name, the whole of
              it, dimmed where the search and filter do not reach; the last one
              carries the legend, whose counts are the whole fleet's. -->
         <template v-else>
-          <section v-for="(s, i) in mapServers" :key="'map-' + s.key" class="server-section">
+          <section v-for="(s, i) in mapServers" :key="'map-' + s.key" class="harbor-section server-section">
             <div class="fleet-head server-head">
-              <router-link to="/fleet" class="section-label server-name">{{ s.label }}</router-link>
+              <router-link :to="`/fleet/${s.node}`" class="section-label server-name">{{ s.label }}</router-link>
               <span class="chip" :class="s.online ? 'green' : 'red'">{{ s.online ? 'online' : 'offline' }}</span>
               <span class="spacer"></span>
               <span class="fleet-detail">{{ s.count }} vessel{{ s.count === 1 ? '' : 's' }}</span>
@@ -315,6 +348,7 @@ import ProjectRow from '../components/ProjectRow.vue'
 import StableLabel from '../components/StableLabel.vue'
 import HarborMap from '../components/HarborMap.vue'
 import PierHead from '../components/PierHead.vue'
+import SectionHead from '../components/SectionHead.vue'
 import { store, liveProject } from '../store.js'
 import { STATE_FILTERS, filterWords, matchesSearch, matchesState, stateCounts } from '../lib/harborFilter.js'
 import { api } from '../api.js'
@@ -363,14 +397,35 @@ function saveCollapsed(map) {
     // not remembered — fine
   }
 }
+// The list's folded sections: an owner's fleet by its key (the map folds the
+// same fleets to their quays under the same keys, so a fold is one thing in
+// both), a fleet server's as `server:n<id>`, this one's as HERE_FOLD.
+const FOLDED_KEY = 'skeppa.foldedFleets'
+const HERE_FOLD = 'server:here'
+function loadFolded() {
+  try {
+    const keys = JSON.parse(localStorage.getItem(FOLDED_KEY) ?? '[]')
+    return Object.fromEntries((Array.isArray(keys) ? keys : []).map(k => [String(k), true]))
+  } catch {
+    return {}
+  }
+}
+function saveFolded(map) {
+  try {
+    localStorage.setItem(FOLDED_KEY, JSON.stringify(Object.keys(map)))
+  } catch {
+    // not remembered — fine
+  }
+}
 
 export default {
   name: 'DashboardView',
-  components: { ProjectRow, PierHead, StableLabel, HarborMap },
+  components: { ProjectRow, PierHead, SectionHead, StableLabel, HarborMap },
   data() {
     const q = this.$route?.query ?? {}
     return {
       STATE_FILTERS,
+      HERE_FOLD, // read by the template
       query: typeof q.q === 'string' ? q.q : '',
       stateFilter: q.state in STATE_FILTERS ? q.state : '',
       // '' every server, 'here' this one, or a fleet server's id (the Fleet page links here so)
@@ -383,9 +438,12 @@ export default {
       setupError: '',
       addingPier: false,
       pierName: '',
+      // '' this panel, or a fleet server's id
+      pierServer: '',
       pierBusy: false,
       pierError: '',
       collapsed: loadCollapsed(),
+      folded: loadFolded(),
       deployingAhead: false,
       feedShown: FEED_FIRST,
       // Whether the window is wide enough for the log as a table (WIDE_LOG).
@@ -456,7 +514,7 @@ export default {
         const loose = []
         for (const p of shown) (byId.get(p.group_id)?.projects ?? loose).push(p)
         return {
-          key: `n${n.id}`, label: n.name, online: n.online, ship, count: all.length, shown: shown.length,
+          key: `n${n.id}`, node: n.id, label: n.name, online: n.online, ship, count: all.length, shown: shown.length, projects: shown,
           piers: this.filtering ? piers.filter(x => x.projects.length) : piers, loose,
         }
       }).filter(s => this.showsServer(s.key) && (!this.filtering || s.shown))
@@ -480,7 +538,7 @@ export default {
             matchesSearch(p, words, { pierName: ship.live.groups?.[p.group_id]?.name ?? '', ownerName: n.name })).map(p => p.id))
           : null
         return {
-          key: `n${n.id}`, label: n.name, online: n.online, ship, count: all.length, matches,
+          key: `n${n.id}`, node: n.id, label: n.name, online: n.online, ship, count: all.length, matches,
           fleets: [{ key: `n${n.id}`, label: n.name, detail: '', mine: false, projects: all, piers, loose }],
         }
       }).filter(s => s.count && this.showsServer(s.key))
@@ -708,11 +766,11 @@ export default {
       this.addingPier = true
       this.pierName = ''
       this.pierError = ''
+      // the server the Harbor is filtered to, if it is a fleet server that reports
+      const filtered = this.nodeShips.find(({ n }) => String(n.id) === this.serverFilter && n.online)
+      this.pierServer = filtered ? this.serverFilter : ''
       this.$nextTick(() => this.$refs.pierName?.focus())
     },
-    // A pier made here is the signed-in user's own; an admin sorts someone
-    // else's projects from that project's Rigging, which makes the pier in
-    // the owner's fleet.
     // Deploy everything `ahead` lists, each on its own server, after saying
     // what; what failed is said once, together.
     async deployAhead() {
@@ -737,7 +795,12 @@ export default {
       this.pierBusy = true
       this.pierError = ''
       try {
-        await api.post('/api/groups', { name: this.pierName })
+        // A pier made here is the signed-in user's own; an admin sorts someone
+        // else's projects from that project's Rigging, which makes the pier in
+        // the owner's fleet. On a fleet server it is the admin's the master
+        // acts as there, whose vessels those are.
+        const ship = this.pierServer ? shipFor(Number(this.pierServer)) : localShip
+        await ship.api.post('/api/groups', { name: this.pierName })
         this.addingPier = false
       } catch (err) {
         this.pierError = err.fields?.name || err.message
@@ -754,6 +817,15 @@ export default {
       if (this.collapsed[id]) delete this.collapsed[id]
       else this.collapsed[id] = true
       saveCollapsed(this.collapsed)
+    },
+    // A section of the list (an owner's fleet, a server), the same way.
+    isFolded(key) {
+      return !this.filtering && Boolean(this.folded[key])
+    },
+    toggleFold(key) {
+      if (this.folded[key]) delete this.folded[key]
+      else this.folded[key] = true
+      saveFolded(this.folded)
     },
     // The owner's name as the crew list knows it (admins mirror the crew;
     // a tenant never sees anyone else's projects, so never needs it).

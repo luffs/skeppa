@@ -842,10 +842,31 @@ button.hm-key:disabled { opacity: 0.45; cursor: default; }
 /* Three levels: a fleet (whose), its piers, and the vessels at no pier. The
    fleet heading is the only one with a rule under it, so the order reads at
    a glance; "At anchor" lines up with the pier names, as a pier without one. */
-.fleet-head { display: flex; align-items: baseline; gap: 10px; padding: 0 4px 8px; border-bottom: 1px solid var(--line); }
+.fleet-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 10px; padding: 0 4px 8px; border-bottom: 1px solid var(--line); }
 .fleet-head .section-label { font-size: 13px; }
 .fleet-head:not(:first-child) { margin-top: 26px; }
 .fleet-detail { font-family: var(--mono); font-size: 12px; color: var(--dim); }
+/* With a fleet: a section per server (this one first), each with the list's
+   own rhythm inside, and whose fleet on it one level down — a dashed rule,
+   a quieter label. A folded section is its heading alone. */
+.harbor-section { display: flex; flex-direction: column; gap: 14px; }
+.harbor-section + .harbor-section { margin-top: 18px; }
+.fleet-head.nested { border-bottom-style: dashed; border-bottom-color: var(--dash-line); }
+.fleet-head.nested .section-label { font-size: 12px; color: var(--dim); }
+.fleet-head.nested:not(:first-child) { margin-top: 12px; }
+.server-head + .fleet-head.nested { margin-top: 0; }
+.fleet-head .spacer { flex: 1; }
+.section-toggle {
+  display: inline-flex; align-items: baseline; gap: 8px;
+  background: transparent; border: none; padding: 0; color: var(--ink);
+}
+.section-toggle:hover { background: transparent; color: var(--accent); }
+.section-toggle .section-label, .fleet-head.nested .section-toggle:hover .section-label { color: inherit; }
+.fleet-head.nested .section-toggle { color: var(--dim); }
+.fleet-head.nested .section-toggle:hover { color: var(--accent); }
+.fleet-head .pier-summary { align-self: center; }
+a.section-link { text-decoration: none; }
+a.section-link:hover { color: var(--accent); }
 
 /* Piers: a fleet's projects in named groups. The pier's vessels hang off a
    rule on the left, the way boats line a jetty. */
@@ -913,6 +934,7 @@ button.action-menu-item.danger:hover:not(:disabled) { background: var(--red-tint
 .anchor-head { margin-top: 4px; }
 .anchor-head .pier-name { color: var(--dim); padding-left: 21px; /* chevron + gap */ }
 .pier-new { padding: 0 4px; }
+.pier-new .pier-server { flex: 0 1 auto; width: auto; max-width: 200px; }
 
 /* Projects as rows in one frame per list (a pier, or the projects at no
    pier): name and state on the first line, what happened last on the

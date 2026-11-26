@@ -1,6 +1,7 @@
 // The harbor lab: the harbor map on a seeded store, no backend or sign-in,
 // for looking at the map in a real browser. Dev only — `bun run dev:web`,
-// then /harbor-lab.html?s=<scenario>; Vite builds only index.html, so none of
+// then /harbor-lab.html?s=<scenario> (&fleet=1 for a fleet server too,
+// &view=list for the list); Vite builds only index.html, so none of
 // this ships. A bar on top switches scenarios and makes things happen (a ship
 // moored or scuttled, a voyage started, landed or failed, new commits) and
 // counts frames, for a feel of what the map costs. The same is at hand from
@@ -133,7 +134,8 @@ const SCENARIOS = {
   },
 }
 
-const name = new URLSearchParams(location.search).get('s')
+const params = new URLSearchParams(location.search)
+const name = params.get('s')
 const scenario = SCENARIOS[name] ?? SCENARIOS.mixed
 const harbor = scenario.build()
 
@@ -154,8 +156,27 @@ store.live = {
   proxy: { baseDomain: 'apps.example.com' },
   images: { managedPrefix: 'localhost/skeppa/', managed: [], local: [], storeListed: false, engineError: '', defaultImage: '' },
 }
+// &fleet=1: a fleet server reporting here too (an admin's harbor only), with
+// a pier and a few vessels of its own — its ids are another database's.
+if (params.get('fleet') && scenario.user.role === 'admin') {
+  const theirs = [
+    project(ADMIN, 'wiki', { group: 1 }),
+    project(ADMIN, 'ci-runner', { group: 1, ahead: true }),
+    project(ADMIN, 'backup-sync', { status: 'stopped' }),
+  ]
+  store.live.nodes = { 1: { id: 1, name: 'jobb-1', paired: true, online: true, lastSeenAt: at(0), adminId: 1, version: 'abc1234' } }
+  store.live.nodeStates = {
+    1: {
+      projects: Object.fromEntries(theirs.map(p => [p.info.id, p])),
+      groups: { 1: pier(1, ADMIN, 'Jobb') },
+      proxy: { baseDomain: 'jobb.example.com' },
+      system: { loadavg: [0.4, 0.3, 0.2], cpuCount: 2, memory: { total: 4e9, free: 2e9 } },
+      images: null,
+    },
+  }
+}
 try {
-  localStorage.setItem('skeppa.harborView', 'map')
+  localStorage.setItem('skeppa.harborView', params.get('view') === 'list' ? 'list' : 'map')
   localStorage.removeItem('skeppa.foldedFleets')
 } catch { /* the route says map too */ }
 
@@ -262,5 +283,5 @@ const router = createRouter({
   history: createMemoryHistory(),
   routes: [{ path: '/', component: DashboardView }, { path: '/:rest(.*)', component: { render: () => null } }],
 })
-router.push('/?view=map')
+router.push(params.get('view') === 'list' ? '/' : '/?view=map')
 router.isReady().then(() => createApp(DashboardView).use(router).mount('#app'))
