@@ -174,7 +174,11 @@ export function buildCaddyConfig(db, config = {}, { trustLoopback = true } = {})
       http: {
         servers: {
           skeppa: {
-            listen: [`:${httpPort}`],
+            // Loopback only: the system Caddy in front is on this machine, and
+            // anything else reaching the gate would skip its TLS and whatever
+            // auth or allowlists it adds — and reach routes it never forwards.
+            // IPv4 only: binding ::1 on a host without IPv6 fails the config.
+            listen: [`127.0.0.1:${httpPort}`],
             routes,
             automatic_https: { disable: true },
             // The system Caddy in front (on this machine) is a proxy to trust:

@@ -592,7 +592,7 @@ export default {
       const domains = [...new Set(routed.filter(i => i.owner_domain)
         .flatMap(i => [`*.${i.owner_domain}`, ...(i.subdomain === '@' ? [i.owner_domain] : [])]))].sort()
       return [...(baseApex ? [base] : []), `*.${base}`, ...handles.map(h => `*.${h}.${base}`), ...domains]
-        .map(host => `${host} {\n    reverse_proxy localhost:${port}\n}`)
+        .map(host => `${host} {\n    reverse_proxy 127.0.0.1:${port}\n}`)
         .join('\n')
     },
   },

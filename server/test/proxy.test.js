@@ -43,7 +43,7 @@ test('builds host routes plus a 404 fallback', () => {
   const cfg = buildCaddyConfig(db)
   expect(cfg.admin.listen).toBe('localhost:2020')
   const server = cfg.apps.http.servers.skeppa
-  expect(server.listen).toEqual([':8100'])
+  expect(server.listen).toEqual(['127.0.0.1:8100']) // loopback only: nothing skips the system Caddy
   expect(server.automatic_https.disable).toBe(true)
   // The system Caddy on loopback is trusted to say who asked and over what
   expect(server.trusted_proxies).toEqual({ source: 'static', ranges: ['127.0.0.1/32', '::1/128'] })
@@ -59,7 +59,7 @@ test('honors custom ports from settings', () => {
   setSetting(db, 'proxy_http_port', '9000')
   setSetting(db, 'proxy_admin_port', '2021')
   const cfg = buildCaddyConfig(db)
-  expect(cfg.apps.http.servers.skeppa.listen).toEqual([':9000'])
+  expect(cfg.apps.http.servers.skeppa.listen).toEqual(['127.0.0.1:9000'])
   expect(cfg.admin.listen).toBe('localhost:2021')
 })
 
