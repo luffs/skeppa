@@ -69,8 +69,9 @@ export async function planReassign({ db, github = null }, from, to) {
 
     // Routing: the address is built from the owner, so it may change — or
     // collide with something already routed in the new owner's namespace.
-    if (p.subdomain === APEX && !(to.role === 'tenant' && to.domain)) {
-      refuse(`sits at the root of ${from.domain || 'its owner’s domain'}, and ${to.username} has no domain of their own`)
+    if (p.subdomain === APEX && to.role === 'tenant' && !to.domain) {
+      const root = from.role === 'tenant' ? from.domain : baseDomain
+      refuse(`sits at the root of ${root || 'its owner’s domain'}, and ${to.username} has no domain of their own`)
       continue
     }
     if (p.subdomain && namespace(from) !== namespace(to)) {

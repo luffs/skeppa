@@ -283,7 +283,7 @@ test('build-time ENV defaults off for tenants, on for admins, and is editable', 
   expect((await flipped.json()).build_env).toBe(1)
 })
 
-test('a tenant with a domain of their own routes there, apex included; the apex needs a domain', async () => {
+test('a tenant with a domain of their own routes there, apex included; a handle has no apex', async () => {
   const { db, liveState, config, admin, bob } = setup()
   setSetting(db, 'proxy_base_domain', 'apps.example.com')
   db.query("UPDATE users SET domain = 'bob.dev' WHERE id = 2").run()
@@ -296,12 +296,19 @@ test('a tenant with a domain of their own routes there, apex included; the apex 
   const apex = await make(bob, 'Bob Root', '@')
   expect(apex.status).toBe(201)
   expect((await apex.json()).owner_domain).toBe('bob.dev')
-  const adminApex = await make(admin, 'Admin Root', '@')
-  expect(adminApex.status).toBe(400)
-  expect((await adminApex.json()).fields.subdomain).toContain('domain of your own')
+  // the admin's '@' is the base domain itself — one per namespace, like any subdomain
+  expect((await make(admin, 'Admin Root', '@')).status).toBe(201)
+  const again = await make(admin, 'Admin Root Again', '@')
+  expect(again.status).toBe(400)
+  expect((await again.json()).fields.subdomain).toContain('already routed')
   // bob's namespace is his domain now: the admin's "app" is a different host
   expect((await make(admin, 'Admin App', 'app')).status).toBe(201)
   expect((await make(bob, 'Bob Again', 'app')).status).toBe(400)
   const hosts = buildCaddyConfig(db).apps.http.servers.skeppa.routes.flatMap(r => r.match?.[0]?.host ?? [])
-  expect(hosts.sort()).toEqual(['app.apps.example.com', 'app.bob.dev', 'bob.dev'])
+  expect(hosts.sort()).toEqual(['app.apps.example.com', 'app.bob.dev', 'apps.example.com', 'bob.dev'])
+  // without a domain, a tenant's handle has no root to give
+  db.query("UPDATE users SET domain = '' WHERE id = 2").run()
+  const handleApex = await make(bob, 'Bob Handle Root', '@')
+  expect(handleApex.status).toBe(400)
+  expect((await handleApex.json()).fields.subdomain).toContain('domain of your own')
 })

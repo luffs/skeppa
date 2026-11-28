@@ -299,7 +299,10 @@ instance (pm2 process `skeppa-proxy`, plain HTTP, requires the `caddy` binary on
 user's PATH) routes `subdomain.<base domain>` → `localhost:<port>`, and the routed port is
 injected into the app's environment as `PORT`. Your system Caddy forwards the wildcard to it
 with the one static block the panel shows you, and keeps owning TLS — give the wildcard a
-DNS-01 certificate or add `tls { on_demand }` to the block. The gate trusts the system Caddy
+DNS-01 certificate or add `tls { on_demand }` to the block. A project whose subdomain is `@`
+sits at the base domain itself (one per panel; the snippet then adds a block for the bare
+domain). No wildcard yet? The gate routes by `Host`, so a system Caddy block per name
+(`app.example.com { reverse_proxy localhost:8100 }`) works just as well. The gate trusts the system Caddy
 on loopback, so an app sees the `X-Forwarded-For`, `-Proto` and `-Host` it sent: the client's
 address, and `https`, not `127.0.0.1` and `http`.
 

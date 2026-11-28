@@ -58,13 +58,18 @@ export function noteServerDate(header, sentAt, receivedAt = Date.now()) {
 // server reporting here (the Fleet page) routes under that server's.
 export function appUrlFor(project, domain = store.live.proxy?.baseDomain) {
   if (!project?.subdomain || !domain) return ''
-  // A tenant with a domain of their own routes there ('@' is the apex);
-  // other tenant projects are routed under their owner's handle.
-  if (project.owner_role === 'tenant' && project.owner_domain) {
-    return `https://${project.subdomain === '@' ? '' : `${project.subdomain}.`}${project.owner_domain}`
-  }
-  const nested = project.owner_role === 'tenant' && project.owner_handle
-  return `https://${project.subdomain}.${nested ? `${project.owner_handle}.` : ''}${domain}`
+  // A tenant with a domain of their own routes there; other tenant projects
+  // are routed under their owner's handle. '@' is the root: the tenant's
+  // domain, or the base domain itself for an admin's project.
+  const own = project.owner_role === 'tenant' && project.owner_domain
+  const nested = !own && project.owner_role === 'tenant' && project.owner_handle
+  return `https://${routedName(project.subdomain, nested ? project.owner_handle : '', own ? project.owner_domain : domain)}`
+}
+
+// subdomain[.handle].domain, '@' standing for no subdomain (proxy/index.js
+// routedHost builds the same on the server).
+export function routedName(subdomain, handle, domain) {
+  return [subdomain === '@' ? '' : subdomain, handle, domain].filter(Boolean).join('.')
 }
 
 export function liveProject(projectId) {

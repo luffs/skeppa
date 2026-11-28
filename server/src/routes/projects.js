@@ -118,7 +118,10 @@ export function projectRoutes({ db, config, liveState, runner, poller, github, p
 
   const routingConflicts = ({ subdomain, port, owner_id }, excludeId = -1) => {
     const errors = {}
-    if (subdomain === APEX && !ownerOf(owner_id)?.domain) {
+    // '@' is the root of the owner's namespace: the base domain itself for an
+    // admin's project, a tenant's own domain — a handle has no root to offer.
+    const owner = subdomain === APEX ? ownerOf(owner_id) : null
+    if (owner?.role === 'tenant' && !owner.domain) {
       errors.subdomain = 'the apex needs a domain of your own — the admin sets it under Rigging → Crew'
     } else if (subdomain != null) {
       const ns = namespaceOf(owner_id)

@@ -583,14 +583,15 @@ export default {
       const port = this.gateForm.http_port || 8100
       // One extra one-label wildcard per tenant namespace that actually
       // routes something — each block gets its own DNS-01 cert. A tenant's
-      // own domain is its wildcard, plus the apex when a project sits there.
-      const routed = Object.values(this.ship.live.projects ?? {})
-        .map(p => p.info)
-        .filter(i => i?.subdomain && i.owner_role === 'tenant')
+      // own domain is its wildcard, plus the apex when a project sits there;
+      // the base domain itself, when an admin's project does.
+      const infos = Object.values(this.ship.live.projects ?? {}).map(p => p.info)
+      const baseApex = infos.some(i => i?.subdomain === '@' && i.owner_role !== 'tenant')
+      const routed = infos.filter(i => i?.subdomain && i.owner_role === 'tenant')
       const handles = [...new Set(routed.filter(i => !i.owner_domain && i.owner_handle).map(i => i.owner_handle))].sort()
       const domains = [...new Set(routed.filter(i => i.owner_domain)
         .flatMap(i => [`*.${i.owner_domain}`, ...(i.subdomain === '@' ? [i.owner_domain] : [])]))].sort()
-      return [`*.${base}`, ...handles.map(h => `*.${h}.${base}`), ...domains]
+      return [...(baseApex ? [base] : []), `*.${base}`, ...handles.map(h => `*.${h}.${base}`), ...domains]
         .map(host => `${host} {\n    reverse_proxy localhost:${port}\n}`)
         .join('\n')
     },

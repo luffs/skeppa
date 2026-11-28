@@ -358,10 +358,13 @@ test('status lists each route under the host the gate actually routes: handle, o
   own(addProject(db, { slug: 'bobapp', subdomain: 'app', port: 4002 }), 2)
   own(addProject(db, { slug: 'evesite', subdomain: 'www', port: 4003 }), 3)
   own(addProject(db, { slug: 'everoot', subdomain: '@', port: 4004 }), 3)
+  own(addProject(db, { slug: 'admroot', subdomain: '@', port: 4005 }), 1)
   const { proxy } = proxyHarness(db)
   const routes = (await proxy.status()).routes
   const byHost = Object.fromEntries(routes.map(r => [r.host, r.owner_role === 'tenant' ? r.owner : '']))
-  expect(byHost).toEqual({ 'adm.apps.example.com': '', 'app.bob.apps.example.com': 'bob', 'www.eve.dev': 'eve', 'eve.dev': 'eve' })
+  expect(byHost).toEqual({
+    'adm.apps.example.com': '', 'apps.example.com': '', 'app.bob.apps.example.com': 'bob', 'www.eve.dev': 'eve', 'eve.dev': 'eve',
+  })
   // the list and the Caddy config agree host for host
   const routed = buildCaddyConfig(db).apps.http.servers.skeppa.routes.flatMap(r => r.match?.[0]?.host ?? [])
   expect(routes.map(r => r.host).sort()).toEqual(routed.sort())

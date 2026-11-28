@@ -43,13 +43,14 @@ export function proxyRouteRows(db) {
 // subdomain is '@'. Other tenants live under their handle —
 // subdomain.handle.base — so each tenant namespace is one more one-label
 // wildcard site block (with its own DNS-01 cert) in the admin's system
-// Caddy; admin projects keep the flat names that already have certs.
+// Caddy; admin projects keep the flat names that already have certs, and an
+// admin's '@' is the base domain itself. (A handle-only tenant may not take
+// '@' — routes/projects.js — so that case never reaches here.)
 export function routedHost(row, baseDomain) {
-  if (row.owner_role === 'tenant' && row.owner_domain) {
-    return row.subdomain === APEX ? row.owner_domain : `${row.subdomain}.${row.owner_domain}`
-  }
-  const nested = row.owner_role === 'tenant' && row.owner_handle
-  return `${row.subdomain}.${nested ? `${row.owner_handle}.` : ''}${baseDomain}`
+  const own = row.owner_role === 'tenant' && row.owner_domain
+  const nested = !own && row.owner_role === 'tenant' && row.owner_handle
+  return [row.subdomain === APEX ? '' : row.subdomain, nested ? row.owner_handle : '', own ? row.owner_domain : baseDomain]
+    .filter(Boolean).join('.')
 }
 
 // The https address a project answers at, '' when it is not routed — the

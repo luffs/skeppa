@@ -41,9 +41,14 @@
       to this app — or <span class="mono" style="font-size: 12px">@</span> for
       <span class="mono" style="font-size: 12px">{{ domain }}</span> itself.
     </p>
-    <p class="hint" v-else>
+    <p class="hint" v-else-if="handle">
       Optional: route <span class="mono" style="font-size: 12px">subdomain.&lt;base domain&gt;</span>
       to this app through the harbor gate proxy.
+    </p>
+    <p class="hint" v-else>
+      Optional: route <span class="mono" style="font-size: 12px">subdomain.&lt;base domain&gt;</span>
+      to this app through the harbor gate proxy — or <span class="mono" style="font-size: 12px">@</span>
+      for the base domain itself.
     </p>
     <p class="hint" v-if="staticSite && !subdomain">
       A static site is only reachable through its subdomain — without one it is published but not served.
@@ -54,6 +59,7 @@
 <script>
 import FieldError from './FieldError.vue'
 import { shipInject } from '../lib/ship.js'
+import { routedName } from '../store.js'
 
 // Subdomain + port with the harbor gate preview. Shared by the new-project
 // form and the Rigging tab; the base domain rides along in LiveState, so the
@@ -85,8 +91,8 @@ export default {
     },
     routedUrl() {
       if (!this.subdomain || !this.baseDomain) return ''
-      if (this.domain) return `https://${this.subdomain === '@' ? '' : `${this.subdomain}.`}${this.domain}`
-      return `https://${this.subdomain}.${this.handle ? `${this.handle}.` : ''}${this.baseDomain}`
+      if (this.domain) return `https://${routedName(this.subdomain, '', this.domain)}`
+      return `https://${routedName(this.subdomain, this.handle, this.baseDomain)}`
     },
   },
 }

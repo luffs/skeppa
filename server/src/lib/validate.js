@@ -117,7 +117,7 @@ export function validateProject({ name, repo_full_name, git_url, branch, pm2_nam
   if (run_image != null && !IMAGE_RE.test(run_image)) errors.run_image = 'invalid image reference'
   if (runtime != null && !RUNTIMES.includes(runtime)) errors.runtime = `must be one of ${RUNTIMES.join(', ')}`
   if (subdomain != null && subdomain !== APEX && !SUBDOMAIN_RE.test(subdomain)) {
-    errors.subdomain = 'lowercase letters, digits and dashes only (or @ for the apex of your own domain)'
+    errors.subdomain = 'lowercase letters, digits and dashes only (or @ for the domain itself)'
   }
   if (port != null && !isValidPort(port)) errors.port = 'must be a port between 1 and 65535'
   if (memory_mb != null && !(Number.isInteger(memory_mb) && memory_mb >= 16 && memory_mb <= 1024 * 1024)) {

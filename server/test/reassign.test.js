@@ -139,6 +139,10 @@ test('a subdomain already routed in the new namespace, or a site at the root of 
   addProject(eve, 'root', { subdomain: '@' })
   const toBob = await plan(eve, bob)
   expect(toBob.blockers.find(b => b.project === 'root').reason).toBe('sits at the root of eve.dev, and bob has no domain of their own')
+  // an admin has a root too — the base domain — unless one of theirs is there already
+  expect((await plan(eve, cap)).blockers.find(b => b.project === 'root')).toBeUndefined()
+  addProject(cap, 'caproot', { subdomain: '@' })
+  expect((await plan(eve, cap)).blockers.find(b => b.project === 'root').reason).toBe('its subdomain "@" is already routed for cap by caproot')
 })
 
 test('the request is checked: a real source, a real target, and someone else', async () => {
